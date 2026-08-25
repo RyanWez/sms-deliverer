@@ -1,7 +1,6 @@
 <script lang="ts">
   import { messagesStore } from '$lib/stores/messages.svelte';
   import { portsStore } from '$lib/stores/ports.svelte';
-  import type { SmsItem } from '$lib/types';
 
   const allSelected = $derived.by(() =>
     messagesStore.visible.length > 0 && messagesStore.visible.every(m => messagesStore.isSelected(m.id))

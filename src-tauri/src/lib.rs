@@ -21,6 +21,7 @@ pub fn run() {
             commands::toggle_port_checked,
             commands::set_all_ports_checked,
             commands::start_scan,
+            commands::get_ports,
             commands::get_sim_numbers,
             commands::get_messages,
             commands::get_status_text,

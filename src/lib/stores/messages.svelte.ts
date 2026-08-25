@@ -17,7 +17,7 @@ export function createMessagesStore() {
 
     return items.filter(m => {
       if (portFilter && m.message.port !== portFilter) return false;
-      if (quickFilter === 'OTP' && !m.otp) return false;
+      if (quickFilter === 'Otp' && !m.otp) return false;
       if (quickFilter === 'Today') {
         const d = new Date(m.message.received);
         if (d < today) return false;

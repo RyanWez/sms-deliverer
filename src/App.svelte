@@ -7,9 +7,6 @@
   import MessageTable from '$lib/components/MessageTable.svelte';
   import StatsBar from '$lib/components/StatsBar.svelte';
   import ToastContainer from '$lib/components/ToastContainer.svelte';
-  import { messagesStore } from '$lib/stores/messages';
-  import { portsStore } from '$lib/stores/ports';
-  import { liveStore } from '$lib/stores/live';
   import { api } from '$lib/services/api';
 
   onMount(() => {

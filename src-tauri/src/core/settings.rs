@@ -76,7 +76,11 @@ impl Settings {
         if let Ok(content) = fs::read_to_string(&path) {
             for line in content.lines() {
                 let parts: Vec<&str> = line.splitn(2, ',').collect();
-                if parts.len() >= 2 && (parts[0].starts_with("COM") || parts[0].contains("ttyUSB")) {
+                if parts.len() >= 2
+                    && (parts[0].starts_with("COM")
+                        || parts[0].contains("ttyUSB")
+                        || parts[0].contains("ttyACM"))
+                {
                     let num = crate::core::decoder::normalize_number(parts[1].trim());
                     if !num.is_empty() {
                         self.sim_numbers.insert(parts[0].trim().to_string(), num);
@@ -92,7 +96,7 @@ impl Settings {
         let mut lines: Vec<(&String, &String)> = self.sim_numbers.iter().collect();
         lines.sort_by_key(|(k, _)| crate::core::modem::port_num(k));
         let content: String = lines.iter()
-            .map(|(k, v)| format!("{}\n{}\n", k, v))
+            .map(|(k, v)| format!("{},{}\n", k, v))
             .collect();
         let _ = fs::write(path, content);
     }

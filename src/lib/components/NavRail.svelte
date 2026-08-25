@@ -1,12 +1,11 @@
 <script lang="ts">
   import { portsStore } from '$lib/stores/ports.svelte';
-  import { messagesStore } from '$lib/stores/messages.svelte';
   import { api } from '$lib/services/api';
 
   let collapsed = $state(false);
 
-  const portCount = $derived(() => portsStore.items.length);
-  const checkedCount = $derived(() => portsStore.items.filter(p => p.checked).length);
+  const portCount = $derived(portsStore.items.length);
+  const checkedCount = $derived(portsStore.items.filter(p => p.checked).length);
 
   function toggleCollapsed() { collapsed = !collapsed; }
 </script>
@@ -72,7 +71,6 @@
 
   {#if !collapsed}
     <div class="px-3 py-2 border-t border-border text-[10px] text-muted-foreground font-mono">
-      {checkedCount}/{portCount} selected
-    </div>
+      {checkedCount}/{portCount} selected    </div>
   {/if}
 </aside>

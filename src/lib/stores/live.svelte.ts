@@ -4,6 +4,7 @@ export function createLiveStore() {
   let on = $state(false);
   let readyPorts = $state<string[]>([]);
   let totalPorts = $state(0);
+  let statusText = $state('');
   let toasts = $state<ToastData[]>([]);
 
   function addToast(t: ToastData) {
@@ -24,6 +25,8 @@ export function createLiveStore() {
     set readyPorts(v: string[]) { readyPorts = v; },
     get totalPorts() { return totalPorts; },
     set totalPorts(v: number) { totalPorts = v; },
+    get statusText() { return statusText; },
+    set statusText(v: string) { statusText = v; },
     get toasts() { return toasts; },
     addToast,
     removeToast,

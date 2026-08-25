@@ -262,9 +262,13 @@ pub fn start_live(
     state: tauri::State<'_, SharedState>,
 ) -> Result<String, String> {
     let ports = {
-        let st = state.lock().unwrap();
-        if st.live_on || st.scan_busy || st.ussd_busy || st.delete_busy {
+        let mut st = state.lock().unwrap();
+        if st.live_on || st.live_stop.is_some() || st.scan_busy || st.ussd_busy || st.delete_busy {
             return Err("Busy".into());
+        }
+        for p in &mut st.ports {
+            p.live_ready = false;
+            p.live_error = None;
         }
         st.ports
             .iter()
@@ -302,11 +306,17 @@ pub fn start_live(
                     match evt {
                         crate::core::live::LiveEvent::Ready { port } => {
                             let mut st = st2.lock().unwrap();
+                            if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
+                                p.live_ready = true;
+                                p.live_error = None;
+                            }
                             st.live_ports_ready.push(port.clone());
                             st.status_text = format!(
                                 "Live {} port(s) ready...",
                                 st.live_ports_ready.len()
                             );
+                            drop(st);
+                            let _ = app2.emit("sms:ready", &serde_json::json!({ "port": port }));
                         }
                         crate::core::live::LiveEvent::Batch { port: _port, items } => {
                             let mut st = st2.lock().unwrap();
@@ -331,20 +341,27 @@ pub fn start_live(
                             let otp = crate::core::decoder::extract_otp(&message.text);
                             let item = SmsItem {
                                 id,
-                                message,
+                                message: message.clone(),
                                 otp: otp.clone(),
                                 is_new,
                             };
                             st.messages.push(item);
+                            drop(st);
                             let _ = app2.emit("sms:new", &serde_json::json!({
                                 "id": id,
+                                "message": message,
                                 "otp": otp,
                                 "port": port,
+                                "is_new": is_new,
                             }));
                         }
                         crate::core::live::LiveEvent::Closed { port, error } => {
                             let mut st = st2.lock().unwrap();
                             if let Some(e) = error {
+                                if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
+                                    p.live_ready = false;
+                                    p.live_error = Some(e.clone());
+                                }
                                 st.live_failed.push((port.clone(), e.clone()));
                                 st.status_text = format!("{} FAILED: {}", port, e);
                             }
@@ -359,6 +376,7 @@ pub fn start_live(
         }
         let mut st = state_clone.lock().unwrap();
         st.live_on = false;
+        st.live_stop = None;
         st.status_text = format!(
             "Live stopped. Messages: {}",
             st.messages.len()

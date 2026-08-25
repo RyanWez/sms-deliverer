@@ -1,7 +1,7 @@
 <script lang="ts">
   import { liveStore } from '$lib/stores/live.svelte';
 
-  const toasts = $derived(() => liveStore.toasts);
+  const toasts = $derived(liveStore.toasts);
 
   function kindClass(kind: string): string {
     switch (kind) {
@@ -15,7 +15,7 @@
 </script>
 
 <div class="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
-  {#each toasts() as t (t.id)}
+  {#each toasts as t (t.id)}
     <div class="{kindClass(t.kind)} animate-slide-in">
       <div class="flex-1 min-w-0">
         <div class="text-xs font-semibold">{t.title}</div>

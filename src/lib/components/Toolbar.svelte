@@ -3,7 +3,7 @@
   import { liveStore } from '$lib/stores/live.svelte';
   import { api } from '$lib/services/api';
 
-  const busy = $derived(() =>
+  const busy = $derived(
     liveStore.on || messagesStore.deleteBusy
   );
 </script>
@@ -11,7 +11,7 @@
 <div class="flex items-center gap-2 px-4 py-2.5 bg-surface border-b border-border shrink-0 flex-wrap">
   <button
     class="btn-primary text-xs h-8"
-    disabled={busy()}
+    disabled={busy}
     onclick={() => api.startScan()}
   >
     Scan & Read All
@@ -28,7 +28,7 @@
 
   <button
     class="btn-warning text-xs h-8"
-    disabled={busy()}
+    disabled={busy}
     onclick={() => api.getSimNumbers()}
   >
     Get SIM Numbers
@@ -38,7 +38,7 @@
 
   <button
     class="btn-danger text-xs h-8"
-    disabled={messagesStore.selectedCount === 0 || busy()}
+    disabled={messagesStore.selectedCount === 0 || busy}
     onclick={() => {
       if (confirm(`Delete ${messagesStore.selectedCount} message(s)?`)) {
         api.deleteSelected([...messagesStore.selected]);
@@ -50,7 +50,7 @@
 
   <button
     class="btn-danger text-xs h-8"
-    disabled={busy()}
+    disabled={busy}
     onclick={() => {
       if (confirm('Delete ALL messages from checked ports?')) {
         api.clearAll();

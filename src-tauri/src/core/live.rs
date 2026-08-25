@@ -66,16 +66,18 @@ where F: Fn(LiveEvent) + Send + 'static {
     }
     let _ = on_event(LiveEvent::Ready { port: port_name.to_string() });
     let mut ibuf = String::new();
-    let mut cmti_queue: Vec<String> = Vec::new();
+    let mut cmti_queue: Vec<i32> = Vec::new();
     while !stop.load(Ordering::Relaxed) {
         let mut chunk = [0u8; 1024];
         match sp.read(&mut chunk) {
             Ok(n) if n > 0 => {
                 ibuf.push_str(&String::from_utf8_lossy(&chunk[..n]));
-                for cap in decoder::find_cmti(&ibuf) {
-                    cmti_queue.push(cap);
+                while let Some(pos) = ibuf.find('\n') {
+                    let line: String = ibuf.drain(..=pos).collect();
+                    if let Some(idx) = decoder::parse_cmti_index(line.trim()) {
+                        cmti_queue.push(idx);
+                    }
                 }
-                if ibuf.contains("+CMTI:") { ibuf.clear(); }
                 if ibuf.len() > 8192 {
                     let keep = ibuf.len() - 512;
                     ibuf.drain(..keep);
@@ -83,9 +85,10 @@ where F: Fn(LiveEvent) + Send + 'static {
             }
             _ => {}
         }
-        if let Some(line) = cmti_queue.first().cloned() {
+        if let Some(idx) = cmti_queue.first().copied() {
             cmti_queue.remove(0);
-            handle_cmti(&mut sp, &line, port_name, on_event, &mut cmti_queue);
+            let more = handle_cmti(&mut sp, idx, port_name, on_event);
+            cmti_queue.extend(more);
         } else {
             thread::sleep(Duration::from_millis(150));
         }
@@ -108,15 +111,11 @@ fn drain(sp: &mut Box<dyn serialport::SerialPort>, buf: &mut [u8; 1024]) -> Stri
 
 fn handle_cmti<F>(
     sp: &mut Box<dyn serialport::SerialPort>,
-    line: &str,
+    idx: i32,
     port_name: &str,
     on_event: &F,
-    more: &mut Vec<String>,
-) where F: Fn(LiveEvent) + Send + 'static {
-    let idx = match decoder::parse_cmti_index(line) {
-        Some(i) => i,
-        None => return,
-    };
+) -> Vec<i32>
+where F: Fn(LiveEvent) + Send + 'static {
     let _ = sp.write_all(format!("AT+CMGR={idx}\r").as_bytes());
     let mut sb = String::new();
     let end = Instant::now() + Duration::from_secs(6);
@@ -138,8 +137,11 @@ fn handle_cmti<F>(
         }
         thread::sleep(Duration::from_millis(40));
     }
-    for cap in decoder::find_cmti(&sb) {
-        more.push(cap);
+    let mut more = Vec::new();
+    for line in decoder::find_cmti(&sb) {
+        if let Some(more_idx) = decoder::parse_cmti_index(&line) {
+            more.push(more_idx);
+        }
     }
     if let Some(msg) = decoder::parse_cmgr(&sb, port_name) {
         let _ = on_event(LiveEvent::Sms {
@@ -148,4 +150,5 @@ fn handle_cmti<F>(
             is_new: true,
         });
     }
+    more
 }

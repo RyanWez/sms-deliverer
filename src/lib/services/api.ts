@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { portsStore } from '$lib/stores/ports.svelte';
 import { messagesStore } from '$lib/stores/messages.svelte';
 import { liveStore } from '$lib/stores/live.svelte';
-import type { SmsItem, ToastData } from '$lib/types';
+import type { SmsItem, ToastData, PortInfo } from '$lib/types';
 
 let nextToastId = 1;
 let pollingInterval: ReturnType<typeof setInterval> | null = null;
@@ -18,10 +18,21 @@ function toast(kind: ToastData['kind'], title: string, body: string, otp?: strin
   });
 }
 
+async function refreshFromBackend() {
+  try {
+    const msgs = await invoke<SmsItem[]>('get_messages');
+    messagesStore.items = msgs;
+    const ports = await invoke<PortInfo[]>('get_ports');
+    portsStore.set(ports);
+    liveStore.statusText = await invoke<string>('get_status_text');
+  } catch {
+    // ignore transient backend errors
+  }
+}
+
 export const api = {
   async init() {
-    const ports = await invoke<SmsItem[]>('get_ports');
-    portsStore.set(ports as any);
+    await refreshFromBackend();
 
     await listen<SmsItem>('sms:new', (event) => {
       const item = event.payload as any;
@@ -31,80 +42,87 @@ export const api = {
         otp: item.otp ?? null,
         is_new: true,
       };
-      messagesStore.items = [...messagesStore.items, smsItem];
+      if (!messagesStore.items.some(m => m.id === smsItem.id)) {
+        messagesStore.items = [...messagesStore.items, smsItem];
+      }
       if (smsItem.otp) {
-        toast('Otp', 'New OTP', smsItem.message.text, smsItem.otp);
+        toast('Otp', 'New OTP', smsItem.message.text ?? '', smsItem.otp);
       }
     });
 
-    await listen<any>('sms:ready', (event) => {
-      const payload = event.payload;
-      portsStore.updatePort(payload.port, { live_ready: true });
-      const ready = portsStore.items.filter(p => p.live_ready).map(p => p.name);
-      liveStore.readyPorts = ready;
+    await listen<{ port: string }>('sms:ready', (event) => {
+      portsStore.updatePort(event.payload.port, { live_ready: true });
+      liveStore.readyPorts = portsStore.items
+        .filter(p => p.live_ready)
+        .map(p => p.name);
     });
 
-    pollingInterval = setInterval(async () => {
-      try {
-        const msgs = await invoke<SmsItem[]>('get_messages');
-        if (msgs.length > messagesStore.items.length) {
-          messagesStore.items = msgs;
-        }
-        const status = await invoke<string>('get_status_text');
-        const ports = await invoke<any[]>('get_ports');
-        portsStore.set(ports);
-      } catch {
-        // ignore polling errors
-      }
-    }, 1500);
+    this._startStatusPolling();
   },
 
   async refreshPorts() {
-    const ports = await invoke<any[]>('refresh_ports');
+    const ports = await invoke<PortInfo[]>('refresh_ports');
     portsStore.set(ports);
   },
 
   async startScan() {
-    await invoke('start_scan');
-    this._startStatusPolling();
+    try {
+      await invoke('start_scan');
+    } catch (e) {
+      toast('Danger', 'Scan failed', String(e));
+    }
   },
 
   async startLive() {
-    const ports = await invoke<any[]>('get_ports');
-    portsStore.set(ports);
-    const checked = portsStore.items.filter(p => p.checked);
-    liveStore.on = true;
-    liveStore.totalPorts = checked.length;
-    await invoke('start_live');
+    try {
+      const ports = await invoke<PortInfo[]>('get_ports');
+      portsStore.set(ports);
+      const checked = ports.filter(p => p.checked);
+      liveStore.on = true;
+      liveStore.totalPorts = checked.length;
+      liveStore.readyPorts = [];
+      await invoke('start_live');
+    } catch (e) {
+      liveStore.on = false;
+      toast('Danger', 'Live failed', String(e));
+    }
   },
 
   async stopLive() {
-    await invoke('stop_live');
-    liveStore.on = false;
+    try {
+      await invoke('stop_live');
+    } finally {
+      liveStore.on = false;
+    }
   },
 
   async getSimNumbers() {
-    await invoke('get_sim_numbers');
-    this._startStatusPolling();
+    try {
+      await invoke('get_sim_numbers');
+    } catch (e) {
+      toast('Warning', 'USSD failed', String(e));
+    }
   },
 
   async deleteSelected(ids: number[]) {
     messagesStore.deleteBusy = true;
     try {
       await invoke('delete_selected', { ids });
-      setTimeout(() => {
-        messagesStore.removeByIds(ids);
-        messagesStore.deleteBusy = false;
-      }, 500);
-    } catch {
+    } catch (e) {
+      toast('Danger', 'Delete failed', String(e));
+    } finally {
+      messagesStore.removeByIds(ids);
       messagesStore.deleteBusy = false;
     }
   },
 
   async clearAll() {
-    await invoke('clear_all');
-    messagesStore.items = [];
-    messagesStore.clearSelection();
+    try {
+      await invoke('clear_all');
+    } finally {
+      messagesStore.items = [];
+      messagesStore.clearSelection();
+    }
   },
 
   async togglePortChecked(port: string, checked: boolean) {
@@ -117,19 +135,6 @@ export const api = {
 
   _startStatusPolling() {
     if (pollingInterval) return;
-    pollingInterval = setInterval(async () => {
-      try {
-        const msgs = await invoke<SmsItem[]>('get_messages');
-        messagesStore.items = msgs;
-        const ports = await invoke<any[]>('get_ports');
-        portsStore.set(ports);
-        const status = await invoke<string>('get_status_text');
-        if (status === 'idle' || status === '') {
-          if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
-        }
-      } catch {
-        // ignore
-      }
-    }, 1000);
+    pollingInterval = setInterval(refreshFromBackend, 1500);
   }
 };
