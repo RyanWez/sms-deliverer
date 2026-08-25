@@ -1,0 +1,10 @@
+node_modules
+dist
+target
+src-tauri/target
+.svelte-kit
+*.log
+.env
+.env.*
+.DS_Store
+Thumbs.db

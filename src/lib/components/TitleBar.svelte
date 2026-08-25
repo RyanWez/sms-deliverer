@@ -1,0 +1,62 @@
+<script lang="ts">
+  import { getCurrentWindow } from '@tauri-apps/api/window';
+
+  const appWindow = getCurrentWindow();
+  let maximizing = $state(false);
+
+  async function toggleMaximize() {
+    if (maximizing) {
+      await appWindow.unmaximize();
+      maximizing = false;
+    } else {
+      await appWindow.maximize();
+      maximizing = true;
+    }
+  }
+</script>
+
+<header
+  data-tauri-drag-region
+  class="h-9 flex items-center justify-between px-3 bg-surface border-b border-border select-none shrink-0"
+>
+  <div class="flex items-center gap-2" data-tauri-drag-region>
+    <div class="w-4 h-4 rounded bg-primary/20 flex items-center justify-center">
+      <div class="w-2 h-2 rounded-sm bg-primary"></div>
+    </div>
+    <span class="text-xs font-semibold text-muted-foreground tracking-wide">SIM BANK SMS READER</span>
+  </div>
+
+  <div class="flex items-center gap-0.5">
+    <button
+      class="w-8 h-7 flex items-center justify-center rounded hover:bg-elevated text-muted-foreground hover:text-foreground transition-colors"
+      onclick={() => appWindow.minimize()}
+      title="Minimize"
+    >
+      <svg width="12" height="1" viewBox="0 0 12 1" fill="currentColor"><rect width="12" height="1"/></svg>
+    </button>
+    <button
+      class="w-8 h-7 flex items-center justify-center rounded hover:bg-elevated text-muted-foreground hover:text-foreground transition-colors"
+      onclick={toggleMaximize}
+      title="Maximize"
+    >
+      {#if maximizing}
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1">
+          <rect x="2" y="0" width="8" height="8" rx="1"/><rect x="0" y="2" width="8" height="8" rx="1"/>
+        </svg>
+      {:else}
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1">
+          <rect x="0.5" y="0.5" width="9" height="9" rx="1.5"/>
+        </svg>
+      {/if}
+    </button>
+    <button
+      class="w-8 h-7 flex items-center justify-center rounded hover:bg-danger hover:text-white text-muted-foreground hover:text-foreground transition-colors"
+      onclick={() => appWindow.close()}
+      title="Close"
+    >
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.2">
+        <line x1="1" y1="1" x2="9" y2="9"/><line x1="9" y1="1" x2="1" y2="9"/>
+      </svg>
+    </button>
+  </div>
+</header>
