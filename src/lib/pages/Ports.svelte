@@ -128,10 +128,14 @@
       <button
         class="btn-primary"
         onclick={() => api.getSimNumbers()}
-        disabled={liveStore.on}
+        disabled={liveStore.on || liveStore.ussdBusy}
         title="Get SIM numbers for checked ports"
       >
-        <Icon name="sim" size={14} />
+        {#if liveStore.ussdBusy}
+          <Icon name="loader" size={14} class="animate-spin" />
+        {:else}
+          <Icon name="sim" size={14} />
+        {/if}
         Get SIM Numbers
       </button>
       <button
@@ -355,8 +359,15 @@
   </div>
 
   <footer class="page-footer font-mono">
-    <span class="tabular-nums">Checked: {checkedCount} / {totalPorts}</span>
-    <span class="flex items-center gap-3 tabular-nums">
+    <div class="flex-1 flex items-center gap-4 min-w-0">
+      <span class="tabular-nums shrink-0">Checked: {checkedCount} / {totalPorts}</span>
+      {#if liveStore.statusText}
+        <span class="text-primary truncate" title={liveStore.statusText}>
+          {liveStore.statusText}
+        </span>
+      {/if}
+    </div>
+    <span class="flex items-center gap-3 tabular-nums shrink-0">
       {#if errorCount > 0}
         <span class="text-danger">{errorCount} error{errorCount !== 1 ? 's' : ''}</span>
       {/if}

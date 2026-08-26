@@ -5,7 +5,7 @@
   import { api } from '$lib/services/api';
 
   const busy = $derived(
-    liveStore.on || messagesStore.deleteBusy
+    liveStore.on || messagesStore.deleteBusy || liveStore.scanBusy || liveStore.ussdBusy
   );
 </script>
 
@@ -33,12 +33,15 @@
       onclick={() => api.startScan()}
       title="Read SMS from all checked ports"
     >
+      {#if liveStore.scanBusy}
+        <Icon name="loader" size={14} class="animate-spin" />
+      {/if}
       Scan &amp; Read All
     </button>
 
     <button
       class="{liveStore.on ? 'btn-danger' : 'btn-success'}"
-      disabled={messagesStore.deleteBusy}
+      disabled={messagesStore.deleteBusy || liveStore.scanBusy || liveStore.ussdBusy}
       onclick={() => (liveStore.on ? api.stopLive() : api.startLive())}
       title={liveStore.on ? 'Stop live monitoring' : 'Start live monitoring on checked ports'}
     >
@@ -54,7 +57,11 @@
       onclick={() => api.getSimNumbers()}
       title="Get SIM numbers for checked ports"
     >
-      <Icon name="sim" size={14} />
+      {#if liveStore.ussdBusy}
+        <Icon name="loader" size={14} class="animate-spin" />
+      {:else}
+        <Icon name="sim" size={14} />
+      {/if}
       Get SIM Numbers
     </button>
 
@@ -70,7 +77,11 @@
       }}
       title="Delete selected messages"
     >
-      <Icon name="trash" size={14} />
+      {#if messagesStore.deleteBusy}
+        <Icon name="loader" size={14} class="animate-spin" />
+      {:else}
+        <Icon name="trash" size={14} />
+      {/if}
       Delete Selected ({messagesStore.selectedCount})
     </button>
 
