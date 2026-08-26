@@ -1,7 +1,7 @@
 use crate::core::at;
 use crate::core::decoder;
 use crate::core::models::SmsMessage;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const BAUD: u32 = 115200;
 
@@ -224,32 +224,48 @@ pub fn get_sim_number(port_name: &str) -> (Option<String>, Option<String>) {
 }
 
 fn ussd_query(ch: &mut at::AtChannel, code: &str, timeout_ms: u64) -> Option<String> {
+    let _stale = ch.take_notifications();
     let resp = ch.send(&format!("AT+CUSD=1,\"{code}\",15"), timeout_ms);
-    if let Some(err_line) = resp.lines().find(|l| l.starts_with("+CME ERROR") || l.starts_with("+CMS ERROR")) {
+    if let Some(err_line) = resp
+        .lines()
+        .find(|l| l.starts_with("+CME ERROR") || l.starts_with("+CMS ERROR"))
+    {
         log::warn!("{}: USSD {} rejected ({})", ch.name, code, err_line.trim());
+        ch.take_notifications();
         return None;
     }
-    match ch.wait_notification(timeout_ms) {
-        Some(note) => match decoder::extract_number_from_ussd(&note) {
-            Some(n) => Some(n),
-            None => {
-                log::warn!(
-                    "{}: USSD {} replied without a number: {}",
-                    ch.name,
-                    code,
-                    at::preview(&note, 100)
-                );
-                None
-            }
-        },
-        None => {
+
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
             log::warn!(
                 "{}: USSD {} no reply within {}s",
                 ch.name,
                 code,
                 timeout_ms / 1000
             );
-            None
+            return None;
+        }
+        match ch.wait_notification(remaining.as_millis() as u64) {
+            Some(note) => {
+                if !note.contains('"') {
+                    continue;
+                }
+                match decoder::extract_number_from_ussd(&note) {
+                    Some(n) => return Some(n),
+                    None => {
+                        log::warn!(
+                            "{}: USSD {} replied without a number: {}",
+                            ch.name,
+                            code,
+                            at::preview(&note, 100)
+                        );
+                        return None;
+                    }
+                }
+            }
+            None => continue,
         }
     }
 }

@@ -4,5 +4,6 @@ export function portNum(name: string): number {
 }
 
 export function portLabel(name: string): string {
-  return `Port ${portNum(name)}`;
+  if (name.startsWith('COM')) return name;
+  return `COM${portNum(name)}`;
 }
