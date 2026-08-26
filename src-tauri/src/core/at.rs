@@ -251,7 +251,7 @@ mod tests {
 
     #[test]
     fn send_writes_command_and_returns_response() {
-        let mut fake = FakeTransport::new("\r\nOK\r\n", 1024);
+        let fake = FakeTransport::new("\r\nOK\r\n", 1024);
         let mut ch = AtChannel::with_transport("COM1", Box::new(fake));
         let resp = ch.send("ATE0", 100);
         assert_eq!(resp, "OK\r\n");
