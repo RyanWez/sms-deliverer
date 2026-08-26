@@ -1,5 +1,5 @@
 use crate::core::models::SmsMessage;
-use chrono::{DateTime, Utc, TimeZone, NaiveDate};
+use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -29,38 +29,29 @@ static P2: LazyLock<Regex> = LazyLock::new(|| {
     ))
     .unwrap()
 });
-static P3: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)\b([0-9]{6})\b").unwrap());
-static P4: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)\b([0-9]{4,8})\b").unwrap());
-static HEX_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[0-9A-Fa-f]+$").unwrap());
-static CMGL_HEADER_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\+CMGL:\s*(.+)$").unwrap());
-static CMGR_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\+CMGR:\s*(.+)$").unwrap());
-static CMTI_IDX_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"\+CMTI:\s*"[^"]*",\s*(\d+)"#).unwrap()
-});
+static P3: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b([0-9]{6})\b").unwrap());
+static P4: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b([0-9]{4,8})\b").unwrap());
+static HEX_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9A-Fa-f]+$").unwrap());
+static CMGL_HEADER_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\+CMGL:\s*(.+)$").unwrap());
+static CMGR_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\+CMGR:\s*(.+)$").unwrap());
+static CMTI_IDX_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"\+CMTI:\s*"[^"]*",\s*(\d+)"#).unwrap());
 static CUSD_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"\+CUSD:\s*(\d+),"([^"]*)"(?:,(\d+))?"#).unwrap());
-static NUMBER_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:959|09)\d{8,10}").unwrap());
+static NUMBER_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:959|09)\d{8,10}").unwrap());
 static DATE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(\d{2,4})/(\d{1,2})/(\d{1,2})[ ,](\d{1,2}):(\d{1,2}):(\d{1,2})").unwrap()
 });
-static PDU_DATA_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[0-9A-Fa-f]{8,}$").unwrap());
+static PDU_DATA_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9A-Fa-f]{8,}$").unwrap());
 
 const GSM7_BASIC: [&str; 128] = [
-    "@", "£", "$", "¥", "è", "é", "ù", "ì", "ò", "Ç", "\n", "Ø", "ø", "\r", "Å", "æ",
-    "Æ", "É", "Δ", "Φ", "Γ", "Λ", "Ω", "Π", "Ψ", "Σ", "Θ", "Ξ", "Þ", "ß", "É", " ",
-    " ", "!", "\"", "#", "¤", "%", "&", "'", "(", ")", "*", "+", ",", "-", ".", "/",
-    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ":", ";", "<", "=", ">", "?",
-    "¡", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O",
-    "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "Ä", "Ö", "Ñ", "Ü", "§",
-    "¿", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o",
-    "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "ä", "ö", "ñ", "ü", "à",
+    "@", "£", "$", "¥", "è", "é", "ù", "ì", "ò", "Ç", "\n", "Ø", "ø", "\r", "Å", "æ", "Æ", "É",
+    "Δ", "Φ", "Γ", "Λ", "Ω", "Π", "Ψ", "Σ", "Θ", "Ξ", "Þ", "ß", "É", " ", " ", "!", "\"", "#", "¤",
+    "%", "&", "'", "(", ")", "*", "+", ",", "-", ".", "/", "0", "1", "2", "3", "4", "5", "6", "7",
+    "8", "9", ":", ";", "<", "=", ">", "?", "¡", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J",
+    "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "Ä", "Ö", "Ñ",
+    "Ü", "§", "¿", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p",
+    "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "ä", "ö", "ñ", "ü", "à",
 ];
 
 static GSM7_EXT: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
@@ -167,7 +158,11 @@ pub fn extract_number_from_ussd(resp: &str) -> Option<String> {
             "15" | "0" => false,
             _ => v.len() >= 8 && v.len() % 4 == 0 && is_hex(v),
         };
-        let text = if decode { decode_hex_or_raw(v) } else { v.to_string() };
+        let text = if decode {
+            decode_hex_or_raw(v)
+        } else {
+            v.to_string()
+        };
         NUMBER_RE.find(&text).map(|m| m.as_str().to_string())
     } else {
         NUMBER_RE.find(resp).map(|m| m.as_str().to_string())
@@ -211,7 +206,9 @@ fn split_quoted(s: &str) -> Vec<String> {
 fn parse_date(s: &str) -> DateTime<Utc> {
     if let Some(cap) = DATE_RE.captures(s) {
         let mut yy: i32 = cap[1].parse().unwrap_or(0);
-        if yy < 100 { yy += 2000; }
+        if yy < 100 {
+            yy += 2000;
+        }
         let mm: u32 = cap[2].parse().unwrap_or(1);
         let dd: u32 = cap[3].parse().unwrap_or(1);
         let hh: u32 = cap[4].parse().unwrap_or(0);
@@ -237,7 +234,11 @@ fn parse_cmgl_header(line: &str, decode_from: bool) -> (i32, String, String, Dat
         .get(2)
         .map(|s| {
             let s = s.trim();
-            if decode_from { decode_hex_or_raw(s) } else { s.to_string() }
+            if decode_from {
+                decode_hex_or_raw(s)
+            } else {
+                s.to_string()
+            }
         })
         .unwrap_or_default();
     let mut date_str = f.last().map(|s| s.trim().to_string()).unwrap_or_default();
@@ -323,9 +324,13 @@ pub fn parse_cmgr(resp: &str, port: &str) -> Option<SmsMessage> {
                 }
             }
             status = f.first().map(|s| s.trim().to_string()).unwrap_or_default();
-            from = f.get(1).map(|s| decode_hex_or_raw(s.trim())).unwrap_or_default();
+            from = f
+                .get(1)
+                .map(|s| decode_hex_or_raw(s.trim()))
+                .unwrap_or_default();
             received = parse_date(&date_str);
-        } else if found && !line.is_empty() && !line.starts_with("OK") && !line.starts_with("+CMTI") {
+        } else if found && !line.is_empty() && !line.starts_with("OK") && !line.starts_with("+CMTI")
+        {
             hex_buf.push_str(line);
         }
     }
@@ -377,31 +382,52 @@ fn decode_deliver(pdu_hex: &str, port: &str) -> Option<SmsMessage> {
     let mut i = 0;
     let sca_len = *bytes.get(i)? as usize;
     i += 1 + sca_len;
-    if i >= bytes.len() { return None; }
-    let first = bytes[i]; i += 1;
-    let addr_len = *bytes.get(i)? as usize; i += 1;
-    let toa = *bytes.get(i)?; i += 1;
+    if i >= bytes.len() {
+        return None;
+    }
+    let first = bytes[i];
+    i += 1;
+    let addr_len = *bytes.get(i)? as usize;
+    i += 1;
+    let toa = *bytes.get(i)?;
+    i += 1;
     let addr_bytes = (addr_len + 1) / 2;
-    if i + addr_len > bytes.len() { return None; }
+    if i + addr_len > bytes.len() {
+        return None;
+    }
     let from = if (toa & 0x70) == 0x50 {
         decode_gsm7(&bytes, i, (addr_len * 4) / 7, 0)
     } else {
         semi_octet_address(&bytes, i, addr_bytes, addr_len)
     };
     i += addr_bytes;
-    if i + 2 > bytes.len() { return None; }
-    let dcs = bytes[i + 1]; i += 2;
-    if i + 7 > bytes.len() { return None; }
-    let ts = parse_scts(&bytes, i); i += 7;
-    if i >= bytes.len() { return None; }
-    let udl = *bytes.get(i)? as usize; i += 1;
+    if i + 2 > bytes.len() {
+        return None;
+    }
+    let dcs = bytes[i + 1];
+    i += 2;
+    if i + 7 > bytes.len() {
+        return None;
+    }
+    let ts = parse_scts(&bytes, i);
+    i += 7;
+    if i >= bytes.len() {
+        return None;
+    }
+    let udl = *bytes.get(i)? as usize;
+    i += 1;
     let udh = (first & 0x40) != 0;
     let is_ucs2 = ((dcs >> 2) & 0x03) == 2;
     let text = if is_ucs2 {
         let mut udhl = 0;
-        if udh && i < bytes.len() { udhl = bytes[i] as usize; i += 1 + udhl; }
+        if udh && i < bytes.len() {
+            udhl = bytes[i] as usize;
+            i += 1 + udhl;
+        }
         let mut len = udl.saturating_sub(udhl);
-        if i + len > bytes.len() { len = bytes.len() - i; }
+        if i + len > bytes.len() {
+            len = bytes.len() - i;
+        }
         utf16be_to_string(&bytes, i, len)
     } else {
         let mut septets = udl;
@@ -414,18 +440,31 @@ fn decode_deliver(pdu_hex: &str, port: &str) -> Option<SmsMessage> {
         }
         decode_gsm7(&bytes, i, septets, skip)
     };
-    Some(SmsMessage { port: port.to_string(), index: 0, from, received: ts, status: String::new(), text })
+    Some(SmsMessage {
+        port: port.to_string(),
+        index: 0,
+        from,
+        received: ts,
+        status: String::new(),
+        text,
+    })
 }
 
 fn semi_octet_address(bytes: &[u8], offset: usize, bytes_len: usize, digits: usize) -> String {
     let mut sb = String::new();
     for i in 0..bytes_len.min(digits) {
-        if offset + i >= bytes.len() { break; }
+        if offset + i >= bytes.len() {
+            break;
+        }
         let b = bytes[offset + i];
         sb.push(char::from_digit((b & 0x0F) as u32, 10).unwrap_or('?'));
         if sb.len() < digits {
             let hi = (b >> 4) & 0x0F;
-            sb.push(if hi < 10 { char::from_digit(hi as u32, 10).unwrap() } else { '?' });
+            sb.push(if hi < 10 {
+                char::from_digit(hi as u32, 10).unwrap()
+            } else {
+                '?'
+            });
         }
     }
     sb
@@ -434,7 +473,9 @@ fn semi_octet_address(bytes: &[u8], offset: usize, bytes_len: usize, digits: usi
 fn parse_scts(bytes: &[u8], offset: usize) -> DateTime<Utc> {
     let mut v = [0u8; 7];
     for i in 0..7 {
-        if offset + i >= bytes.len() { break; }
+        if offset + i >= bytes.len() {
+            break;
+        }
         v[i] = ((bytes[offset + i] & 0x0F) << 4) | ((bytes[offset + i] >> 4) & 0x0F);
     }
     NaiveDate::from_ymd_opt(2000 + v[0] as i32, v[1] as u32, v[2] as u32)
@@ -448,7 +489,9 @@ fn utf16be_to_string(bytes: &[u8], offset: usize, byte_len: usize) -> String {
     let mut i = 0;
     while i + 1 < byte_len && offset + i + 1 < bytes.len() {
         let code = ((bytes[offset + i] as u32) << 8) | (bytes[offset + i + 1] as u32);
-        if let Some(c) = char::from_u32(code) { s.push(c); }
+        if let Some(c) = char::from_u32(code) {
+            s.push(c);
+        }
         i += 2;
     }
     s
@@ -460,7 +503,9 @@ fn decode_gsm7(data: &[u8], start: usize, count: usize, skip_septets: usize) -> 
     let mut esc = false;
     for _ in 0..count {
         let byte_idx = start + (bit >> 3);
-        if byte_idx >= data.len() { break; }
+        if byte_idx >= data.len() {
+            break;
+        }
         let shift = bit & 7;
         let mut v = (data[byte_idx] >> shift) as u32;
         if shift > 0 && byte_idx + 1 < data.len() {
@@ -491,7 +536,11 @@ mod tests {
     const GSM7_ALPHABET: &str = "@£$¥èéùìòÇ\nØø\rÅæÆÉΔΦΓΛΩΠΨΣΘΞÞßÉ  !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
 
     fn gsm_index(ch: char) -> u8 {
-        GSM7_ALPHABET.chars().position(|c| c == ch).map(|i| i as u8).unwrap_or(0)
+        GSM7_ALPHABET
+            .chars()
+            .position(|c| c == ch)
+            .map(|i| i as u8)
+            .unwrap_or(0)
     }
 
     fn utf16be_bytes(s: &str) -> Vec<u8> {
@@ -523,7 +572,12 @@ mod tests {
         out
     }
 
-    fn build_deliver_pdu(sender: &str, dcs: u8, payload: &[u8], udl_override: Option<u8>) -> String {
+    fn build_deliver_pdu(
+        sender: &str,
+        dcs: u8,
+        payload: &[u8],
+        udl_override: Option<u8>,
+    ) -> String {
         let mut b: Vec<u8> = Vec::new();
         b.push(0x00); // SCA length 0
         b.push(0x04); // first octet: MTI=deliver, no UDHI
@@ -531,11 +585,15 @@ mod tests {
         b.push(0x91); // TOA: international
         for i in (0..sender.len()).step_by(2) {
             let lo = sender.as_bytes()[i] - b'0';
-            let hi = if i + 1 < sender.len() { sender.as_bytes()[i + 1] - b'0' } else { 0x0F };
+            let hi = if i + 1 < sender.len() {
+                sender.as_bytes()[i + 1] - b'0'
+            } else {
+                0x0F
+            };
             b.push((hi << 4) | lo);
         }
         b.push(0x00); // PID
-        b.push(dcs);  // DCS
+        b.push(dcs); // DCS
         b.extend_from_slice(&[0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x00]); // SCTS
         b.push(udl_override.unwrap_or(payload.len() as u8));
         b.extend_from_slice(payload);
@@ -546,8 +604,14 @@ mod tests {
 
     #[test]
     fn otp_english_keywords() {
-        assert_eq!(extract_otp("Your KBZPay OTP code is 483920. Do not share."), Some("483920".into()));
-        assert_eq!(extract_otp("WavePay verification code: 774213"), Some("774213".into()));
+        assert_eq!(
+            extract_otp("Your KBZPay OTP code is 483920. Do not share."),
+            Some("483920".into())
+        );
+        assert_eq!(
+            extract_otp("WavePay verification code: 774213"),
+            Some("774213".into())
+        );
     }
 
     #[test]
@@ -559,7 +623,10 @@ mod tests {
 
     #[test]
     fn otp_trailing_pattern() {
-        assert_eq!(extract_otp("482931 is your MyID verification code"), Some("482931".into()));
+        assert_eq!(
+            extract_otp("482931 is your MyID verification code"),
+            Some("482931".into())
+        );
     }
 
     #[test]
@@ -643,7 +710,8 @@ mod tests {
 
     #[test]
     fn text_mode_parse_ucs2() {
-        let resp = "+CMGL: 3,\"REC UNREAD\",\"0039003500390035003100320033003400350036003700380039\",\
+        let resp =
+            "+CMGL: 3,\"REC UNREAD\",\"0039003500390035003100320033003400350036003700380039\",\
             \"26/08/24,12:34:56+32\"\n\
             00480069\n\
             OK\n";

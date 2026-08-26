@@ -43,7 +43,8 @@ export function createMessagesStore() {
         if (d < today) return false;
       }
       if (q) {
-        const haystack = `${m.message.from} ${m.message.text} ${m.message.port} ${m.otp ?? ''}`.toLowerCase();
+        const sim = portsStore.find(m.message.port)?.sim_number ?? '';
+        const haystack = `${m.message.from} ${m.message.text} ${m.message.port} ${m.otp ?? ''} ${sim}`.toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       return true;

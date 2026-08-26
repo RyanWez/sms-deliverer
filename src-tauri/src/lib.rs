@@ -1,5 +1,5 @@
-pub mod core;
 pub mod commands;
+pub mod core;
 pub mod logging;
 
 use tauri::Manager;

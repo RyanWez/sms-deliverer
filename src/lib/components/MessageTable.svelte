@@ -156,8 +156,13 @@
           <rect x="4" y="8" width="32" height="24" rx="3"/>
           <polyline points="4,10 20,22 36,10"/>
         </svg>
-        <div class="text-sm font-semibold">No messages yet</div>
-        <div class="text-xs mt-1 opacity-60">Press Scan & Read All or turn on Live Mode</div>
+        {#if messagesStore.items.length > 0}
+          <div class="text-sm font-semibold">No messages match your filters</div>
+          <div class="text-xs mt-1 opacity-60">{messagesStore.items.length} message(s) loaded — try clearing search or filters</div>
+        {:else}
+          <div class="text-sm font-semibold">No messages yet</div>
+          <div class="text-xs mt-1 opacity-60">Press Scan & Read All or turn on Live Mode</div>
+        {/if}
       </div>
     {/if}
   </div>
@@ -169,8 +174,13 @@
           <rect x="4" y="8" width="32" height="24" rx="3"/>
           <polyline points="4,10 20,22 36,10"/>
         </svg>
-        <div class="text-sm font-semibold">No messages yet</div>
-        <div class="text-xs mt-1 opacity-60">Press Scan & Read All or turn on Live Mode</div>
+        {#if messagesStore.items.length > 0}
+          <div class="text-sm font-semibold">No messages match your filters</div>
+          <div class="text-xs mt-1 opacity-60">{messagesStore.items.length} message(s) loaded — try clearing search or filters</div>
+        {:else}
+          <div class="text-sm font-semibold">No messages yet</div>
+          <div class="text-xs mt-1 opacity-60">Press Scan & Read All or turn on Live Mode</div>
+        {/if}
       </div>
     {:else}
       <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));">

@@ -1,30 +1,39 @@
-use crate::core::models::SmsMessage;
+use crate::core::at::AtChannel;
 use crate::core::decoder;
-use crate::core::modem;
-use std::io::{Read, Write};
+use crate::core::models::SmsMessage;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use std::thread;
 
 pub enum LiveEvent {
-    Ready { port: String },
-    Batch { port: String, items: Vec<SmsMessage> },
-    Sms { port: String, message: SmsMessage, is_new: bool },
-    Closed { port: String, error: Option<String> },
+    Ready {
+        port: String,
+    },
+    Batch {
+        port: String,
+        items: Vec<SmsMessage>,
+    },
+    Sms {
+        port: String,
+        message: SmsMessage,
+        is_new: bool,
+    },
+    Closed {
+        port: String,
+        error: Option<String>,
+    },
 }
 
-pub fn run_live<F>(
-    port_name: String,
-    stop: Arc<AtomicBool>,
-    on_event: F,
-) where F: Fn(LiveEvent) + Send + 'static {
+pub fn run_live<F>(port_name: String, stop: Arc<AtomicBool>, on_event: F)
+where
+    F: Fn(LiveEvent) + Send + 'static,
+{
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         run_live_inner(&port_name, &stop, &on_event);
     }));
-    if let Err(_) = result {
+    if result.is_err() {
         log::error!("Live worker crashed: {}", port_name);
-        let _ = on_event(LiveEvent::Closed {
+        on_event(LiveEvent::Closed {
             port: port_name,
             error: Some("Worker crashed".into()),
         });
@@ -32,130 +41,109 @@ pub fn run_live<F>(
 }
 
 fn run_live_inner<F>(port_name: &str, stop: &Arc<AtomicBool>, on_event: &F)
-where F: Fn(LiveEvent) + Send + 'static {
-    let mut sp = match modem::open_port(port_name) {
-        Ok(sp) => sp,
+where
+    F: Fn(LiveEvent) + Send + 'static,
+{
+    let mut ch = match AtChannel::open(port_name) {
+        Ok(ch) => ch,
         Err(e) => {
             log::warn!("Live open {} failed: {}", port_name, e);
-            let _ = on_event(LiveEvent::Closed { port: port_name.to_string(), error: Some(e) });
+            on_event(LiveEvent::Closed {
+                port: port_name.to_string(),
+                error: Some(e),
+            });
             return;
         }
     };
-    let _ = sp.write_all(b"ATE0;+CMGF=1;+CSCS=\"UCS2\"\r");
-    thread::sleep(Duration::from_millis(200));
-    let mut buf = [0u8; 1024];
-    let _ = drain(&mut sp, &mut buf);
-    let _ = sp.write_all(b"AT+CNMI=2,1,0,0,0\r");
-    thread::sleep(Duration::from_millis(200));
-    let _ = drain(&mut sp, &mut buf);
-    let _ = sp.write_all(b"AT+CMGL=\"ALL\"\r");
-    thread::sleep(Duration::from_millis(200));
-    let mut r = String::new();
-    let end = Instant::now() + Duration::from_secs(15);
-    while Instant::now() < end {
-        let mut chunk = [0u8; 1024];
-        if let Ok(n) = sp.read(&mut chunk) {
-            if n > 0 { r.push_str(&String::from_utf8_lossy(&chunk[..n])); }
-        }
-        if r.contains("OK") || r.contains("ERROR") { break; }
-        thread::sleep(Duration::from_millis(15));
+
+    ch.send("ATE0;+CMGF=1;+CSCS=\"UCS2\"", 4000);
+    ch.send("AT+CNMI=2,1,0,0,0", 3000);
+    let stale = ch.take_notifications();
+    if !stale.is_empty() {
+        log::debug!(
+            "{}: dropped {} stale notification(s)",
+            port_name,
+            stale.len()
+        );
     }
+
+    let r = ch.send("AT+CMGL=\"ALL\"", 15000);
     if r.contains("+CMGL:") {
         let initial = decoder::parse_text_mode_list(&r, port_name);
         if !initial.is_empty() {
             log::info!("{}: live initial batch {} msg(s)", port_name, initial.len());
-            let _ = on_event(LiveEvent::Batch { port: port_name.to_string(), items: initial });
+            on_event(LiveEvent::Batch {
+                port: port_name.to_string(),
+                items: initial,
+            });
         }
     }
-    let _ = on_event(LiveEvent::Ready { port: port_name.to_string() });
-    let mut ibuf = String::new();
-    let mut cmti_queue: Vec<i32> = Vec::new();
+    if ch.is_dead() {
+        log::warn!("{}: port lost during startup", port_name);
+        on_event(LiveEvent::Closed {
+            port: port_name.to_string(),
+            error: Some("Port lost".into()),
+        });
+        return;
+    }
+
+    on_event(LiveEvent::Ready {
+        port: port_name.to_string(),
+    });
+
+    let mut queue: VecDeque<i32> = VecDeque::new();
     while !stop.load(Ordering::Relaxed) {
-        let mut chunk = [0u8; 1024];
-        match sp.read(&mut chunk) {
-            Ok(n) if n > 0 => {
-                ibuf.push_str(&String::from_utf8_lossy(&chunk[..n]));
-                    while let Some(pos) = ibuf.find('\n') {
-                        let line: String = ibuf.drain(..=pos).collect();
-                        if let Some(idx) = decoder::parse_cmti_index(line.trim()) {
-                            log::debug!("{}: +CMTI idx {}", port_name, idx);
-                            cmti_queue.push(idx);
-                        }
-                    }
-                if ibuf.len() > 8192 {
-                    let keep = ibuf.len() - 512;
-                    ibuf.drain(..keep);
-                }
+        if let Some(idx) = queue.pop_front() {
+            for more in handle_cmgr(&mut ch, idx, port_name, on_event) {
+                queue.push_back(more);
             }
-            _ => {}
+        } else if let Some(note) = ch.wait_notification(500) {
+            if let Some(idx) = decoder::parse_cmti_index(note.trim()) {
+                log::debug!("{}: +CMTI idx {}", port_name, idx);
+                queue.push_back(idx);
+            }
         }
-        if let Some(idx) = cmti_queue.first().copied() {
-            cmti_queue.remove(0);
-            let more = handle_cmti(&mut sp, idx, port_name, on_event);
-            cmti_queue.extend(more);
-        } else {
-            thread::sleep(Duration::from_millis(150));
+
+        if ch.is_dead() {
+            log::warn!("{}: port lost", port_name);
+            on_event(LiveEvent::Closed {
+                port: port_name.to_string(),
+                error: Some("Port lost".into()),
+            });
+            return;
         }
     }
-    let _ = sp.write_all(b"AT+CNMI=1,0,0,1,0\r");
-    let _ = sp.write_all(b"AT+CSCS=\"GSM\"\r");
-    let _ = on_event(LiveEvent::Closed { port: port_name.to_string(), error: None });
+
+    ch.send("AT+CNMI=1,0,0,1,0", 1500);
+    ch.send("AT+CSCS=\"GSM\"", 1000);
+    on_event(LiveEvent::Closed {
+        port: port_name.to_string(),
+        error: None,
+    });
 }
 
-fn drain(sp: &mut Box<dyn serialport::SerialPort>, buf: &mut [u8; 1024]) -> String {
-    let mut result = String::new();
-    loop {
-        match sp.read(buf) {
-            Ok(n) if n > 0 => result.push_str(&String::from_utf8_lossy(&buf[..n])),
-            _ => break,
-        }
-    }
-    result
-}
+fn handle_cmgr<F>(ch: &mut AtChannel, idx: i32, port_name: &str, on_event: &F) -> Vec<i32>
+where
+    F: Fn(LiveEvent) + Send + 'static,
+{
+    let resp = ch.send(&format!("AT+CMGR={idx}"), 6000);
 
-fn handle_cmti<F>(
-    sp: &mut Box<dyn serialport::SerialPort>,
-    idx: i32,
-    port_name: &str,
-    on_event: &F,
-) -> Vec<i32>
-where F: Fn(LiveEvent) + Send + 'static {
-    let _ = sp.write_all(format!("AT+CMGR={idx}\r").as_bytes());
-    let mut sb = String::new();
-    let end = Instant::now() + Duration::from_secs(6);
-    while Instant::now() < end {
-        let mut chunk = [0u8; 1024];
-        if let Ok(n) = sp.read(&mut chunk) {
-            sb.push_str(&String::from_utf8_lossy(&chunk[..n]));
-        }
-        if sb.contains("\r\nOK") || sb.contains("ERROR") {
-            let end2 = Instant::now() + Duration::from_millis(400);
-            while Instant::now() < end2 {
-                let mut extra = [0u8; 1024];
-                if let Ok(n) = sp.read(&mut extra) {
-                    sb.push_str(&String::from_utf8_lossy(&extra[..n]));
-                }
-                thread::sleep(Duration::from_millis(30));
-            }
-            break;
-        }
-        thread::sleep(Duration::from_millis(40));
-    }
-    let mut more = Vec::new();
-    for line in decoder::find_cmti(&sb) {
-        if let Some(more_idx) = decoder::parse_cmti_index(&line) {
-            more.push(more_idx);
-        }
-    }
-    if let Some(msg) = decoder::parse_cmgr(&sb, port_name) {
+    if let Some(msg) = decoder::parse_cmgr(&resp, port_name) {
         log::info!("{}: live SMS read (idx {})", port_name, idx);
-        let _ = on_event(LiveEvent::Sms {
+        on_event(LiveEvent::Sms {
             port: port_name.to_string(),
             message: msg,
             is_new: true,
         });
     } else {
         log::debug!("{}: CMGR {} -> no message parsed", port_name, idx);
+    }
+
+    let mut more = Vec::new();
+    for note in ch.take_notifications() {
+        if let Some(extra_idx) = decoder::parse_cmti_index(note.trim()) {
+            more.push(extra_idx);
+        }
     }
     more
 }

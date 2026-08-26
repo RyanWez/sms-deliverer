@@ -118,7 +118,13 @@ impl SmsMessage {
 }
 
 pub fn pretty_port(name: &str) -> String {
-    if let Some(num) = name.trim_start_matches("COM").trim_start_matches("ttyUSB").trim_start_matches("ttyACM").parse::<u32>().ok() {
+    if let Some(num) = name
+        .trim_start_matches("COM")
+        .trim_start_matches("ttyUSB")
+        .trim_start_matches("ttyACM")
+        .parse::<u32>()
+        .ok()
+    {
         format!("Port {num}")
     } else {
         name.to_string()

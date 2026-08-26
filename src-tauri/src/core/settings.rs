@@ -47,7 +47,9 @@ impl Settings {
                     match k {
                         "UpdateUrl" => s.update_url = v.to_string(),
                         "SoundOn" => s.sound_on = v == "1" || v.eq_ignore_ascii_case("true"),
-                        "AutoCopyOtp" => s.auto_copy_otp = v == "1" || v.eq_ignore_ascii_case("true"),
+                        "AutoCopyOtp" => {
+                            s.auto_copy_otp = v == "1" || v.eq_ignore_ascii_case("true")
+                        }
                         "AutoExpireHours" => s.auto_expire_hours = v.parse().unwrap_or(48),
                         _ => {}
                     }
@@ -95,7 +97,8 @@ impl Settings {
         let _ = fs::create_dir_all(path.parent().unwrap());
         let mut lines: Vec<(&String, &String)> = self.sim_numbers.iter().collect();
         lines.sort_by_key(|(k, _)| crate::core::modem::port_num(k));
-        let content: String = lines.iter()
+        let content: String = lines
+            .iter()
             .map(|(k, v)| format!("{},{}\n", k, v))
             .collect();
         let _ = fs::write(path, content);
