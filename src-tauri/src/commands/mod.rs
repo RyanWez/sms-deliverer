@@ -1,7 +1,7 @@
 use crate::core::models::*;
 use crate::core::decoder;
 use crate::core::settings::Settings;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tauri::Emitter;
@@ -207,35 +207,49 @@ pub fn get_sim_numbers(
             return Err("Busy".into());
         }
         st.ussd_busy = true;
+        st.status_text = format!("Requesting SIM numbers 0/{}...", ports.len());
     }
     let state_clone = Arc::clone(&state);
     thread::spawn(move || {
         let total = ports.len();
-        let mut found = 0usize;
-        for (done, port) in ports.iter().enumerate() {
-            let (num, _err) = crate::core::modem::get_sim_number(port);
-            if let Some(ref n) = num {
-                found += 1;
-                let mut st = state_clone.lock().unwrap();
-                st.settings.sim_numbers.insert(port.clone(), n.clone());
-                if let Some(p) = st.ports.iter_mut().find(|p| p.name == *port) {
-                    p.sim_number = n.clone();
+        let found = Arc::new(AtomicUsize::new(0));
+        let done = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::with_capacity(total);
+        for port in ports {
+            let st2 = Arc::clone(&state_clone);
+            let found2 = Arc::clone(&found);
+            let done2 = Arc::clone(&done);
+            handles.push(thread::spawn(move || {
+                let (num, _err) = crate::core::modem::get_sim_number(&port);
+                if let Some(ref n) = num {
+                    found2.fetch_add(1, Ordering::Relaxed);
+                    let mut st = st2.lock().unwrap();
+                    st.settings.sim_numbers.insert(port.clone(), n.clone());
+                    if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
+                        p.sim_number = n.clone();
+                    }
                 }
+                let d = done2.fetch_add(1, Ordering::Relaxed) + 1;
+                let mut st = st2.lock().unwrap();
                 st.status_text = format!(
                     "Requesting SIM numbers {}/{}  |  Found: {}",
-                    done + 1,
+                    d,
                     total,
-                    found
+                    found2.load(Ordering::Relaxed)
                 );
-            }
+            }));
         }
+        for h in handles {
+            let _ = h.join();
+        }
+        let f = found.load(Ordering::Relaxed);
         let mut st = state_clone.lock().unwrap();
         st.ussd_busy = false;
         st.settings.save_sim_numbers();
         st.settings.save();
         st.status_text = format!(
             "SIM numbers updated. Found: {}/{}   (saved)",
-            found, total
+            f, total
         );
     });
     Ok("USSD started".into())
