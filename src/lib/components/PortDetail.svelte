@@ -5,7 +5,7 @@
   import { liveStore } from '$lib/stores/live.svelte';
   import { portLabel, portStatus } from '$lib/utils/port';
 
-  let { name, ontoggle }: { name: string; ontoggle: () => void } = $props();
+  let { name, ontoggle, onclose }: { name: string; ontoggle: () => void; onclose: () => void } = $props();
 
   const port = $derived(portsStore.find(name) ?? null);
   const status = $derived(port ? portStatus(port, liveStore.on) : null);
@@ -42,10 +42,9 @@
       <span class="flex-1"></span>
       <button
         class="btn-icon"
-        onclick={() => portsStore.updatePort(port.name, {})}
+        onclick={onclose}
         aria-label="Close port details"
         title="Close details (Esc)"
-        data-close-port
       >
         <Icon name="x" size={14} strokeWidth={2} />
       </button>
@@ -105,7 +104,6 @@
       <button
         class="{port.checked ? 'btn-primary' : 'btn-secondary'} w-full"
         onclick={ontoggle}
-        disabled={!port.checked && false}
         title={port.checked ? 'Exclude this port from scan and live mode' : 'Include this port in scan and live mode'}
       >
         {#if port.checked}
