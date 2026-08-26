@@ -108,11 +108,7 @@
           >
             <div class="flex items-start gap-3">
               <div class="w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center shrink-0">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="text-primary">
-                  <path d="M21 12V7H5V6H3v6h2v6h18v-6h2V7h-4"></path>
-                  <path d="M9 12h6"></path>
-                  <path d="M9 18h6"></path>
-                </svg>
+                <img src="https://img.icons8.com/fluency-systems-regular/96/FFFFFF/internet-hub.png" alt="Port" class="w-5 h-5 opacity-80" />
               </div>
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 mb-1">
