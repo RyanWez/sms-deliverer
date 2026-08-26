@@ -3,6 +3,8 @@
   import type { IconName } from "$lib/icons";
   import { settingsStore } from "$lib/stores/settings.svelte";
   import { api } from "$lib/services/api";
+  import { check } from "@tauri-apps/plugin-updater";
+  import { relaunch } from "@tauri-apps/plugin-process"; // We will add plugin-process just in case, or catch error
 
   const settingsGroups = [
     {
@@ -183,6 +185,14 @@
           max: 168,
           step: 1,
         },
+        {
+          key: "checkNow",
+          label: "Check for Updates Now",
+          description: "Check if a new version is available for download",
+          type: "button" as const,
+          action: "checkUpdates",
+          variant: "primary",
+        },
       ],
     },
     {
@@ -228,6 +238,25 @@
     } else if (action === "clearMessages") {
       if (confirm("Permanently delete ALL messages? This cannot be undone.")) {
         await api.clearAll();
+      }
+    } else if (action === "checkUpdates") {
+      try {
+        const update = await check();
+        if (update) {
+          if (confirm(`Version ${update.version} is available. Do you want to download and install it now?`)) {
+            await update.downloadAndInstall();
+            alert("Update installed successfully. The application will now restart.");
+            try {
+              await relaunch();
+            } catch (e) {
+              alert("Please restart the app manually to apply the update.");
+            }
+          }
+        } else {
+          alert("You are already on the latest version.");
+        }
+      } catch (error) {
+        alert("Failed to check for updates: " + error);
       }
     }
   }
@@ -323,12 +352,12 @@
                         </p>
                       </div>
                       <button
-                        class={field.action === "reset"
-                          ? "btn-danger-quiet shrink-0"
-                          : "btn-danger shrink-0"}
+                        class={field.variant === "danger"
+                          ? (field.action === "reset" ? "btn-danger-quiet shrink-0" : "btn-danger shrink-0")
+                          : "btn-primary shrink-0"}
                         onclick={() => handleAction(field.action)}
                       >
-                        {field.action === "reset" ? "Reset" : "Clear"}
+                        {field.action === "reset" ? "Reset" : field.action === "checkUpdates" ? "Check" : "Clear"}
                       </button>
                     {:else}
                       <label
