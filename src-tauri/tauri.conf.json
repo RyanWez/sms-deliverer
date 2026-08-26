@@ -55,7 +55,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc0NjgyNTBBRTZGQUI2NEMKUldSTXR2cm1DaVZvZEd1Q0dkV085c0VUcWx3dS9yYkxiSlVxR0djYms0TmpzUUZvQmZxNkFjc1QK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFGQjlFQjNGMjYwNkE5NEMKUldSTXFRWW1QK3U1cnpBZnpVU2ZiTWdSVkY5YU9nWWZja2FpU1RGZXF4VU8wa2czYTV5MThZYTkK",
       "endpoints": [
         "https://github.com/RyanWez/sms-deliverer/releases/latest/download/latest.json"
       ],
