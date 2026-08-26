@@ -98,6 +98,14 @@ export const api = {
           .map(p => p.name);
       });
 
+      await listen('scan:done', () => {
+        liveStore.scanBusy = false;
+      });
+
+      await listen('ussd:done', () => {
+        liveStore.ussdBusy = false;
+      });
+
       if (settingsStore.general.autoStartLive && portsStore.items.some(p => p.checked)) {
         void api.startLive(true);
       }
@@ -129,8 +137,10 @@ export const api = {
     }
     try {
       const { invoke } = await import('@tauri-apps/api/core');
+      liveStore.scanBusy = true;
       await invoke('start_scan');
     } catch (e) {
+      liveStore.scanBusy = false;
       toast('Danger', 'Scan failed', String(e));
     }
   },
@@ -187,8 +197,10 @@ export const api = {
     }
     try {
       const { invoke } = await import('@tauri-apps/api/core');
+      liveStore.ussdBusy = true;
       await invoke('get_sim_numbers');
     } catch (e) {
+      liveStore.ussdBusy = false;
       toast('Warning', 'USSD failed', String(e));
     }
   },

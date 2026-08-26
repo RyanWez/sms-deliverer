@@ -2,6 +2,8 @@ import type { ToastData } from '$lib/types';
 
 export function createLiveStore() {
   let on = $state(false);
+  let scanBusy = $state(false);
+  let ussdBusy = $state(false);
   let readyPorts = $state<string[]>([]);
   let totalPorts = $state(0);
   let statusText = $state('');
@@ -21,6 +23,10 @@ export function createLiveStore() {
   return {
     get on() { return on; },
     set on(v: boolean) { on = v; },
+    get scanBusy() { return scanBusy; },
+    set scanBusy(v: boolean) { scanBusy = v; },
+    get ussdBusy() { return ussdBusy; },
+    set ussdBusy(v: boolean) { ussdBusy = v; },
     get readyPorts() { return readyPorts; },
     set readyPorts(v: string[]) { readyPorts = v; },
     get totalPorts() { return totalPorts; },

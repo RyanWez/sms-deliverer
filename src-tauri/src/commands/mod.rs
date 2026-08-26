@@ -229,6 +229,7 @@ pub fn start_scan(
                     st.status_text =
                         scan_done_status(ok_ports, total, st.messages.len(), &st.failed_notes);
                     log::info!("Scan complete: {}", st.status_text);
+                    let _ = app2.emit("scan:done", &serde_json::json!({}));
                 } else {
                     st.status_text = scan_progress_status(
                         st.scan_done,
@@ -341,6 +342,7 @@ pub fn get_sim_numbers(
             text = st.status_text.clone();
         }
         let _ = app2.emit("status:update", &serde_json::json!({ "text": text }));
+        let _ = app2.emit("ussd:done", &serde_json::json!({}));
     });
     Ok("USSD started".into())
 }
