@@ -27,12 +27,53 @@
   }
 
   let hoveredRow = $state<number | null>(null);
+  let containerEl: HTMLElement | undefined = $state();
+  let theadEl: HTMLElement | undefined = $state();
+  let ro: ResizeObserver | null = null;
+
+  function updateAvail() {
+    if (!containerEl) return;
+    let h = containerEl.clientHeight;
+    if (messagesStore.viewMode === 'Table' && theadEl) h -= theadEl.offsetHeight;
+    else h -= 24;
+    messagesStore.setAvail(h);
+  }
+
+  $effect(() => {
+    void messagesStore.viewMode;
+    if (!containerEl) return;
+    updateAvail();
+    ro = new ResizeObserver(() => updateAvail());
+    ro.observe(containerEl);
+    return () => {
+      ro?.disconnect();
+      ro = null;
+    };
+  });
+
+  $effect(() => {
+    void messagesStore.pageRows;
+    if (!containerEl) return;
+    const nodes = containerEl.querySelectorAll<HTMLElement>('[data-id]');
+    if (nodes.length === 0) return;
+    const entries = Array.from(nodes).map(n => ({
+      id: Number(n.dataset.id),
+      h: n.offsetHeight,
+      expanded: messagesStore.isExpanded(Number(n.dataset.id)),
+    }));
+    messagesStore.reportHeights(entries);
+  });
+
+  function toggleText(id: number, e: Event) {
+    e.stopPropagation();
+    messagesStore.toggleExpanded(id);
+  }
 </script>
 
 {#if messagesStore.viewMode === 'Table'}
-  <div class="table-container h-full">
+  <div bind:this={containerEl} class="table-container h-full">
     <table class="table">
-      <thead>
+      <thead bind:this={theadEl}>
         <tr>
           <th class="!w-10">
             <input
@@ -52,8 +93,9 @@
         </tr>
       </thead>
       <tbody>
-        {#each messagesStore.visible as item (item.id)}
+        {#each messagesStore.pageRows as item (item.id)}
           <tr
+            data-id={item.id}
             class:selected={messagesStore.isSelected(item.id)}
             class:hovered={hoveredRow === item.id}
             onmouseenter={() => { hoveredRow = item.id; }}
@@ -77,8 +119,8 @@
             <td>
               {#if item.otp}
                 <button
-                  class="badge-otp cursor-pointer hover:opacity-80 transition-opacity font-mono font-bold"
-                  onclick={() => { navigator.clipboard.writeText(item.otp!); }}
+                  class="badge-otp cursor-pointer hover:opacity-80 transition-opacity font-mono font-bold active:scale-95"
+                  onclick={() => messagesStore.copyOtp(item.otp)}
                   title="Click to copy OTP"
                 >
                   {item.otp}
@@ -87,11 +129,20 @@
                 <span class="text-xs text-muted-foreground">-</span>
               {/if}
             </td>
-            <td class="text-xs text-muted-foreground truncate max-w-xs">
+            <td
+              class="text-xs text-muted-foreground max-w-xs cursor-pointer select-none"
+              class:truncate={!messagesStore.isExpanded(item.id)}
+              onclick={(e) => toggleText(item.id, e)}
+              title={messagesStore.isExpanded(item.id) ? 'Click to collapse' : 'Click to expand'}
+            >
               {#if item.is_new}
                 <span class="w-1.5 h-1.5 rounded-full bg-primary inline-block mr-1.5"></span>
               {/if}
-              {item.message.text.replace(/\n/g, ' ')}
+              {#if messagesStore.isExpanded(item.id)}
+                <span class="whitespace-pre-wrap break-words text-foreground/90 leading-relaxed">{item.message.text}</span>
+              {:else}
+                {item.message.text.replace(/\n/g, ' ')}
+              {/if}
             </td>
           </tr>
         {/each}
@@ -110,7 +161,7 @@
     {/if}
   </div>
 {:else}
-  <div class="p-3 overflow-y-auto h-full">
+  <div bind:this={containerEl} class="p-3 overflow-y-auto h-full">
     {#if messagesStore.visible.length === 0}
       <div class="flex flex-col items-center justify-center h-full py-20 text-muted-foreground">
         <svg width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5" class="mb-3 opacity-30">
@@ -122,9 +173,10 @@
       </div>
     {:else}
       <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));">
-        {#each messagesStore.visible as item (item.id)}
+        {#each messagesStore.pageRows as item (item.id)}
           <button
             type="button"
+            data-id={item.id}
             class="card p-3 hover:bg-elevated/50 transition-all cursor-pointer text-left"
             class:border-primary={messagesStore.isSelected(item.id)}
             class:border={messagesStore.isSelected(item.id)}
@@ -143,9 +195,9 @@
               <span
                 role="button"
                 tabindex="0"
-                class="badge-otp text-sm font-mono font-bold tracking-wider mb-2 cursor-pointer hover:opacity-80 inline-block"
-                onclick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(item.otp!); }}
-                onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); navigator.clipboard.writeText(item.otp!); } }}
+                class="badge-otp text-sm font-mono font-bold tracking-wider mb-2 cursor-pointer hover:opacity-80 inline-block active:scale-95 transition-transform"
+                onclick={(e) => { e.stopPropagation(); messagesStore.copyOtp(item.otp); }}
+                onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); messagesStore.copyOtp(item.otp); } }}
               >
                 {item.otp}
               </span>

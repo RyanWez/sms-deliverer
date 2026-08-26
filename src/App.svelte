@@ -5,6 +5,7 @@
   import Toolbar from '$lib/components/Toolbar.svelte';
   import FilterBar from '$lib/components/FilterBar.svelte';
   import MessageTable from '$lib/components/MessageTable.svelte';
+  import Pagination from '$lib/components/Pagination.svelte';
   import StatsBar from '$lib/components/StatsBar.svelte';
   import ToastContainer from '$lib/components/ToastContainer.svelte';
   import { api } from '$lib/services/api';
@@ -24,6 +25,7 @@
       <div class="flex-1 overflow-hidden">
         <MessageTable />
       </div>
+      <Pagination />
       <StatsBar />
     </main>
   </div>
