@@ -4,8 +4,6 @@
   import MessageTable from '$lib/components/MessageTable.svelte';
   import MessageDetail from '$lib/components/MessageDetail.svelte';
   import Pagination from '$lib/components/Pagination.svelte';
-  import StatsBar from '$lib/components/StatsBar.svelte';
-  import { settingsStore } from '$lib/stores/settings.svelte';
   import { messagesStore } from '$lib/stores/messages.svelte';
 
   function handleKeydown(e: KeyboardEvent) {
@@ -29,7 +27,4 @@
     </section>
     <MessageDetail />
   </div>
-  {#if settingsStore.appearance.compactMode === false}
-    <StatsBar />
-  {/if}
 </div>
