@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from '$lib/components/Icon.svelte';
   import { messagesStore } from '$lib/stores/messages.svelte';
   import { liveStore } from '$lib/stores/live.svelte';
   import { api } from '$lib/services/api';
@@ -8,55 +9,82 @@
   );
 </script>
 
-<div class="flex items-center gap-2 px-4 py-2.5 bg-surface border-b border-border shrink-0 flex-wrap">
-  <button
-    class="btn-primary text-xs h-8"
-    disabled={busy}
-    onclick={() => api.startScan()}
-  >
-    Scan & Read All
-  </button>
+<header class="page-header">
+  <div class="flex items-center gap-3 mr-auto">
+    <h1 class="page-title">Inbox</h1>
+    <span class="badge badge-primary font-mono tabular-nums">
+      {messagesStore.items.length} message{messagesStore.items.length !== 1 ? 's' : ''}
+    </span>
+    <span
+      class="badge {liveStore.on ? 'badge-success' : 'badge-muted'}"
+      title={liveStore.on ? 'Live monitoring active' : 'Live monitoring off'}
+    >
+      <span
+        class="w-1.5 h-1.5 rounded-full {liveStore.on ? 'bg-success animate-pulse-dot' : 'bg-muted-foreground/50'}"
+        aria-hidden="true"></span>
+      {liveStore.on ? `Live ${liveStore.readyPorts.length}/${liveStore.totalPorts}` : 'Live off'}
+    </span>
+  </div>
 
-  <button
-    class="text-xs h-8 px-4 py-2 rounded-md font-medium transition-all duration-150 inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed {liveStore.on ? 'bg-danger text-danger-foreground hover:bg-danger/90' : 'bg-success text-success-foreground hover:bg-success/90'}"
-    disabled={messagesStore.deleteBusy}
-    onclick={() => liveStore.on ? api.stopLive() : api.startLive()}
-  >
-    <span class="w-2 h-2 rounded-full {liveStore.on ? 'bg-white' : 'bg-white/60'}"></span>
-    {liveStore.on ? 'Stop Live' : 'Live Mode'}
-  </button>
+  <div class="flex items-center gap-2 flex-wrap">
+    <button
+      class="btn-primary"
+      disabled={busy}
+      onclick={() => api.startScan()}
+      title="Read SMS from all checked ports"
+    >
+      Scan &amp; Read All
+    </button>
 
-  <button
-    class="btn-warning text-xs h-8"
-    disabled={busy}
-    onclick={() => api.getSimNumbers()}
-  >
-    Get SIM Numbers
-  </button>
+    <button
+      class="{liveStore.on ? 'btn-danger' : 'btn-success'}"
+      disabled={messagesStore.deleteBusy}
+      onclick={() => (liveStore.on ? api.stopLive() : api.startLive())}
+      title={liveStore.on ? 'Stop live monitoring' : 'Start live monitoring on checked ports'}
+    >
+      <span
+        class="w-2 h-2 rounded-full bg-current {liveStore.on ? 'animate-pulse-dot' : ''}"
+        aria-hidden="true"></span>
+      {liveStore.on ? 'Stop Live' : 'Live Mode'}
+    </button>
 
-  <div class="w-px h-5 bg-border mx-1"></div>
+    <button
+      class="btn-secondary"
+      disabled={busy}
+      onclick={() => api.getSimNumbers()}
+      title="Get SIM numbers for checked ports"
+    >
+      <Icon name="sim" size={14} />
+      Get SIM Numbers
+    </button>
 
-  <button
-    class="btn-danger text-xs h-8"
-    disabled={messagesStore.selectedCount === 0 || busy}
-    onclick={() => {
-      if (confirm(`Delete ${messagesStore.selectedCount} message(s)?`)) {
-        api.deleteSelected([...messagesStore.selected]);
-      }
-    }}
-  >
-    Delete Selected ({messagesStore.selectedCount})
-  </button>
+    <div class="w-px h-5 bg-border mx-0.5" role="separator"></div>
 
-  <button
-    class="btn-danger text-xs h-8"
-    disabled={busy}
-    onclick={() => {
-      if (confirm('Delete ALL messages from checked ports?')) {
-        api.clearAll();
-      }
-    }}
-  >
-    Clear All
-  </button>
-</div>
+    <button
+      class="btn-danger"
+      disabled={messagesStore.selectedCount === 0 || busy}
+      onclick={() => {
+        if (confirm(`Delete ${messagesStore.selectedCount} message(s)?`)) {
+          api.deleteSelected([...messagesStore.selected]);
+        }
+      }}
+      title="Delete selected messages"
+    >
+      <Icon name="trash" size={14} />
+      Delete Selected ({messagesStore.selectedCount})
+    </button>
+
+    <button
+      class="btn-danger-quiet"
+      disabled={busy}
+      onclick={() => {
+        if (confirm('Delete ALL messages from checked ports?')) {
+          api.clearAll();
+        }
+      }}
+      title="Clear all messages"
+    >
+      Clear All
+    </button>
+  </div>
+</header>

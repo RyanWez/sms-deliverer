@@ -26,18 +26,18 @@
     <span class="text-xs font-semibold text-muted-foreground tracking-wide">SIM BANK SMS READER</span>
   </div>
 
-  <div class="flex items-center gap-0.5">
+  <div class="flex items-center gap-0.5 self-stretch -mr-3">
     <button
-      class="w-8 h-7 flex items-center justify-center rounded hover:bg-elevated text-muted-foreground hover:text-foreground transition-colors"
+      class="w-10 h-full flex items-center justify-center text-muted-foreground hover:bg-elevated hover:text-foreground transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus-visible:ring-inset"
       onclick={() => appWindow.minimize()}
       title="Minimize"
     >
       <svg width="12" height="1" viewBox="0 0 12 1" fill="currentColor"><rect width="12" height="1"/></svg>
     </button>
     <button
-      class="w-8 h-7 flex items-center justify-center rounded hover:bg-elevated text-muted-foreground hover:text-foreground transition-colors"
+      class="w-10 h-full flex items-center justify-center text-muted-foreground hover:bg-elevated hover:text-foreground transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus-visible:ring-inset"
       onclick={toggleMaximize}
-      title="Maximize"
+      title={maximizing ? 'Restore' : 'Maximize'}
     >
       {#if maximizing}
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1">
@@ -50,7 +50,7 @@
       {/if}
     </button>
     <button
-      class="w-8 h-7 flex items-center justify-center rounded hover:bg-danger hover:text-white text-muted-foreground hover:text-foreground transition-colors"
+      class="w-10 h-full flex items-center justify-center text-muted-foreground hover:bg-danger hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-danger/70 focus-visible:ring-inset"
       onclick={() => appWindow.close()}
       title="Close"
     >

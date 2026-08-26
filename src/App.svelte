@@ -1,13 +1,13 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import TitleBar from '$lib/components/TitleBar.svelte';
-  import Sidebar from '$lib/components/Sidebar.svelte';
-  import ToastContainer from '$lib/components/ToastContainer.svelte';
-  import Inbox from '$lib/pages/Inbox.svelte';
-  import Ports from '$lib/pages/Ports.svelte';
-  import Settings from '$lib/pages/Settings.svelte';
-  import { api } from '$lib/services/api';
-  import { navigationStore } from '$lib/stores/navigation.svelte';
+  import { onMount } from "svelte";
+  import TitleBar from "$lib/components/TitleBar.svelte";
+  import Sidebar from "$lib/components/Sidebar.svelte";
+  import ToastContainer from "$lib/components/ToastContainer.svelte";
+  import Inbox from "$lib/pages/Inbox.svelte";
+  import Ports from "$lib/pages/Ports.svelte";
+  import Settings from "$lib/pages/Settings.svelte";
+  import { api } from "$lib/services/api";
+  import { navigationStore } from "$lib/stores/navigation.svelte";
 
   onMount(() => {
     api.init();
@@ -16,14 +16,14 @@
 
 <div class="h-full flex flex-col bg-background">
   <TitleBar />
-  <div class="flex-1 flex overflow-hidden">
+  <div class="flex-1 flex overflow-hidden min-h-0">
     <Sidebar />
-    <main class="flex-1 flex flex-col overflow-hidden min-w-0">
-      {#if navigationStore.currentSection === 'inbox'}
+    <main class="flex-1 flex flex-col overflow-hidden min-w-0 min-h-0">
+      {#if navigationStore.currentSection === "inbox"}
         <Inbox />
-      {:else if navigationStore.currentSection === 'ports'}
+      {:else if navigationStore.currentSection === "ports"}
         <Ports />
-      {:else if navigationStore.currentSection === 'settings'}
+      {:else if navigationStore.currentSection === "settings"}
         <Settings />
       {/if}
     </main>

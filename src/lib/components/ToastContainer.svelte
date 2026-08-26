@@ -1,37 +1,41 @@
 <script lang="ts">
+  import Icon from '$lib/components/Icon.svelte';
+  import type { IconName } from '$lib/icons';
   import { liveStore } from '$lib/stores/live.svelte';
+  import type { ToastData } from '$lib/types';
 
   const toasts = $derived(liveStore.toasts);
 
-  function kindClass(kind: string): string {
+  function kindMeta(kind: ToastData['kind']): { cls: string; icon: IconName } {
     switch (kind) {
-      case 'Otp': return 'toast-otp';
-      case 'Success': return 'toast-success';
-      case 'Danger': return 'toast-danger';
-      case 'Warning': return 'toast-danger';
-      default: return 'toast-info';
+      case 'Otp': return { cls: 'toast-otp', icon: 'zap' };
+      case 'Success': return { cls: 'toast-success', icon: 'check-circle' };
+      case 'Danger': return { cls: 'toast-danger', icon: 'alert-circle' };
+      case 'Warning': return { cls: 'toast-danger', icon: 'alert-triangle' };
+      default: return { cls: 'toast-info', icon: 'info' };
     }
   }
 </script>
 
-<div class="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
+<div class="toast-container" role="status" aria-live="polite">
   {#each toasts as t (t.id)}
-    <div class="{kindClass(t.kind)} animate-slide-in">
-      <div class="flex-1 min-w-0">
-        <div class="text-xs font-semibold">{t.title}</div>
-        <div class="text-xs opacity-80 truncate">{t.body}</div>
+    {@const meta = kindMeta(t.kind)}
+    <div class={meta.cls}>
+      <span class="toast-icon mt-0.5 shrink-0"><Icon name={meta.icon} size={16} /></span>
+      <div class="toast-body">
+        <div class="toast-title">{t.title}</div>
+        <div class="toast-text">{t.body}</div>
         {#if t.otp}
-          <div class="text-sm font-bold font-mono mt-1 tracking-wider">{t.otp}</div>
+          <div class="toast-otp-value">{t.otp}</div>
         {/if}
       </div>
       <button
-        class="opacity-50 hover:opacity-100 transition-opacity shrink-0"
+        class="btn-icon w-6 h-6 opacity-60 hover:opacity-100"
         onclick={() => liveStore.removeToast(t.id)}
         title="Dismiss"
+        aria-label="Dismiss notification"
       >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
-          <line x1="3" y1="3" x2="9" y2="9"/><line x1="9" y1="3" x2="3" y2="9"/>
-        </svg>
+        <Icon name="x" size={12} strokeWidth={2} />
       </button>
     </div>
   {/each}

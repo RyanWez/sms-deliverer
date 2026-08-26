@@ -1,7 +1,9 @@
 <script lang="ts">
+  import Icon from '$lib/components/Icon.svelte';
   import { messagesStore } from '$lib/stores/messages.svelte';
   import { portsStore } from '$lib/stores/ports.svelte';
   import { portLabel } from '$lib/utils/port';
+  import { fmtDateTime } from '$lib/utils/format';
 
   const allSelected = $derived.by(() =>
     messagesStore.visible.length > 0 && messagesStore.visible.every(m => messagesStore.isSelected(m.id))
@@ -15,11 +17,15 @@
     }
   }
 
-  function fmtTime(received: string): string {
-    if (!received || received === '1970-01-01T00:00:00Z') return '';
-    const d = new Date(received);
-    const pad = (n: number) => n.toString().padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  function inspect(id: number) {
+    messagesStore.setActive(id);
+  }
+
+  function rowKeydown(id: number, e: KeyboardEvent) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      inspect(id);
+    }
   }
 
   function simNumber(port: string): string {
@@ -27,7 +33,6 @@
     return p?.sim_number || '-';
   }
 
-  let hoveredRow = $state<number | null>(null);
   let containerEl: HTMLElement | undefined = $state();
   let theadEl: HTMLElement | undefined = $state();
   let ro: ResizeObserver | null = null;
@@ -64,24 +69,33 @@
     }));
     messagesStore.reportHeights(entries);
   });
-
-  function toggleText(id: number, e: Event) {
-    e.stopPropagation();
-    messagesStore.toggleExpanded(id);
-  }
 </script>
 
+{#snippet emptyState()}
+  <div class="empty-state">
+    <Icon name="message" size={40} strokeWidth={1.25} class="mb-3 opacity-30" />
+    {#if messagesStore.items.length > 0}
+      <div class="empty-state-title">No messages match your filters</div>
+      <div class="empty-state-hint">{messagesStore.items.length} message(s) loaded — try clearing search or filters</div>
+    {:else}
+      <div class="empty-state-title">No messages yet</div>
+      <div class="empty-state-hint">Press Scan &amp; Read All or turn on Live Mode</div>
+    {/if}
+  </div>
+{/snippet}
+
 {#if messagesStore.viewMode === 'Table'}
-  <div bind:this={containerEl} class="table-container h-full">
+  <div bind:this={containerEl} class="table-container h-full border-0 rounded-none">
     <table class="table">
       <thead bind:this={theadEl}>
         <tr>
           <th class="!w-10">
             <input
               type="checkbox"
-              class="w-3.5 h-3.5 rounded border-border bg-surface accent-primary cursor-pointer"
+              class="checkbox w-3.5 h-3.5"
               checked={allSelected}
               onchange={toggleAll}
+              aria-label="Select all visible messages"
             />
           </th>
           <th class="!w-20">Port</th>
@@ -97,30 +111,33 @@
         {#each messagesStore.pageRows as item (item.id)}
           <tr
             data-id={item.id}
+            tabindex="0"
             class:selected={messagesStore.isSelected(item.id)}
-            class:hovered={hoveredRow === item.id}
-            onmouseenter={() => { hoveredRow = item.id; }}
-            onmouseleave={() => { hoveredRow = null; }}
+            class:active={messagesStore.isActive(item.id)}
+            onclick={() => inspect(item.id)}
+            onkeydown={(e) => rowKeydown(item.id, e)}
+            title="View message details"
           >
-            <td>
+            <td onclick={(e) => e.stopPropagation()}>
               <input
                 type="checkbox"
-                class="w-3.5 h-3.5 rounded border-border bg-surface accent-primary cursor-pointer"
+                class="checkbox w-3.5 h-3.5"
                 checked={messagesStore.isSelected(item.id)}
                 onchange={() => messagesStore.toggleSelected(item.id)}
+                aria-label="Select message for deletion"
               />
             </td>
             <td class="font-mono text-xs font-semibold" title={item.message.port}>{portLabel(item.message.port)}</td>
             <td class="font-mono text-xs text-muted-foreground">{simNumber(item.message.port)}</td>
             <td class="text-xs truncate max-w-[120px]">{item.message.from || '-'}</td>
-            <td class="font-mono text-xs text-muted-foreground">{fmtTime(item.message.received)}</td>
+            <td class="font-mono text-xs text-muted-foreground whitespace-nowrap">{fmtDateTime(item.message.received)}</td>
             <td>
-              <span class="badge-muted text-[10px]">{item.message.status || '-'}</span>
+              <span class="badge badge-muted">{item.message.status || '-'}</span>
             </td>
-            <td>
+            <td onclick={(e) => e.stopPropagation()}>
               {#if item.otp}
                 <button
-                  class="badge-otp cursor-pointer hover:opacity-80 transition-opacity font-mono font-bold active:scale-95"
+                  class="badge-otp cursor-pointer font-mono font-bold tracking-wider hover:brightness-110 active:scale-[0.97] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-otp/70"
                   onclick={() => messagesStore.copyOtp(item.otp)}
                   title="Click to copy OTP"
                 >
@@ -130,20 +147,11 @@
                 <span class="text-xs text-muted-foreground">-</span>
               {/if}
             </td>
-            <td
-              class="text-xs text-muted-foreground max-w-xs cursor-pointer select-none"
-              class:truncate={!messagesStore.isExpanded(item.id)}
-              onclick={(e) => toggleText(item.id, e)}
-              title={messagesStore.isExpanded(item.id) ? 'Click to collapse' : 'Click to expand'}
-            >
+            <td class="text-xs text-muted-foreground max-w-xs" class:truncate={!messagesStore.isExpanded(item.id)}>
               {#if item.is_new}
-                <span class="w-1.5 h-1.5 rounded-full bg-primary inline-block mr-1.5"></span>
+                <span class="w-1.5 h-1.5 rounded-full bg-primary inline-block mr-1.5 animate-pulse-dot" title="Unread"></span>
               {/if}
-              {#if messagesStore.isExpanded(item.id)}
-                <span class="whitespace-pre-wrap break-words text-foreground/90 leading-relaxed">{item.message.text}</span>
-              {:else}
-                {item.message.text.replace(/\n/g, ' ')}
-              {/if}
+              {item.message.text.replace(/\n/g, ' ')}
             </td>
           </tr>
         {/each}
@@ -151,64 +159,55 @@
     </table>
 
     {#if messagesStore.visible.length === 0}
-      <div class="flex flex-col items-center justify-center h-full py-20 text-muted-foreground">
-        <svg width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5" class="mb-3 opacity-30">
-          <rect x="4" y="8" width="32" height="24" rx="3"/>
-          <polyline points="4,10 20,22 36,10"/>
-        </svg>
-        {#if messagesStore.items.length > 0}
-          <div class="text-sm font-semibold">No messages match your filters</div>
-          <div class="text-xs mt-1 opacity-60">{messagesStore.items.length} message(s) loaded — try clearing search or filters</div>
-        {:else}
-          <div class="text-sm font-semibold">No messages yet</div>
-          <div class="text-xs mt-1 opacity-60">Press Scan & Read All or turn on Live Mode</div>
-        {/if}
-      </div>
+      {@render emptyState()}
     {/if}
   </div>
 {:else}
-  <div bind:this={containerEl} class="p-3 overflow-y-auto h-full">
+  <div bind:this={containerEl} class="p-4 overflow-y-auto h-full bg-background">
     {#if messagesStore.visible.length === 0}
-      <div class="flex flex-col items-center justify-center h-full py-20 text-muted-foreground">
-        <svg width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5" class="mb-3 opacity-30">
-          <rect x="4" y="8" width="32" height="24" rx="3"/>
-          <polyline points="4,10 20,22 36,10"/>
-        </svg>
-        {#if messagesStore.items.length > 0}
-          <div class="text-sm font-semibold">No messages match your filters</div>
-          <div class="text-xs mt-1 opacity-60">{messagesStore.items.length} message(s) loaded — try clearing search or filters</div>
-        {:else}
-          <div class="text-sm font-semibold">No messages yet</div>
-          <div class="text-xs mt-1 opacity-60">Press Scan & Read All or turn on Live Mode</div>
-        {/if}
-      </div>
+      {@render emptyState()}
     {:else}
       <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));">
         {#each messagesStore.pageRows as item (item.id)}
-          <button
-            type="button"
+          <div
+            role="button"
+            tabindex="0"
             data-id={item.id}
-            class="card p-3 hover:bg-elevated/50 transition-all cursor-pointer text-left"
-            class:border-primary={messagesStore.isSelected(item.id)}
-            class:border={messagesStore.isSelected(item.id)}
-            onclick={() => messagesStore.toggleSelected(item.id)}
+            class="card p-3.5 text-left transition-colors duration-150 cursor-pointer
+                   hover:bg-elevated/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70
+                   {messagesStore.isActive(item.id)
+                     ? 'border-primary bg-primary/5'
+                     : messagesStore.isSelected(item.id) ? 'border-primary/40' : ''}"
+            onclick={() => inspect(item.id)}
+            onkeydown={(e) => rowKeydown(item.id, e)}
+            title="View message details"
           >
             <div class="flex items-center gap-2 mb-2">
+              <input
+                type="checkbox"
+                class="checkbox w-3.5 h-3.5"
+                checked={messagesStore.isSelected(item.id)}
+                onclick={(e) => e.stopPropagation()}
+                onchange={() => messagesStore.toggleSelected(item.id)}
+                onkeydown={(e) => e.stopPropagation()}
+                aria-label="Select message for deletion"
+              />
               <span class="font-mono text-[11px] font-bold text-primary" title={item.message.port}>{portLabel(item.message.port)}</span>
               <span class="font-mono text-[10px] text-muted-foreground">{simNumber(item.message.port)}</span>
               {#if item.is_new}
-                <span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+                <span class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-dot" title="Unread"></span>
               {/if}
               <span class="flex-1"></span>
-              <span class="font-mono text-[10px] text-muted-foreground">{fmtTime(item.message.received)}</span>
+              <span class="font-mono text-[10px] text-muted-foreground tabular-nums">{fmtDateTime(item.message.received)}</span>
             </div>
             {#if item.otp}
               <span
                 role="button"
                 tabindex="0"
-                class="badge-otp text-sm font-mono font-bold tracking-wider mb-2 cursor-pointer hover:opacity-80 inline-block active:scale-95 transition-transform"
+                class="badge-otp text-sm font-mono font-bold tracking-wider mb-2 cursor-pointer hover:brightness-110 inline-block active:scale-[0.97] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-otp/70"
                 onclick={(e) => { e.stopPropagation(); messagesStore.copyOtp(item.otp); }}
                 onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); messagesStore.copyOtp(item.otp); } }}
+                title="Click to copy OTP"
               >
                 {item.otp}
               </span>
@@ -216,7 +215,7 @@
             <div class="text-xs text-muted-foreground leading-relaxed line-clamp-2">
               {item.message.text.replace(/\n/g, ' ')}
             </div>
-          </button>
+          </div>
         {/each}
       </div>
     {/if}

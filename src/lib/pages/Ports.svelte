@@ -1,10 +1,13 @@
 <script lang="ts">
-  import { portsStore } from '$lib/stores/ports.svelte';
-  import { messagesStore } from '$lib/stores/messages.svelte';
-  import { liveStore } from '$lib/stores/live.svelte';
-  import { api } from '$lib/services/api';
-  import { portLabel } from '$lib/utils/port';
-  import type { PortInfo } from '$lib/types';
+  import Icon from "$lib/components/Icon.svelte";
+  import { portsStore } from "$lib/stores/ports.svelte";
+  import { messagesStore } from "$lib/stores/messages.svelte";
+  import { liveStore } from "$lib/stores/live.svelte";
+  import { api } from "$lib/services/api";
+  import { portLabel } from "$lib/utils/port";
+  import type { PortInfo } from "$lib/types";
+
+  let refreshing = $state(false);
 
   const portMessageCounts = $derived.by(() => {
     const counts = new Map<string, number>();
@@ -25,7 +28,13 @@
   });
 
   async function refreshPorts() {
-    await api.refreshPorts();
+    if (refreshing || liveStore.on) return;
+    refreshing = true;
+    try {
+      await api.refreshPorts();
+    } finally {
+      refreshing = false;
+    }
   }
 
   function togglePort(port: PortInfo) {
@@ -35,7 +44,7 @@
 
   function getSimNumber(port: PortInfo) {
     if (port.sim_number) return port.sim_number;
-    return 'Unknown';
+    return "Unknown";
   }
 
   function getMessageCount(port: PortInfo) {
@@ -47,99 +56,135 @@
   }
 
   function formatSimNumber(num: string): string {
-    if (num.length > 15) return num.slice(0, 15) + '…';
+    if (num.length > 15) return num.slice(0, 15) + "…";
     return num;
   }
 </script>
 
-<div class="flex-1 flex flex-col h-full">
-  <header class="flex items-center justify-between px-5 py-4 bg-surface border-b border-border shrink-0 flex-wrap gap-3">
-    <div class="flex items-center gap-3">
-      <h1 class="text-lg font-semibold text-foreground">Ports</h1>
-      <span class="px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-primary/15 text-primary border border-primary/30">
-        {portsStore.items.length} port{portsStore.items.length !== 1 ? 's' : ''}
+<div class="flex-1 flex flex-col h-full overflow-hidden" id="panel-ports">
+  <header class="page-header">
+    <div class="flex items-center gap-3 mr-auto">
+      <h1 class="page-title">Ports</h1>
+      <span class="badge badge-primary font-mono tabular-nums">
+        {portsStore.items.length} port{portsStore.items.length !== 1 ? "s" : ""}
       </span>
     </div>
     <div class="flex items-center gap-2">
       <button
-        class="btn-ghost text-xs h-8"
+        class="btn-secondary"
         onclick={refreshPorts}
-        disabled={liveStore.on}
+        disabled={liveStore.on || refreshing}
         title="Refresh port list"
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="animate-spin" style="animation-play-state: {liveStore.on ? 'running' : 'paused'}">
-          <polyline points="23 4 23 10 17 10"></polyline>
-          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-        </svg>
-        <span>Refresh</span>
+        <Icon
+          name={refreshing ? "loader" : "refresh"}
+          size={14}
+          class={refreshing ? "animate-spin" : ""}
+        />
+        {refreshing ? "Refreshing…" : "Refresh"}
       </button>
       <button
-        class="btn-primary text-xs h-8"
+        class="btn-primary"
         onclick={() => api.getSimNumbers()}
         disabled={liveStore.on}
         title="Get SIM numbers for checked ports"
       >
+        <Icon name="sim" size={14} />
         Get SIM Numbers
       </button>
     </div>
   </header>
 
-  <div class="flex-1 overflow-auto p-5">
+  <div class="flex-1 overflow-auto p-5 bg-background">
     {#if portsStore.items.length === 0}
-      <div class="flex flex-col items-center justify-center h-full py-20 text-muted-foreground">
-        <svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" class="mb-4 opacity-30">
-          <path d="M6 12h36M6 12v24M6 36h36M42 12H6"/>
-          <path d="M18 12v12M30 12v12"/>
-        </svg>
-        <div class="text-sm font-semibold">No ports detected</div>
-        <div class="text-xs mt-1 opacity-60 max-w-xs text-center">
+      <div class="empty-state">
+        <Icon
+          name="ports"
+          size={48}
+          strokeWidth={1.25}
+          class="mb-4 opacity-30"
+        />
+        <div class="empty-state-title">No ports detected</div>
+        <div class="empty-state-hint">
           Connect a GSM modem or SIM bank device and click Refresh
         </div>
-        <button class="btn-primary mt-4" onclick={refreshPorts}>Refresh Ports</button>
+        <button class="btn-primary mt-4" onclick={refreshPorts}
+          >Refresh Ports</button
+        >
       </div>
     {:else}
-      <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));">
+      <div
+        class="grid gap-3"
+        style="grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));"
+      >
         {#each portsStore.items as port (port.name)}
           <article
-            class="card p-4 transition-all duration-200 hover:border-border/80
-                   {port.live_error ? 'border-danger/50 bg-danger/5' : ''}
-                   {port.live_ready ? 'border-success/30' : ''}
+            class="card p-4 transition-colors duration-150 hover:border-muted-foreground/40
+                   {port.live_error ? 'border-danger/50 bg-danger/[0.04]' : ''}
+                   {port.live_ready && !port.live_error
+              ? 'border-success/30'
+              : ''}
                    {port.checked ? '' : 'opacity-60'}"
           >
             <div class="flex items-start gap-3">
-              <div class="w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center shrink-0">
-                <img src="https://img.icons8.com/fluency-systems-regular/96/FFFFFF/internet-hub.png" alt="Port" class="w-5 h-5 opacity-80" />
+              <div
+                class="w-8 h-8 rounded-md flex items-center justify-center shrink-0
+                       {port.live_error
+                  ? 'bg-danger/10 text-danger'
+                  : port.live_ready
+                    ? 'bg-success/10 text-success'
+                    : 'bg-primary/10 text-primary'}"
+                aria-hidden="true"
+              >
+                <Icon name="sim" size={17} />
               </div>
               <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2 mb-1">
-                  <label class="flex items-center gap-1.5 cursor-pointer">
+                <div class="flex items-center gap-2 mb-1 min-w-0">
+                  <label
+                    class="flex items-center gap-2 cursor-pointer group min-w-0"
+                  >
                     <input
                       type="checkbox"
-                      class="w-4 h-4 rounded border-border bg-surface accent-primary cursor-pointer"
+                      class="checkbox w-4 h-4"
                       checked={port.checked}
                       onchange={() => togglePort(port)}
+                      aria-label={`Include ${portLabel(port.name)} in scan`}
                     />
-                    <span class="font-mono text-sm font-semibold text-foreground truncate">{portLabel(port.name)}</span>
+                    <span
+                      class="font-mono text-sm font-semibold text-foreground truncate group-hover:text-primary transition-colors"
+                      >{portLabel(port.name)}</span
+                    >
                   </label>
-                  {#if port.live_ready}
-                    <span class="badge badge-success text-[10px]">LIVE</span>
+                  {#if port.live_ready && !port.live_error}
+                    <span class="badge badge-success"
+                      ><span
+                        class="w-1.5 h-1.5 rounded-full bg-current"
+                        aria-hidden="true"
+                      ></span>LIVE</span
+                    >
                   {:else if port.live_error}
-                    <span class="badge badge-danger text-[10px]">ERROR</span>
+                    <span class="badge badge-danger">ERROR</span>
                   {:else if liveStore.on && port.checked}
-                    <span class="badge badge-warning text-[10px]">CONNECTING</span>
+                    <span class="badge badge-warning"
+                      ><span
+                        class="w-1.5 h-1.5 rounded-full bg-current animate-pulse-dot"
+                        aria-hidden="true"
+                      ></span>CONNECTING</span
+                    >
                   {:else if port.checked}
-                    <span class="badge badge-muted text-[10px]">READY</span>
+                    <span class="badge badge-muted">READY</span>
                   {:else}
-                    <span class="badge badge-muted text-[10px]">DISABLED</span>
+                    <span class="badge badge-muted">DISABLED</span>
                   {/if}
                 </div>
-                <div class="flex items-center gap-3 text-xs text-muted-foreground mb-2">
-                  <span class="flex items-center gap-1 font-mono" title={port.sim_number || 'Unknown'}>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                      <rect x="2" y="4" width="20" height="16" rx="2"></rect>
-                      <line x1="6" y1="8" x2="18" y2="8"></line>
-                      <line x1="6" y1="16" x2="18" y2="16"></line>
-                    </svg>
+                <div
+                  class="flex items-center gap-3 text-xs text-muted-foreground mb-2"
+                >
+                  <span
+                    class="flex items-center gap-1.5 font-mono truncate"
+                    title={port.sim_number || "Unknown"}
+                  >
+                    <Icon name="sim" size={12} />
                     {formatSimNumber(getSimNumber(port))}
                   </span>
                 </div>
@@ -147,38 +192,43 @@
             </div>
 
             <div class="mt-3 pt-3 border-t border-border/50">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-4 text-[11px] text-muted-foreground">
-                  <span class="flex items-center gap-1 font-mono">
-                    <span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+              <div class="flex items-center justify-between gap-2">
+                <div
+                  class="flex items-center gap-4 text-[11px] font-mono text-muted-foreground tabular-nums"
+                >
+                  <span class="flex items-center gap-1.5">
+                    <span
+                      class="w-1.5 h-1.5 rounded-full bg-primary"
+                      aria-hidden="true"
+                    ></span>
                     {getMessageCount(port)} msg
                   </span>
                   {#if getOtpCount(port) > 0}
-                    <span class="flex items-center gap-1 font-mono">
-                      <span class="w-1.5 h-1.5 rounded-full bg-otp"></span>
+                    <span class="flex items-center gap-1.5">
+                      <span
+                        class="w-1.5 h-1.5 rounded-full bg-otp"
+                        aria-hidden="true"
+                      ></span>
                       {getOtpCount(port)} OTP
                     </span>
-                  {/if}
-                </div>
-                <div class="flex items-center gap-1.5">
-                  {#if port.live_error}
-                    <span class="badge badge-danger text-[10px]">{port.live_error}</span>
                   {/if}
                 </div>
               </div>
             </div>
 
             {#if port.live_error}
-              <div class="mt-3 p-2.5 rounded bg-danger/10 border border-danger/20 text-xs text-danger">
-                <div class="flex items-center gap-1.5">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <line x1="12" y1="8" x2="12" y2="12"></line>
-                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
-                  </svg>
-                  <span class="font-medium">Connection Error</span>
+              <div
+                class="mt-3 p-2.5 rounded-md bg-danger/10 border border-danger/25 text-xs text-danger animate-fade-in"
+              >
+                <div class="flex items-center gap-1.5 font-medium">
+                  <Icon name="alert-circle" size={13} strokeWidth={2} />
+                  Connection Error
                 </div>
-                <div class="mt-1 ml-3.5 text-[10px] opacity-80 font-mono">{port.live_error}</div>
+                <div
+                  class="mt-1 ml-[22px] text-[10px] opacity-80 font-mono break-all"
+                >
+                  {port.live_error}
+                </div>
               </div>
             {/if}
           </article>
@@ -187,10 +237,21 @@
     {/if}
   </div>
 
-  <footer class="px-5 py-3 bg-surface border-t border-border shrink-0">
-    <div class="flex items-center justify-between text-[11px] font-mono text-muted-foreground">
-      <span>Checked: {portsStore.items.filter(p => p.checked).length} / {portsStore.items.length}</span>
-      <span>{liveStore.on ? `Live: ${liveStore.readyPorts.length} ready` : 'Live mode off'}</span>
-    </div>
+  <footer class="page-footer font-mono">
+    <span class="tabular-nums"
+      >Checked: {portsStore.items.filter((p) => p.checked).length} / {portsStore
+        .items.length}</span
+    >
+    <span class="flex items-center gap-1.5 tabular-nums">
+      <span
+        class="w-1.5 h-1.5 rounded-full {liveStore.on
+          ? 'bg-success animate-pulse-dot'
+          : 'bg-muted-foreground/50'}"
+        aria-hidden="true"
+      ></span>
+      {liveStore.on
+        ? `Live: ${liveStore.readyPorts.length} ready`
+        : "Live mode off"}
+    </span>
   </footer>
 </div>

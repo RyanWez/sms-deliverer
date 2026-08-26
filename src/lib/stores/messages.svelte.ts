@@ -18,6 +18,7 @@ export function createMessagesStore() {
   let availH = $state(600);
   let measureTick = $state(0);
   let expandedIds = $state<Set<number>>(new Set());
+  let activeId = $state<number | null>(null);
   const hCollapsed = new Map<string, number>();
   const hExpanded = new Map<string, number>();
 
@@ -101,6 +102,18 @@ export function createMessagesStore() {
 
   const selectedCount = $derived.by(() => selected.size);
   const otpCount = $derived.by(() => items.filter(m => m.otp).length);
+  const activeItem = $derived(items.find(m => m.id === activeId) ?? null);
+
+  function isActive(id: number) { return activeId === id; }
+
+  function setActive(id: number | null) {
+    activeId = id;
+    if (id === null) return;
+    const idx = items.findIndex(m => m.id === id);
+    if (idx >= 0 && items[idx].is_new) {
+      items[idx] = { ...items[idx], is_new: false };
+    }
+  }
 
   function isSelected(id: number) { return selected.has(id); }
 
@@ -121,6 +134,7 @@ export function createMessagesStore() {
   function removeByIds(ids: number[]) {
     const idSet = new Set(ids);
     items = items.filter(m => !idSet.has(m.id));
+    if (activeId !== null && idSet.has(activeId)) activeId = null;
     const next = new Set(selected);
     for (const id of ids) next.delete(id);
     selected = next;
@@ -168,6 +182,17 @@ export function createMessagesStore() {
     });
   }
 
+  function copyMessage(text: string) {
+    navigator.clipboard.writeText(text);
+    liveStore.addToast({
+      id: ++toastCounter,
+      kind: 'Success',
+      title: 'Copied',
+      body: 'Message text copied to clipboard',
+      otp: null,
+    });
+  }
+
   function prettyPort(name: string): string {
     const p = portsStore.find(name);
     if (p?.sim_number) return p.sim_number;
@@ -199,6 +224,10 @@ export function createMessagesStore() {
     isExpanded,
     toggleExpanded,
     copyOtp,
+    copyMessage,
+    get activeItem() { return activeItem; },
+    isActive,
+    setActive,
     get selectedCount() { return selectedCount; },
     get otpCount() { return otpCount; },
     isSelected,

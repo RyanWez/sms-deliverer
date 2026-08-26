@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from '$lib/components/Icon.svelte';
   import { messagesStore } from '$lib/stores/messages.svelte';
   import { portsStore } from '$lib/stores/ports.svelte';
   import { portLabel } from '$lib/utils/port';
@@ -15,88 +16,108 @@
   ];
 </script>
 
-<div class="flex items-center gap-2 px-4 py-2 bg-surface border-b border-border shrink-0">
-  {#each filters as f}
-    <button
-      class="px-3 py-1 rounded-full text-xs font-medium transition-all duration-150 border"
-      class:bg-primary={messagesStore.quickFilter === f.value}
-      class:text-primary-foreground={messagesStore.quickFilter === f.value}
-      class:border-primary={messagesStore.quickFilter === f.value}
-      class:bg-transparent={messagesStore.quickFilter !== f.value}
-      class:text-muted-foreground={messagesStore.quickFilter !== f.value}
-      class:border-border={messagesStore.quickFilter !== f.value}
-      class:hover:bg-elevated={messagesStore.quickFilter !== f.value}
-      onclick={() => setFilter(f.value)}
-    >
-      {f.label}
-      {#if f.badge}
-        <span class="ml-1 px-1.5 py-0 rounded-full text-[10px] {messagesStore.quickFilter === f.value ? 'bg-primary/20' : 'bg-muted'}">
-          {f.badge()}
-        </span>
-      {/if}
-    </button>
-  {/each}
+<div class="flex items-center gap-2 px-5 py-2 bg-surface border-b border-border shrink-0 flex-wrap">
+  <div
+    class="flex items-center gap-0.5 p-0.5 rounded-md bg-background border border-border"
+    role="group"
+    aria-label="Quick filters"
+  >
+    {#each filters as f (f.value)}
+      <button
+        class="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-[5px] text-xs font-medium transition-colors duration-150
+               focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70
+               {messagesStore.quickFilter === f.value
+                 ? 'bg-elevated text-foreground shadow-sm'
+                 : 'text-muted-foreground hover:text-foreground'}"
+        aria-pressed={messagesStore.quickFilter === f.value}
+        onclick={() => setFilter(f.value)}
+      >
+        {f.label}
+        {#if f.badge}
+          <span
+            class="px-1.5 min-w-[18px] text-center rounded-full text-[10px] leading-4 tabular-nums
+                   {messagesStore.quickFilter === f.value ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground'}"
+          >
+            {f.badge()}
+          </span>
+        {/if}
+      </button>
+    {/each}
+  </div>
 
   <select
-    class="input w-36 h-7 text-xs !py-0 !px-2"
+    class="input w-40 text-xs py-0 pl-2.5 pr-6"
     value={messagesStore.portFilter ?? ''}
     onchange={(e) => {
       const v = (e.target as HTMLSelectElement).value;
       messagesStore.portFilter = v || null;
     }}
+    aria-label="Filter by port"
   >
     <option value="">Port: All</option>
-    {#each portsStore.items as port}
+    {#each portsStore.items as port (port.name)}
       <option value={port.name}>{port.sim_number || portLabel(port.name)}</option>
     {/each}
   </select>
 
   <div class="flex-1"></div>
 
-  <div class="relative w-52">
+  <div class="relative w-56">
+    <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" aria-hidden="true">
+      <Icon name="search" size={13} />
+    </span>
     <input
       type="text"
-      class="input h-7 text-xs !pr-7"
-      placeholder="Search..."
+      class="input h-7 text-xs py-0 pl-8 pr-7"
+      placeholder="Search messages…"
       value={messagesStore.query}
       oninput={(e) => { messagesStore.query = (e.target as HTMLInputElement).value; }}
+      aria-label="Search messages"
     />
     {#if messagesStore.query}
       <button
-        class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+        class="btn-icon absolute right-1 top-1/2 -translate-y-1/2 w-5 h-5"
         onclick={() => { messagesStore.query = ''; }}
         title="Clear search"
+        aria-label="Clear search"
       >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
-          <line x1="3" y1="3" x2="9" y2="9"/><line x1="9" y1="3" x2="3" y2="9"/>
-        </svg>
+        <Icon name="x" size={11} strokeWidth={2} />
       </button>
     {/if}
   </div>
 
-  <div class="flex border border-border rounded-md overflow-hidden h-7">
+  <div
+    class="flex items-center gap-0.5 p-0.5 rounded-md bg-background border border-border"
+    role="group"
+    aria-label="View mode"
+  >
     <button
-      class="w-8 h-full flex items-center justify-center transition-colors {messagesStore.viewMode === 'Table' ? 'bg-primary/10 text-primary' : 'text-muted-foreground'}"
+      class="w-7 h-6 flex items-center justify-center rounded-[4px] transition-colors duration-150
+             focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70
+             {messagesStore.viewMode === 'Table'
+               ? 'bg-elevated text-foreground shadow-sm'
+               : 'text-muted-foreground hover:text-foreground'}"
+      aria-pressed={messagesStore.viewMode === 'Table'}
       onclick={() => { messagesStore.viewMode = 'Table'; }}
       title="Table view"
     >
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
-        <line x1="1" y1="3" x2="13" y2="3"/><line x1="1" y1="7" x2="13" y2="7"/><line x1="1" y1="11" x2="13" y2="11"/>
-      </svg>
+      <Icon name="table" size={14} />
     </button>
     <button
-      class="w-8 h-full flex items-center justify-center transition-colors {messagesStore.viewMode === 'Cards' ? 'bg-primary/10 text-primary' : 'text-muted-foreground'}"
+      class="w-7 h-6 flex items-center justify-center rounded-[4px] transition-colors duration-150
+             focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70
+             {messagesStore.viewMode === 'Cards'
+               ? 'bg-elevated text-foreground shadow-sm'
+               : 'text-muted-foreground hover:text-foreground'}"
+      aria-pressed={messagesStore.viewMode === 'Cards'}
       onclick={() => { messagesStore.viewMode = 'Cards'; }}
       title="Card view"
     >
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
-        <rect x="1" y="1" width="5" height="5" rx="1"/><rect x="8" y="1" width="5" height="5" rx="1"/>
-        <rect x="1" y="8" width="5" height="5" rx="1"/><rect x="8" y="8" width="5" height="5" rx="1"/>
-      </svg>
+      <Icon name="cards" size={14} />
     </button>
   </div>
 
-  <span class="text-[11px] text-muted-foreground font-mono">
+  <span class="text-xs text-muted-foreground font-mono tabular-nums whitespace-nowrap">
     {messagesStore.visible.length} msgs
   </span>
 </div>

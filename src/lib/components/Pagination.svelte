@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from '$lib/components/Icon.svelte';
   import { messagesStore } from '$lib/stores/messages.svelte';
 
   const total = $derived(messagesStore.totalPages);
@@ -16,33 +17,34 @@
 </script>
 
 {#if messagesStore.visible.length > 0}
-  <div class="h-11 shrink-0 flex items-center px-4 bg-surface border-t border-border gap-4">
-    <div class="flex-1 text-[11px] font-mono text-muted-foreground">
+  <div class="page-footer font-mono">
+    <div class="flex-1 tabular-nums">
       {#if messagesStore.pageRows.length > 0}
         Showing {messagesStore.pageIndexStart + 1}–{messagesStore.pageIndexStart + messagesStore.pageRows.length} of {messagesStore.visible.length}
       {/if}
     </div>
 
-    <div class="flex items-center gap-1.5">
+    <nav class="flex items-center gap-1" aria-label="Pagination">
       <button
-        class="w-8 h-8 rounded-lg border border-border flex items-center justify-center text-muted-foreground transition-all duration-150
-               {cur <= 1 ? 'opacity-30 cursor-default' : 'hover:bg-elevated hover:text-foreground'}"
+        class="btn-icon border border-border w-8 h-7"
         onclick={() => cur > 1 && messagesStore.goTo(cur - 1)}
         disabled={cur <= 1}
         title="Previous page"
+        aria-label="Previous page"
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="15 18 9 12 15 6"/>
-        </svg>
+        <Icon name="chevron-left" size={14} />
       </button>
 
       {#each pageNumbers() as p (p)}
         <button
-          class="w-8 h-8 rounded-lg text-xs font-mono font-semibold border transition-all duration-150
+          class="w-8 h-7 rounded-md text-xs font-semibold border transition-colors duration-150
+                 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus-visible:ring-offset-1 focus-visible:ring-offset-background
+                 disabled:cursor-default
                  {p === cur
-                   ? 'bg-primary/15 border-primary text-primary'
+                   ? 'bg-primary/15 border-primary/50 text-primary'
                    : 'border-border text-muted-foreground hover:bg-elevated hover:text-foreground'}"
-          class:cursor-default={p === cur}
+          aria-current={p === cur ? 'page' : undefined}
+          aria-label={`Page ${p}`}
           onclick={() => p !== cur && messagesStore.goTo(p)}
         >
           {p}
@@ -50,19 +52,17 @@
       {/each}
 
       <button
-        class="w-8 h-8 rounded-lg border border-border flex items-center justify-center text-muted-foreground transition-all duration-150
-               {cur >= total ? 'opacity-30 cursor-default' : 'hover:bg-elevated hover:text-foreground'}"
+        class="btn-icon border border-border w-8 h-7"
         onclick={() => cur < total && messagesStore.goTo(cur + 1)}
         disabled={cur >= total}
         title="Next page"
+        aria-label="Next page"
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="9 18 15 12 9 6"/>
-        </svg>
+        <Icon name="chevron-right" size={14} />
       </button>
-    </div>
+    </nav>
 
-    <div class="flex-1 text-right text-[11px] font-mono text-muted-foreground">
+    <div class="flex-1 text-right tabular-nums">
       Page {cur} / {total}
     </div>
   </div>

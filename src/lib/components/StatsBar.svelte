@@ -4,22 +4,29 @@
   import { liveStore } from '$lib/stores/live.svelte';
 </script>
 
-<div class="h-8 flex items-center gap-4 px-4 bg-surface border-t border-border shrink-0 text-[11px] font-mono text-muted-foreground">
+<div class="page-footer font-mono">
   <span class="truncate flex-1">{liveStore.statusText || (messagesStore.items.length > 0 ? `Total: ${messagesStore.items.length}` : 'Ready')}</span>
-  <span class="flex items-center gap-1.5">
-    <span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+  <span class="w-px h-3.5 bg-border" aria-hidden="true"></span>
+  <span class="flex items-center gap-1.5 whitespace-nowrap tabular-nums">
+    <span class="w-1.5 h-1.5 rounded-full bg-primary" aria-hidden="true"></span>
     {messagesStore.visible.length} shown
   </span>
-  <span class="flex items-center gap-1.5">
-    <span class="w-1.5 h-1.5 rounded-full bg-otp"></span>
+  <span class="w-px h-3.5 bg-border" aria-hidden="true"></span>
+  <span class="flex items-center gap-1.5 whitespace-nowrap tabular-nums">
+    <span class="w-1.5 h-1.5 rounded-full bg-otp" aria-hidden="true"></span>
     {messagesStore.otpCount} OTP
   </span>
-  <span class="flex items-center gap-1.5">
-    <span class="w-1.5 h-1.5 rounded-full {liveStore.on ? 'bg-success' : 'bg-muted'}"></span>
+  <span class="w-px h-3.5 bg-border" aria-hidden="true"></span>
+  <span class="flex items-center gap-1.5 whitespace-nowrap tabular-nums">
+    <span
+      class="w-1.5 h-1.5 rounded-full {liveStore.on ? 'bg-success animate-pulse-dot' : 'bg-muted-foreground/50'}"
+      aria-hidden="true"
+    ></span>
     {liveStore.on ? `LIVE ${liveStore.readyPorts.length}/${liveStore.totalPorts}` : 'live off'}
   </span>
-  <span class="flex items-center gap-1.5">
-    <span class="w-1.5 h-1.5 rounded-full bg-success"></span>
+  <span class="w-px h-3.5 bg-border" aria-hidden="true"></span>
+  <span class="flex items-center gap-1.5 whitespace-nowrap tabular-nums">
+    <span class="w-1.5 h-1.5 rounded-full bg-success" aria-hidden="true"></span>
     {portsStore.items.length} ports
   </span>
 </div>
