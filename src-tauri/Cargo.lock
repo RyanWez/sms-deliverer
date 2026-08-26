@@ -3481,6 +3481,7 @@ dependencies = [
  "crossbeam",
  "directories",
  "hex",
+ "log",
  "rayon",
  "regex",
  "serde",

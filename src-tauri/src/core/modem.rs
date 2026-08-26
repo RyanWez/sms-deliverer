@@ -48,18 +48,40 @@ pub fn port_num(s: &str) -> u32 {
         .parse().unwrap_or(0)
 }
 
+fn preview(s: &str, max_chars: usize) -> String {
+    let mut out: String = s
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(max_chars)
+        .collect();
+    if s.chars().count() > max_chars {
+        out.push('…');
+    }
+    out
+}
+
 pub fn open_port(name: &str) -> Result<Box<dyn serialport::SerialPort>, String> {
-    let sp = serialport::new(name, BAUD)
+    match serialport::new(name, BAUD)
         .data_bits(serialport::DataBits::Eight)
         .parity(serialport::Parity::None)
         .stop_bits(serialport::StopBits::One)
         .timeout(Duration::from_millis(100))
         .open()
-        .map_err(|e| format!("Cannot open {}: {}", name, e))?;
-    Ok(sp)
+    {
+        Ok(sp) => {
+            log::debug!("Port opened: {}", name);
+            Ok(sp)
+        }
+        Err(e) => {
+            let msg = format!("Cannot open {}: {}", name, e);
+            log::warn!("{}", msg);
+            Err(msg)
+        }
+    }
 }
 
 fn send(sp: &mut Box<dyn serialport::SerialPort>, cmd: &str, timeout_ms: u64) -> String {
+    log::debug!(">> {} (timeout {}ms)", cmd, timeout_ms);
     let _ = sp.write_all(format!("{}\r", cmd).as_bytes());
     let _ = sp.flush();
     let mut sb = String::new();
@@ -70,6 +92,7 @@ fn send(sp: &mut Box<dyn serialport::SerialPort>, cmd: &str, timeout_ms: u64) ->
             Ok(n) if n > 0 => {
                 sb.push_str(&String::from_utf8_lossy(&buf[..n]));
                 if sb.contains("OK") || sb.contains("ERROR") {
+                    log::debug!("<< {}", preview(&sb, 200));
                     return sb;
                 }
             }
@@ -77,10 +100,12 @@ fn send(sp: &mut Box<dyn serialport::SerialPort>, cmd: &str, timeout_ms: u64) ->
         }
         thread::sleep(Duration::from_millis(15));
     }
+    log::debug!("<< (timeout) {}", preview(&sb, 200));
     sb
 }
 
 fn send_ussd(sp: &mut Box<dyn serialport::SerialPort>, code: &str, timeout_ms: u64) -> String {
+    log::debug!(">> CUSD {} (timeout {}ms)", code, timeout_ms);
     let _ = sp.write_all(format!("AT+CUSD=1,\"{}\",15\r", code).as_bytes());
     let _ = sp.flush();
     let mut sb = String::new();
@@ -91,6 +116,7 @@ fn send_ussd(sp: &mut Box<dyn serialport::SerialPort>, code: &str, timeout_ms: u
             Ok(n) if n > 0 => {
                 sb.push_str(&String::from_utf8_lossy(&buf[..n]));
                 if sb.contains("+CUSD:") || sb.contains("+CME ERROR") || sb.contains("+CMS ERROR") {
+                    log::debug!("<< {}", preview(&sb, 200));
                     return sb;
                 }
             }
@@ -98,6 +124,7 @@ fn send_ussd(sp: &mut Box<dyn serialport::SerialPort>, code: &str, timeout_ms: u
         }
         thread::sleep(Duration::from_millis(120));
     }
+    log::debug!("<< (timeout) {}", preview(&sb, 200));
     sb
 }
 
@@ -115,20 +142,25 @@ pub fn read_port(port_name: &str) -> ReadResult {
             let r = send(&mut sp, "AT+CMGL=\"ALL\"", 15000);
             if r.contains("+CMGL:") {
                 let msgs = decoder::parse_text_mode_list(&r, port_name);
+                log::info!("{}: text-mode read -> {} msg(s)", port_name, msgs.len());
                 let _ = send(&mut sp, "AT+CSCS=\"GSM\"", 1500);
                 return ReadResult { ok: true, messages: msgs, error: None };
             }
             if r.contains("OK") {
+                log::debug!("{}: text-mode read -> no messages", port_name);
                 let _ = send(&mut sp, "AT+CSCS=\"GSM\"", 1500);
                 return ReadResult { ok: true, messages: vec![], error: None };
             }
+            log::debug!("{}: falling back to PDU mode", port_name);
             send(&mut sp, "AT+CMGF=0", 4000);
             let r2 = send(&mut sp, "AT+CMGL=4", 15000);
             if r2.contains("+CMGL:") {
                 let msgs = decoder::parse_pdu_list(&r2, port_name);
+                log::info!("{}: pdu-mode read -> {} msg(s)", port_name, msgs.len());
                 let _ = send(&mut sp, "AT+CSCS=\"GSM\"", 1500);
                 return ReadResult { ok: true, messages: msgs, error: None };
             }
+            log::warn!("{}: modem not responding", port_name);
             let _ = send(&mut sp, "AT+CSCS=\"GSM\"", 1500);
             ReadResult { ok: false, messages: vec![], error: Some("Modem not responding".into()) }
         }
@@ -145,6 +177,7 @@ pub fn delete_messages(port_name: &str, indices: Option<&[i32]>) -> OpResult {
                 None => {
                     let r = send(&mut sp, "AT+CMGD=1,4", 5000);
                     if r.contains("OK") {
+                        log::info!("{}: deleted all messages (bulk)", port_name);
                         return OpResult { ok: true, error: None, deleted: 0, indices: vec![] };
                     }
                     send(&mut sp, "AT+CSCS=\"UCS2\"", 2000);
@@ -153,12 +186,14 @@ pub fn delete_messages(port_name: &str, indices: Option<&[i32]>) -> OpResult {
                     for idx in &idxs {
                         send(&mut sp, &format!("AT+CMGD={idx}"), 3000);
                     }
+                    log::info!("{}: deleted {} msg(s) (one-by-one)", port_name, idxs.len());
                     OpResult { ok: true, error: None, deleted: idxs.len(), indices: idxs }
                 }
                 Some(idxs) => {
                     for idx in idxs {
                         send(&mut sp, &format!("AT+CMGD={idx}"), 3000);
                     }
+                    log::info!("{}: deleted {} msg(s)", port_name, idxs.len());
                     OpResult { ok: true, error: None, deleted: idxs.len(), indices: idxs.to_vec() }
                 }
             }
@@ -181,8 +216,14 @@ pub fn get_sim_number(port_name: &str) -> (Option<String>, Option<String>) {
             let _ = sp.write_all(b"AT+CUSD=2\r");
             let _ = send(&mut sp, "AT+CSCS=\"GSM\"", 1000);
             match num {
-                Some(n) => (Some(decoder::normalize_number(&n)), None),
-                None => (None, Some("No number returned".into())),
+                Some(n) => {
+                    log::info!("{}: SIM number {}", port_name, n);
+                    (Some(decoder::normalize_number(&n)), None)
+                }
+                None => {
+                    log::warn!("{}: no SIM number returned", port_name);
+                    (None, Some("No number returned".into()))
+                }
             }
         }
         Err(e) => (None, Some(e)),

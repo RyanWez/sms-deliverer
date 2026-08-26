@@ -23,6 +23,7 @@ pub fn run_live<F>(
         run_live_inner(&port_name, &stop, &on_event);
     }));
     if let Err(_) = result {
+        log::error!("Live worker crashed: {}", port_name);
         let _ = on_event(LiveEvent::Closed {
             port: port_name,
             error: Some("Worker crashed".into()),
@@ -35,6 +36,7 @@ where F: Fn(LiveEvent) + Send + 'static {
     let mut sp = match modem::open_port(port_name) {
         Ok(sp) => sp,
         Err(e) => {
+            log::warn!("Live open {} failed: {}", port_name, e);
             let _ = on_event(LiveEvent::Closed { port: port_name.to_string(), error: Some(e) });
             return;
         }
@@ -61,6 +63,7 @@ where F: Fn(LiveEvent) + Send + 'static {
     if r.contains("+CMGL:") {
         let initial = decoder::parse_text_mode_list(&r, port_name);
         if !initial.is_empty() {
+            log::info!("{}: live initial batch {} msg(s)", port_name, initial.len());
             let _ = on_event(LiveEvent::Batch { port: port_name.to_string(), items: initial });
         }
     }
@@ -72,12 +75,13 @@ where F: Fn(LiveEvent) + Send + 'static {
         match sp.read(&mut chunk) {
             Ok(n) if n > 0 => {
                 ibuf.push_str(&String::from_utf8_lossy(&chunk[..n]));
-                while let Some(pos) = ibuf.find('\n') {
-                    let line: String = ibuf.drain(..=pos).collect();
-                    if let Some(idx) = decoder::parse_cmti_index(line.trim()) {
-                        cmti_queue.push(idx);
+                    while let Some(pos) = ibuf.find('\n') {
+                        let line: String = ibuf.drain(..=pos).collect();
+                        if let Some(idx) = decoder::parse_cmti_index(line.trim()) {
+                            log::debug!("{}: +CMTI idx {}", port_name, idx);
+                            cmti_queue.push(idx);
+                        }
                     }
-                }
                 if ibuf.len() > 8192 {
                     let keep = ibuf.len() - 512;
                     ibuf.drain(..keep);
@@ -144,11 +148,14 @@ where F: Fn(LiveEvent) + Send + 'static {
         }
     }
     if let Some(msg) = decoder::parse_cmgr(&sb, port_name) {
+        log::info!("{}: live SMS read (idx {})", port_name, idx);
         let _ = on_event(LiveEvent::Sms {
             port: port_name.to_string(),
             message: msg,
             is_new: true,
         });
+    } else {
+        log::debug!("{}: CMGR {} -> no message parsed", port_name, idx);
     }
     more
 }

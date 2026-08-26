@@ -1,10 +1,13 @@
 pub mod core;
 pub mod commands;
+pub mod logging;
 
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    logging::init();
+    log::info!("SIM Bank SMS Reader starting...");
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
