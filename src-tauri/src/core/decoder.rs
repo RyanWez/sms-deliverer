@@ -1,5 +1,5 @@
 use crate::core::models::SmsMessage;
-use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -40,7 +40,10 @@ static CUSD_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"\+CUSD:\s*(\d+),"([^"]*)"(?:,(\d+))?"#).unwrap());
 static NUMBER_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:959|09)\d{8,10}").unwrap());
 static DATE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(\d{2,4})/(\d{1,2})/(\d{1,2})[ ,](\d{1,2}):(\d{1,2}):(\d{1,2})").unwrap()
+    Regex::new(
+        r"(\d{2,4})/(\d{1,2})/(\d{1,2})[ ,](\d{1,2}):(\d{1,2}):(\d{1,2})(?:\s*([+-])(\d{1,2}))?",
+    )
+    .unwrap()
 });
 static PDU_DATA_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9A-Fa-f]{8,}$").unwrap());
 
@@ -216,7 +219,17 @@ fn parse_date(s: &str) -> DateTime<Utc> {
         let ss: u32 = cap[6].parse().unwrap_or(0);
         if let Some(d) = NaiveDate::from_ymd_opt(yy, mm, dd) {
             if let Some(t) = d.and_hms_opt(hh, mi, ss) {
-                return Utc.from_utc_datetime(&t);
+                let mut utc = Utc.from_utc_datetime(&t);
+                if let (Some(sign), Some(q)) = (cap.get(7), cap.get(8)) {
+                    let quarters: i64 = q.as_str().parse().unwrap_or(0);
+                    let minutes = quarters * 15;
+                    utc = if sign.as_str() == "-" {
+                        utc + Duration::minutes(minutes)
+                    } else {
+                        utc - Duration::minutes(minutes)
+                    };
+                }
+                return utc;
             }
         }
     }
@@ -471,16 +484,32 @@ fn semi_octet_address(bytes: &[u8], offset: usize, bytes_len: usize, digits: usi
 }
 
 fn parse_scts(bytes: &[u8], offset: usize) -> DateTime<Utc> {
-    let mut v = [0u8; 7];
-    for i in 0..7 {
+    let bcd = |b: u8| ((b & 0x0F) as u32) * 10 + ((b >> 4) as u32);
+    let mut v = [0u32; 6];
+    for i in 0..6 {
         if offset + i >= bytes.len() {
             break;
         }
-        v[i] = ((bytes[offset + i] & 0x0F) << 4) | ((bytes[offset + i] >> 4) & 0x0F);
+        v[i] = bcd(bytes[offset + i]);
     }
-    NaiveDate::from_ymd_opt(2000 + v[0] as i32, v[1] as u32, v[2] as u32)
-        .and_then(|d| d.and_hms_opt(v[3] as u32, v[4] as u32, v[5] as u32))
-        .map(|dt| Utc.from_utc_datetime(&dt))
+    let tz_raw = if offset + 6 < bytes.len() {
+        bytes[offset + 6]
+    } else {
+        0
+    };
+    let negative = tz_raw & 0x08 != 0;
+    let quarters = ((tz_raw & 0x07) as i64) * 10 + ((tz_raw >> 4) & 0x0F) as i64;
+    let minutes = quarters * 15;
+    NaiveDate::from_ymd_opt(2000 + v[0] as i32, v[1], v[2])
+        .and_then(|d| d.and_hms_opt(v[3], v[4], v[5]))
+        .map(|dt| {
+            let utc = Utc.from_utc_datetime(&dt);
+            if negative {
+                utc + Duration::minutes(minutes)
+            } else {
+                utc - Duration::minutes(minutes)
+            }
+        })
         .unwrap_or(DateTime::UNIX_EPOCH)
 }
 
@@ -726,6 +755,40 @@ mod tests {
         assert_eq!(m.received.minute(), 34);
     }
 
+    // ── Timezone handling ──
+
+    #[test]
+    fn text_mode_date_applies_modem_timezone() {
+        let dt = parse_date("26/08/26,14:41:45+26");
+        assert_eq!(dt.to_rfc3339(), "2026-08-26T08:11:45+00:00");
+    }
+
+    #[test]
+    fn text_mode_date_negative_offset() {
+        let dt = parse_date("26/08/26,14:41:45-08");
+        assert_eq!(dt.to_rfc3339(), "2026-08-26T16:41:45+00:00");
+    }
+
+    #[test]
+    fn text_mode_date_without_offset_treated_as_utc() {
+        let dt = parse_date("2026/08/26 14:41:45");
+        assert_eq!(dt.to_rfc3339(), "2026-08-26T14:41:45+00:00");
+    }
+
+    #[test]
+    fn scts_applies_pdu_timezone() {
+        let bytes = [0x62, 0x80, 0x62, 0x41, 0x14, 0x54, 0x62];
+        let dt = parse_scts(&bytes, 0);
+        assert_eq!(dt.to_rfc3339(), "2026-08-26T08:11:45+00:00");
+    }
+
+    #[test]
+    fn scts_negative_timezone() {
+        let bytes = [0x62, 0x80, 0x62, 0x41, 0x14, 0x54, 0x6A];
+        let dt = parse_scts(&bytes, 0);
+        assert_eq!(dt.to_rfc3339(), "2026-08-26T21:11:45+00:00");
+    }
+
     // ── PDU decoding ──
 
     #[test]
@@ -743,11 +806,11 @@ mod tests {
     #[test]
     fn pdu_gsm7_deliver() {
         let payload = pack_gsm7("Hello world!");
-        let pdu = build_deliver_pdu("09780001122", 0x00, &payload, Some(12));
+        let pdu = build_deliver_pdu("09680001122", 0x00, &payload, Some(12));
         let m = decode_deliver(&pdu, "COM7");
         assert!(m.is_some());
         let m = m.unwrap();
         assert_eq!(m.text, "Hello world!");
-        assert_eq!(m.from, "09780001122");
+        assert_eq!(m.from, "09680001122");
     }
 }

@@ -149,11 +149,15 @@ fn scan_done_status(ok: usize, total: usize, msgs: usize, failed_notes: &[String
 }
 
 #[tauri::command]
-pub fn start_scan(state: tauri::State<'_, SharedState>) -> Result<String, String> {
+pub fn start_scan(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<String, String> {
     let ports = checked_ports(state.clone());
     if ports.is_empty() {
         return Err("No COM port selected.".into());
     }
+    let initial_status;
     {
         let mut st = state.lock().unwrap();
         if st.scan_busy || st.live_on || st.ussd_busy || st.delete_busy {
@@ -164,13 +168,20 @@ pub fn start_scan(state: tauri::State<'_, SharedState>) -> Result<String, String
         st.messages.clear();
         st.failed_notes.clear();
         st.status_text = scan_progress_status(0, ports.len(), 0, 0);
+        initial_status = st.status_text.clone();
     }
+    let _ = app.emit("messages:reset", &serde_json::json!({}));
+    let _ = app.emit(
+        "status:update",
+        &serde_json::json!({ "text": initial_status }),
+    );
 
     let total = ports.len();
     log::info!("Scan started on {} port(s)", total);
 
     for port in ports {
         let state_clone = Arc::clone(&state);
+        let app2 = app.clone();
         thread::spawn(move || {
             let result = crate::core::modem::read_port(&port);
             let crate::core::modem::ReadResult {
@@ -180,51 +191,64 @@ pub fn start_scan(state: tauri::State<'_, SharedState>) -> Result<String, String
             } = result;
             let count = messages.len();
 
-            let mut st = state_clone.lock().unwrap();
+            let mut new_items: Vec<SmsItem> = Vec::new();
+            let status_text;
+            {
+                let mut st = state_clone.lock().unwrap();
 
-            if !ok {
-                let err = error.unwrap_or_default();
-                log::warn!("Scan {}: FAILED ({})", port, err);
-                st.failed_notes.push(format!("{} ({})", port, err));
-            }
-            for m in messages {
-                let id = st.take_next_id();
-                let otp = decoder::extract_otp(&m.text);
-                st.messages.push(SmsItem {
-                    id,
-                    message: m,
-                    otp,
-                    is_new: false,
-                });
-            }
+                if !ok {
+                    let err = error.unwrap_or_default();
+                    log::warn!("Scan {}: FAILED ({})", port, err);
+                    st.failed_notes.push(format!("{} ({})", port, err));
+                }
+                for m in messages {
+                    let id = st.take_next_id();
+                    let otp = decoder::extract_otp(&m.text);
+                    new_items.push(SmsItem {
+                        id,
+                        message: m,
+                        otp,
+                        is_new: false,
+                    });
+                }
+                if !new_items.is_empty() {
+                    let _ = app2.emit(
+                        "messages:added",
+                        &serde_json::json!({ "items": &new_items }),
+                    );
+                }
+                st.messages.append(&mut new_items);
 
-            st.scan_done += 1;
+                st.scan_done += 1;
 
-            if st.scan_done >= total {
-                st.scan_busy = false;
-                let ok_ports = total - st.failed_notes.len();
-                st.status_text =
-                    scan_done_status(ok_ports, total, st.messages.len(), &st.failed_notes);
-                log::info!("Scan complete: {}", st.status_text);
-            } else {
-                st.status_text = scan_progress_status(
-                    st.scan_done,
-                    total,
-                    st.messages.len(),
-                    st.failed_notes.len(),
-                );
-                if ok && count > 0 {
-                    log::info!(
-                        "Scan {}/{}: {} -> {} msg(s)",
+                if st.scan_done >= total {
+                    st.scan_busy = false;
+                    let ok_ports = total - st.failed_notes.len();
+                    st.status_text =
+                        scan_done_status(ok_ports, total, st.messages.len(), &st.failed_notes);
+                    log::info!("Scan complete: {}", st.status_text);
+                } else {
+                    st.status_text = scan_progress_status(
                         st.scan_done,
                         total,
-                        port,
-                        count
+                        st.messages.len(),
+                        st.failed_notes.len(),
                     );
-                } else if ok {
-                    log::debug!("Scan {}/{}: {} -> no messages", st.scan_done, total, port);
+                    if ok && count > 0 {
+                        log::info!(
+                            "Scan {}/{}: {} -> {} msg(s)",
+                            st.scan_done,
+                            total,
+                            port,
+                            count
+                        );
+                    } else if ok {
+                        log::debug!("Scan {}/{}: {} -> no messages", st.scan_done, total, port);
+                    }
                 }
+                status_text = st.status_text.clone();
             }
+            let _ = app2.emit("status:update", &serde_json::json!({ "text": status_text }));
         });
     }
 
@@ -232,7 +256,10 @@ pub fn start_scan(state: tauri::State<'_, SharedState>) -> Result<String, String
 }
 
 #[tauri::command]
-pub fn get_sim_numbers(state: tauri::State<'_, SharedState>) -> Result<String, String> {
+pub fn get_sim_numbers(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<String, String> {
     let ports = checked_ports(state.clone());
     if ports.is_empty() {
         return Err("No COM port selected.".into());
@@ -246,6 +273,7 @@ pub fn get_sim_numbers(state: tauri::State<'_, SharedState>) -> Result<String, S
         st.status_text = format!("Requesting SIM numbers 0/{}...", ports.len());
     }
     let state_clone = Arc::clone(&state);
+    let app2 = app.clone();
     thread::spawn(move || {
         let total = ports.len();
         let found = Arc::new(AtomicUsize::new(0));
@@ -255,16 +283,25 @@ pub fn get_sim_numbers(state: tauri::State<'_, SharedState>) -> Result<String, S
             let st2 = Arc::clone(&state_clone);
             let found2 = Arc::clone(&found);
             let done2 = Arc::clone(&done);
+            let app3 = app2.clone();
             handles.push(thread::spawn(move || {
                 let (num, err) = crate::core::modem::get_sim_number(&port);
                 if let Some(ref n) = num {
                     found2.fetch_add(1, Ordering::Relaxed);
                     log::info!("USSD {} -> {}", port, n);
-                    let mut st = st2.lock().unwrap();
-                    st.settings.sim_numbers.insert(port.clone(), n.clone());
-                    if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
-                        p.sim_number = n.clone();
+                    let ports_snapshot;
+                    {
+                        let mut st = st2.lock().unwrap();
+                        st.settings.sim_numbers.insert(port.clone(), n.clone());
+                        if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
+                            p.sim_number = n.clone();
+                        }
+                        ports_snapshot = st.ports.clone();
                     }
+                    let _ = app3.emit(
+                        "ports:updated",
+                        &serde_json::json!({ "ports": ports_snapshot }),
+                    );
                 } else {
                     log::warn!(
                         "USSD {} -> no number ({})",
@@ -273,25 +310,35 @@ pub fn get_sim_numbers(state: tauri::State<'_, SharedState>) -> Result<String, S
                     );
                 }
                 let d = done2.fetch_add(1, Ordering::Relaxed) + 1;
-                let mut st = st2.lock().unwrap();
-                st.status_text = format!(
-                    "Requesting SIM numbers {}/{}  |  Found: {}",
-                    d,
-                    total,
-                    found2.load(Ordering::Relaxed)
-                );
+                let text;
+                {
+                    let mut st = st2.lock().unwrap();
+                    st.status_text = format!(
+                        "Requesting SIM numbers {}/{}  |  Found: {}",
+                        d,
+                        total,
+                        found2.load(Ordering::Relaxed)
+                    );
+                    text = st.status_text.clone();
+                }
+                let _ = app3.emit("status:update", &serde_json::json!({ "text": text }));
             }));
         }
         for h in handles {
             let _ = h.join();
         }
         let f = found.load(Ordering::Relaxed);
-        let mut st = state_clone.lock().unwrap();
-        st.ussd_busy = false;
-        st.settings.save_sim_numbers();
-        st.settings.save();
-        st.status_text = format!("SIM numbers updated. Found: {}/{}   (saved)", f, total);
-        log::info!("USSD done: {}", st.status_text);
+        let text;
+        {
+            let mut st = state_clone.lock().unwrap();
+            st.ussd_busy = false;
+            st.settings.save_sim_numbers();
+            st.settings.save();
+            st.status_text = format!("SIM numbers updated. Found: {}/{}   (saved)", f, total);
+            log::info!("USSD done: {}", st.status_text);
+            text = st.status_text.clone();
+        }
+        let _ = app2.emit("status:update", &serde_json::json!({ "text": text }));
     });
     Ok("USSD started".into())
 }
@@ -345,6 +392,11 @@ pub fn start_live(
         st.status_text = format!("Starting live on {} port(s)...", ports.len());
         log::info!("Live starting on {} port(s)", ports.len());
     }
+    let _ = app.emit("messages:reset", &serde_json::json!({}));
+    let _ = app.emit(
+        "status:update",
+        &serde_json::json!({ "text": format!("Starting live on {} port(s)...", ports.len()) }),
+    );
     let state_clone = Arc::clone(&state);
     thread::spawn(move || {
         let shared_stop = {
@@ -375,16 +427,26 @@ pub fn start_live(
                     crate::core::live::LiveEvent::Batch { port: _port, items } => {
                         let n = items.len();
                         log::info!("{} -> initial batch {} msg(s)", _port, n);
-                        let mut st = st2.lock().unwrap();
-                        for m in items {
-                            let id = st.take_next_id();
-                            let otp = crate::core::decoder::extract_otp(&m.text);
-                            st.messages.push(SmsItem {
-                                id,
-                                message: m,
-                                otp,
-                                is_new: false,
-                            });
+                        let mut new_items: Vec<SmsItem> = Vec::new();
+                        {
+                            let mut st = st2.lock().unwrap();
+                            for m in items {
+                                let id = st.take_next_id();
+                                let otp = crate::core::decoder::extract_otp(&m.text);
+                                new_items.push(SmsItem {
+                                    id,
+                                    message: m,
+                                    otp,
+                                    is_new: false,
+                                });
+                            }
+                            if !new_items.is_empty() {
+                                let _ = app2.emit(
+                                    "messages:added",
+                                    &serde_json::json!({ "items": &new_items }),
+                                );
+                            }
+                            st.messages.append(&mut new_items);
                         }
                     }
                     crate::core::live::LiveEvent::Sms {
@@ -416,16 +478,21 @@ pub fn start_live(
                         );
                     }
                     crate::core::live::LiveEvent::Closed { port, error } => {
-                        let mut st = st2.lock().unwrap();
-                        if let Some(e) = error {
-                            log::warn!("Live {} closed: {}", port, e);
-                            if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
-                                p.live_ready = false;
-                                p.live_error = Some(e.clone());
+                        let text;
+                        {
+                            let mut st = st2.lock().unwrap();
+                            if let Some(e) = error {
+                                log::warn!("Live {} closed: {}", port, e);
+                                if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
+                                    p.live_ready = false;
+                                    p.live_error = Some(e.clone());
+                                }
+                                st.live_failed.push((port.clone(), e.clone()));
+                                st.status_text = format!("{} FAILED: {}", port, e);
                             }
-                            st.live_failed.push((port.clone(), e.clone()));
-                            st.status_text = format!("{} FAILED: {}", port, e);
+                            text = st.status_text.clone();
                         }
+                        let _ = app2.emit("status:update", &serde_json::json!({ "text": text }));
                     }
                 };
                 crate::core::live::run_live(port, stop, sender);
@@ -434,16 +501,21 @@ pub fn start_live(
         for h in handles {
             let _ = h.join();
         }
-        let mut st = state_clone.lock().unwrap();
-        st.live_on = false;
-        st.live_stop = None;
-        st.status_text = format!("Live stopped. Messages: {}", st.messages.len());
+        let text;
+        {
+            let mut st = state_clone.lock().unwrap();
+            st.live_on = false;
+            st.live_stop = None;
+            st.status_text = format!("Live stopped. Messages: {}", st.messages.len());
+            text = st.status_text.clone();
+        }
+        let _ = app.emit("status:update", &serde_json::json!({ "text": text }));
     });
     Ok("Live started".into())
 }
 
 #[tauri::command]
-pub fn stop_live(state: tauri::State<'_, SharedState>) {
+pub fn stop_live(app: tauri::AppHandle, state: tauri::State<'_, SharedState>) {
     let mut st = state.lock().unwrap();
     if let Some(ref stop) = st.live_stop {
         stop.store(true, Ordering::Relaxed);
@@ -451,10 +523,14 @@ pub fn stop_live(state: tauri::State<'_, SharedState>) {
     st.live_on = false;
     st.status_text = "Stopping live...".into();
     log::info!("Live stop requested");
+    let text = st.status_text.clone();
+    drop(st);
+    let _ = app.emit("status:update", &serde_json::json!({ "text": text }));
 }
 
 #[tauri::command]
 pub fn delete_selected(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     ids: Vec<u64>,
 ) -> Result<String, String> {
@@ -485,6 +561,7 @@ pub fn delete_selected(
         st.delete_busy = true;
     }
     let state_clone = Arc::clone(&state);
+    let app2 = app.clone();
     thread::spawn(move || {
         let mut ok = 0usize;
         let mut fail = 0usize;
@@ -502,20 +579,30 @@ pub fn delete_selected(
                 );
             }
         }
-        let mut st = state_clone.lock().unwrap();
-        st.delete_busy = false;
-        st.messages.retain(|m| !ids.contains(&m.id));
-        st.status_text = format!("Deleted: {} ok, {} fail", ok, fail);
-        log::info!("{}", st.status_text);
+        let text;
+        {
+            let mut st = state_clone.lock().unwrap();
+            st.delete_busy = false;
+            st.messages.retain(|m| !ids.contains(&m.id));
+            st.status_text = format!("Deleted: {} ok, {} fail", ok, fail);
+            log::info!("{}", st.status_text);
+            text = st.status_text.clone();
+        }
+        let _ = app2.emit("messages:removed", &serde_json::json!({ "ids": &ids }));
+        let _ = app2.emit("status:update", &serde_json::json!({ "text": text }));
     });
     Ok("Delete started".into())
 }
 
 #[tauri::command]
-pub fn clear_all(state: tauri::State<'_, SharedState>) {
+pub fn clear_all(app: tauri::AppHandle, state: tauri::State<'_, SharedState>) {
     let mut st = state.lock().unwrap();
     st.messages.clear();
     st.status_text = "Cleared".into();
+    let text = st.status_text.clone();
+    drop(st);
+    let _ = app.emit("messages:reset", &serde_json::json!({}));
+    let _ = app.emit("status:update", &serde_json::json!({ "text": text }));
 }
 
 #[cfg(test)]

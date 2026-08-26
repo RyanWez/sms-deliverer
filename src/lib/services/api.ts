@@ -6,7 +6,6 @@ import { liveStore } from '$lib/stores/live.svelte';
 import type { SmsItem, ToastData, PortInfo } from '$lib/types';
 
 let nextToastId = 1;
-let pollingInterval: ReturnType<typeof setInterval> | null = null;
 
 function toast(kind: ToastData['kind'], title: string, body: string, otp?: string | null) {
   liveStore.addToast({
@@ -34,6 +33,31 @@ export const api = {
   async init() {
     await refreshFromBackend();
 
+    await listen('messages:reset', () => {
+      messagesStore.items = [];
+      messagesStore.clearSelection();
+    });
+
+    await listen<{ items: SmsItem[] }>('messages:added', (event) => {
+      const existing = new Set(messagesStore.items.map((m) => m.id));
+      const incoming = event.payload.items.filter((i) => !existing.has(i.id));
+      if (incoming.length > 0) {
+        messagesStore.items = [...messagesStore.items, ...incoming];
+      }
+    });
+
+    await listen<{ ids: number[] }>('messages:removed', (event) => {
+      messagesStore.removeByIds(event.payload.ids);
+    });
+
+    await listen<{ ports: PortInfo[] }>('ports:updated', (event) => {
+      portsStore.set(event.payload.ports);
+    });
+
+    await listen<{ text: string }>('status:update', (event) => {
+      liveStore.statusText = event.payload.text;
+    });
+
     await listen<SmsItem>('sms:new', (event) => {
       const item = event.payload as any;
       const smsItem: SmsItem = {
@@ -56,8 +80,6 @@ export const api = {
         .filter(p => p.live_ready)
         .map(p => p.name);
     });
-
-    this._startStatusPolling();
   },
 
   async refreshPorts() {
@@ -132,9 +154,4 @@ export const api = {
   async setAllPortsChecked(checked: boolean) {
     await invoke('set_all_ports_checked', { checked });
   },
-
-  _startStatusPolling() {
-    if (pollingInterval) return;
-    pollingInterval = setInterval(refreshFromBackend, 1500);
-  }
 };

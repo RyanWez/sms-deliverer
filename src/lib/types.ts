@@ -59,3 +59,67 @@ export interface AppState {
   status_text: string;
   failed_notes: string[];
 }
+
+export type NavSection = 'inbox' | 'ports' | 'settings';
+
+export interface SettingsState {
+  general: {
+    autoStartLive: boolean;
+    minimizeToTray: boolean;
+    confirmDelete: boolean;
+    portRefreshInterval: number;
+  };
+  notifications: {
+    enabled: boolean;
+    soundEnabled: boolean;
+    desktopNotifications: boolean;
+    otpOnlyNotifications: boolean;
+  };
+  otp: {
+    autoCopy: boolean;
+    showInTable: boolean;
+    highlightNewOtp: boolean;
+    otpPattern: string;
+  };
+  appearance: {
+    theme: 'system' | 'dark' | 'light';
+    compactMode: boolean;
+    showSIMColumn: boolean;
+    showPortColumn: boolean;
+  };
+  updates: {
+    autoCheck: boolean;
+    checkInterval: number;
+  };
+}
+
+export const DEFAULT_SETTINGS: SettingsState = {
+  general: {
+    autoStartLive: false,
+    minimizeToTray: false,
+    confirmDelete: true,
+    portRefreshInterval: 30,
+  },
+  notifications: {
+    enabled: true,
+    soundEnabled: true,
+    desktopNotifications: true,
+    otpOnlyNotifications: false,
+  },
+  otp: {
+    autoCopy: false,
+    showInTable: true,
+    highlightNewOtp: true,
+    otpPattern: '\\b(\\d{4,8})\\b',
+  },
+  appearance: {
+    theme: 'system',
+    compactMode: false,
+    showSIMColumn: true,
+    showPortColumn: true,
+  },
+  updates: {
+    autoCheck: true,
+    checkInterval: 24,
+  },
+};
