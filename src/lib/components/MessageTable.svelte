@@ -85,7 +85,7 @@
 {/snippet}
 
 {#if messagesStore.viewMode === 'Table'}
-  <div bind:this={containerEl} class="table-container h-full border-0 rounded-none">
+  <div bind:this={containerEl} class="table-container flex-1 overflow-hidden min-h-0 border-0 rounded-none">
     <table class="table">
       <thead bind:this={theadEl}>
         <tr>
@@ -163,11 +163,11 @@
     {/if}
   </div>
 {:else}
-  <div bind:this={containerEl} class="p-4 overflow-y-auto h-full bg-background">
+  <div bind:this={containerEl} class="p-4 overflow-y-auto flex-1 min-h-0 bg-background">
     {#if messagesStore.visible.length === 0}
       {@render emptyState()}
     {:else}
-      <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));">
+      <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));">
         {#each messagesStore.pageRows as item (item.id)}
           <div
             role="button"

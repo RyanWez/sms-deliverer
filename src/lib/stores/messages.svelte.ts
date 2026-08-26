@@ -73,20 +73,33 @@ export function createMessagesStore() {
     void measureTick;
     void expandedIds.size;
     void viewMode;
-    const cap = Math.max(availH, 120);
     const out: SmsItem[][] = [];
     let cur: SmsItem[] = [];
-    let used = 0;
-    for (const m of visible) {
-      const h = estHeight(m);
-      if (cur.length > 0 && used + h > cap) {
-        out.push(cur);
-        cur = [];
-        used = 0;
+
+    if (viewMode === 'Cards') {
+      const pageSize = 24;
+      for (const m of visible) {
+        if (cur.length >= pageSize) {
+          out.push(cur);
+          cur = [];
+        }
+        cur.push(m);
       }
-      cur.push(m);
-      used += h;
+    } else {
+      const cap = Math.max(availH, 120);
+      let used = 0;
+      for (const m of visible) {
+        const h = estHeight(m);
+        if (cur.length > 0 && used + h > cap) {
+          out.push(cur);
+          cur = [];
+          used = 0;
+        }
+        cur.push(m);
+        used += h;
+      }
     }
+
     if (cur.length > 0) out.push(cur);
     return out.length > 0 ? out : [[]];
   });

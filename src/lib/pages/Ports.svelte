@@ -254,15 +254,18 @@
         <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));">
           {#each filteredPorts as port (port.name)}
             {@const st = portStatus(port, liveStore.on)}
-            <article
+            <div
               role="button"
               tabindex="0"
               data-port={port.name}
-              class="card p-4 text-left transition-colors duration-150 cursor-pointer hover:border-muted-foreground/40
+              class="group card p-4 text-left transition-colors duration-150 cursor-pointer hover:border-muted-foreground/40
                      focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70
                      {activePortName === port.name ? 'border-primary ring-1 ring-primary/40' : ''}
                      {st.key === 'error' ? 'bg-danger/[0.04]' : ''}"
-              onclick={() => inspect(port)}
+              onclick={(e) => {
+                if ((e.target as HTMLElement).closest('input, label')) return;
+                inspect(port);
+              }}
               onkeydown={(e) => cardKeydown(port, e)}
               title="View port details"
             >
@@ -272,15 +275,19 @@
                 </div>
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2 mb-1 min-w-0">
-                    <label class="flex items-center gap-2 cursor-pointer group min-w-0" onclick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        class="checkbox w-4 h-4"
-                        checked={port.checked}
-                        onchange={() => togglePort(port)}
-                        aria-label={`Include ${portLabel(port.name)} in scan`}
-                      />
-                      <span class="font-mono text-sm font-semibold text-foreground truncate group-hover:text-primary transition-colors">{portLabel(port.name)}</span>
+                    <input
+                      id={`port-check-${port.name}`}
+                      type="checkbox"
+                      class="checkbox w-4 h-4"
+                      checked={port.checked}
+                      onchange={() => togglePort(port)}
+                      aria-label={`Include ${portLabel(port.name)} in scan`}
+                    />
+                    <label
+                      for={`port-check-${port.name}`}
+                      class="font-mono text-sm font-semibold text-foreground truncate group-hover:text-primary transition-colors cursor-pointer"
+                    >
+                      {portLabel(port.name)}
                     </label>
                     <span class="flex-1"></span>
                     <span class="badge {st.badge}">
@@ -301,7 +308,6 @@
                   name="chevron-right"
                   size={15}
                   class="text-muted-foreground/50 mt-1"
-                  aria-hidden="true"
                 />
               </div>
 
@@ -330,7 +336,7 @@
                   <div class="mt-1 ml-[22px] text-[10px] opacity-80 font-mono break-all">{port.live_error}</div>
                 </div>
               {/if}
-            </article>
+            </div>
           {/each}
         </div>
       {/if}

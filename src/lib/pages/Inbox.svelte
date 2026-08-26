@@ -20,9 +20,7 @@
   <div class="flex-1 flex overflow-hidden min-h-0">
     <section class="flex-1 flex flex-col overflow-hidden min-w-0" aria-label="Message list">
       <FilterBar />
-      <div class="flex-1 overflow-hidden min-h-0">
-        <MessageTable />
-      </div>
+      <MessageTable />
       <Pagination />
     </section>
     <MessageDetail />
