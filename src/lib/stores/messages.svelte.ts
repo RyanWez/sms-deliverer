@@ -1,6 +1,7 @@
 import type { SmsItem, QuickFilter, ViewMode } from '$lib/types';
 import { portsStore } from './ports.svelte';
 import { liveStore } from './live.svelte';
+import { portLabel } from '$lib/utils/port';
 
 let toastCounter = 10000;
 
@@ -169,8 +170,7 @@ export function createMessagesStore() {
   function prettyPort(name: string): string {
     const p = portsStore.find(name);
     if (p?.sim_number) return p.sim_number;
-    const num = name.replace(/^(COM|ttyUSB|ttyACM)/, '');
-    return num ? `Port ${num}` : name;
+    return portLabel(name);
   }
 
   return {

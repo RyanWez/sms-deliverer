@@ -1,6 +1,7 @@
 <script lang="ts">
   import { portsStore } from '$lib/stores/ports.svelte';
   import { api } from '$lib/services/api';
+  import { portLabel } from '$lib/utils/port';
 
   let collapsed = $state(false);
 
@@ -45,8 +46,8 @@
               portsStore.updatePort(port.name, { checked: target.checked });
             }}
           />
-          <span class="text-xs text-foreground truncate font-mono group-hover:text-primary transition-colors">
-            {port.sim_number || port.name}
+          <span class="text-xs text-foreground truncate font-mono group-hover:text-primary transition-colors" title={port.sim_number ? port.name : ''}>
+            {port.sim_number || portLabel(port.name)}
           </span>
         </label>
       {/each}

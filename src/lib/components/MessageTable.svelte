@@ -1,6 +1,7 @@
 <script lang="ts">
   import { messagesStore } from '$lib/stores/messages.svelte';
   import { portsStore } from '$lib/stores/ports.svelte';
+  import { portLabel } from '$lib/utils/port';
 
   const allSelected = $derived.by(() =>
     messagesStore.visible.length > 0 && messagesStore.visible.every(m => messagesStore.isSelected(m.id))
@@ -109,7 +110,7 @@
                 onchange={() => messagesStore.toggleSelected(item.id)}
               />
             </td>
-            <td class="font-mono text-xs font-semibold">{item.message.port}</td>
+            <td class="font-mono text-xs font-semibold" title={item.message.port}>{portLabel(item.message.port)}</td>
             <td class="font-mono text-xs text-muted-foreground">{simNumber(item.message.port)}</td>
             <td class="text-xs truncate max-w-[120px]">{item.message.from || '-'}</td>
             <td class="font-mono text-xs text-muted-foreground">{fmtTime(item.message.received)}</td>
@@ -183,7 +184,7 @@
             onclick={() => messagesStore.toggleSelected(item.id)}
           >
             <div class="flex items-center gap-2 mb-2">
-              <span class="font-mono text-[11px] font-bold text-primary">{item.message.port}</span>
+              <span class="font-mono text-[11px] font-bold text-primary" title={item.message.port}>{portLabel(item.message.port)}</span>
               <span class="font-mono text-[10px] text-muted-foreground">{simNumber(item.message.port)}</span>
               {#if item.is_new}
                 <span class="w-1.5 h-1.5 rounded-full bg-primary"></span>

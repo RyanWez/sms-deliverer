@@ -1,6 +1,7 @@
 <script lang="ts">
   import { messagesStore } from '$lib/stores/messages.svelte';
   import { portsStore } from '$lib/stores/ports.svelte';
+  import { portLabel } from '$lib/utils/port';
   import type { QuickFilter } from '$lib/types';
 
   function setFilter(f: QuickFilter) {
@@ -46,7 +47,7 @@
   >
     <option value="">Port: All</option>
     {#each portsStore.items as port}
-      <option value={port.name}>{port.sim_number || port.name}</option>
+      <option value={port.name}>{port.sim_number || portLabel(port.name)}</option>
     {/each}
   </select>
 
