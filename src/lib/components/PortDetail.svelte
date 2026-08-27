@@ -12,11 +12,11 @@
 
   const msgCount = $derived.by(() => {
     if (!port) return 0;
-    return messagesStore.items.filter(m => m.message.port === port.name).length;
+    return messagesStore.getMessageCountForPort(port.name);
   });
   const otpCount = $derived.by(() => {
     if (!port) return 0;
-    return messagesStore.items.filter(m => m.message.port === port.name && m.otp).length;
+    return messagesStore.getOtpCountForPort(port.name);
   });
 
   let copiedField = $state<'name' | 'sim' | null>(null);
@@ -35,7 +35,11 @@
 </script>
 
 {#if port && status}
-  <aside class="detail-panel w-[clamp(280px,26vw,380px)]" aria-label={`Port details for ${portLabel(port.name)}`}>
+  <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+  <aside
+    class="detail-panel w-[clamp(300px,32%,400px)] max-w-[48%] min-w-[300px]"
+    aria-label={`Port details for ${portLabel(port.name)}`}
+  >
     <header class="detail-header">
       <span class="font-mono text-sm font-semibold text-foreground">{portLabel(port.name)}</span>
       <span class="badge {status.badge}">{status.label}</span>

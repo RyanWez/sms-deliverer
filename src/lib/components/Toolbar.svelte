@@ -11,13 +11,13 @@
 </script>
 
 <header class="page-header">
-  <div class="flex items-center gap-3 mr-auto">
-    <h1 class="page-title">Inbox</h1>
-    <span class="badge badge-primary font-mono tabular-nums">
+  <div class="flex items-center gap-2 sm:gap-3 mr-auto min-w-0 flex-wrap gap-y-1.5">
+    <h1 class="page-title shrink-0">Inbox</h1>
+    <span class="badge badge-primary font-mono tabular-nums shrink-0">
       {messagesStore.items.length} message{messagesStore.items.length !== 1 ? 's' : ''}
     </span>
     <span
-      class="badge {liveStore.on ? 'badge-success' : 'badge-muted'}"
+      class="badge {liveStore.on ? 'badge-success' : 'badge-muted'} shrink-0"
       title={liveStore.on ? 'Live monitoring active' : 'Live monitoring off'}
     >
       <span
@@ -27,7 +27,7 @@
     </span>
   </div>
 
-  <div class="flex items-center gap-2 flex-wrap">
+  <div class="flex items-center gap-1.5 sm:gap-2 flex-wrap w-full sm:w-auto">
     <button
       class="btn-primary"
       disabled={busy}
@@ -59,7 +59,7 @@
       Get SIM Numbers
     </button>
 
-    <div class="w-px h-5 bg-border mx-0.5" role="separator"></div>
+    <div class="hidden sm:block w-px h-5 bg-border mx-0.5" role="separator" aria-hidden="true"></div>
 
     <button
       class="btn-danger"
@@ -72,7 +72,7 @@
       title="Delete selected messages"
     >
       <Icon name="trash" size={14} />
-      Delete Selected ({messagesStore.selectedCount})
+      <span class="hidden sm:inline">Delete Selected</span><span class="sm:hidden">Delete</span> ({messagesStore.selectedCount})
     </button>
 
     <button

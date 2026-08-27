@@ -271,7 +271,7 @@ body {
 
   /* ---------- Page scaffolding ---------- */
   .page-header {
-    @apply flex items-center gap-3 px-5 py-3 bg-surface border-b border-border shrink-0 flex-wrap min-h-[53px];
+    @apply flex items-center gap-3 gap-y-2 px-3 sm:px-5 py-3 bg-surface border-b border-border shrink-0 flex-wrap min-h-[53px];
   }
   .page-title {
     @apply text-base font-semibold tracking-tight text-foreground;
@@ -280,12 +280,12 @@ body {
     @apply text-xs text-muted-foreground mt-0.5;
   }
   .page-footer {
-    @apply flex items-center justify-between gap-4 px-5 py-2 bg-surface border-t border-border shrink-0 text-[11px] text-muted-foreground min-h-[33px];
+    @apply flex items-center justify-between gap-2 sm:gap-4 px-3 sm:px-5 py-2 bg-surface border-t border-border shrink-0 text-[11px] text-muted-foreground min-h-[33px] flex-wrap gap-y-1;
   }
 
   /* ---------- Message detail panel ---------- */
   .detail-panel {
-    @apply flex flex-col bg-surface border-l border-border shrink-0 overflow-hidden animate-fade-in;
+    @apply flex flex-col bg-surface border-l border-border shrink-0 overflow-hidden animate-fade-in min-w-0;
   }
   .detail-header {
     @apply flex items-center gap-2 px-4 py-3 border-b border-border shrink-0 min-h-[53px];

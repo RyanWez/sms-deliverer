@@ -22,6 +22,28 @@ export function createMessagesStore() {
   const hCollapsed = new Map<string, number>();
   const hExpanded = new Map<string, number>();
 
+  // Map port -> sim for fast lookup during filtering (avoids O(ports) find per message)
+  const simLookup = $derived.by(() => {
+    const m = new Map<string, string>();
+    for (const p of portsStore.items) m.set(p.name, p.sim_number ?? '');
+    return m;
+  });
+
+  // Single-pass aggregates: per-port counts and total OTP
+  const aggregates = $derived.by(() => {
+    const msgByPort = new Map<string, number>();
+    const otpByPort = new Map<string, number>();
+    let totalOtp = 0;
+    for (const it of items) {
+      msgByPort.set(it.message.port, (msgByPort.get(it.message.port) ?? 0) + 1);
+      if (it.otp) {
+        otpByPort.set(it.message.port, (otpByPort.get(it.message.port) ?? 0) + 1);
+        totalOtp++;
+      }
+    }
+    return { msgByPort, otpByPort, totalOtp };
+  });
+
   const sorted = $derived.by(() =>
     [...items].sort((a, b) => {
       const ta = new Date(a.message.received || 0).getTime();
@@ -32,19 +54,27 @@ export function createMessagesStore() {
   );
 
   const visible = $derived.by(() => {
-    const q = query.toLowerCase();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const q = query.trim().toLowerCase();
+    const hasQuery = q.length > 0;
+    const todayStart = (() => {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      return d.getTime();
+    })();
+
+    // Fast path: no filters at all
+    if (!hasQuery && !portFilter && quickFilter === 'All') return sorted;
 
     return sorted.filter(m => {
       if (portFilter && m.message.port !== portFilter) return false;
       if (quickFilter === 'Otp' && !m.otp) return false;
       if (quickFilter === 'Today') {
-        const d = new Date(m.message.received);
-        if (d < today) return false;
+        const d = new Date(m.message.received).getTime();
+        if (Number.isNaN(d) || d < todayStart) return false;
       }
-      if (q) {
-        const sim = portsStore.find(m.message.port)?.sim_number ?? '';
+      if (hasQuery) {
+        const sim = simLookup.get(m.message.port) ?? '';
+        // build haystack only when needed; lowercasing once
         const haystack = `${m.message.from} ${m.message.text} ${m.message.port} ${m.otp ?? ''} ${sim}`.toLowerCase();
         if (!haystack.includes(q)) return false;
       }
@@ -114,7 +144,7 @@ export function createMessagesStore() {
   });
 
   const selectedCount = $derived.by(() => selected.size);
-  const otpCount = $derived.by(() => items.filter(m => m.otp).length);
+  const otpCount = $derived(aggregates.totalOtp);
   const activeItem = $derived(items.find(m => m.id === activeId) ?? null);
 
   function isActive(id: number) { return activeId === id; }
@@ -212,6 +242,13 @@ export function createMessagesStore() {
     return portLabel(name);
   }
 
+  function getMessageCountForPort(port: string): number {
+    return aggregates.msgByPort.get(port) ?? 0;
+  }
+  function getOtpCountForPort(port: string): number {
+    return aggregates.otpByPort.get(port) ?? 0;
+  }
+
   return {
     get items() { return items; },
     set items(v: SmsItem[]) { items = v; },
@@ -243,6 +280,9 @@ export function createMessagesStore() {
     setActive,
     get selectedCount() { return selectedCount; },
     get otpCount() { return otpCount; },
+    get countsByPort() { return aggregates; },
+    getMessageCountForPort,
+    getOtpCountForPort,
     isSelected,
     toggleSelected,
     selectAll,

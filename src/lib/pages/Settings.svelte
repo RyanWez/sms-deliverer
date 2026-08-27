@@ -4,7 +4,7 @@
   import { settingsStore } from "$lib/stores/settings.svelte";
   import { api } from "$lib/services/api";
   import { check } from "@tauri-apps/plugin-updater";
-  import { relaunch } from "@tauri-apps/plugin-process"; // We will add plugin-process just in case, or catch error
+  import { relaunch } from "@tauri-apps/plugin-process";
 
   const settingsGroups = [
     {
@@ -221,14 +221,11 @@
     },
   ];
 
-  let expandedGroups = $state<Set<string>>(new Set(["general"]));
+  let selectedId = $state<string>("general");
 
-  function toggleGroup(id: string) {
-    const next = new Set(expandedGroups);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    expandedGroups = next;
-  }
+  const selectedGroup = $derived(
+    settingsGroups.find((g) => g.id === selectedId) ?? settingsGroups[0]
+  );
 
   async function handleAction(action: string) {
     if (action === "reset") {
@@ -281,6 +278,34 @@
       `set${bind.charAt(0).toUpperCase() + bind.slice(1)}`
     ];
   }
+
+  function onCategoryKeydown(e: KeyboardEvent) {
+    const idx = settingsGroups.findIndex((g) => g.id === selectedId);
+    if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+      e.preventDefault();
+      const next = (idx + 1) % settingsGroups.length;
+      selectedId = settingsGroups[next].id;
+      // move focus to newly selected button
+      queueMicrotask(() => {
+        const el = document.querySelector<HTMLButtonElement>(`[data-cat="${selectedId}"]`);
+        el?.focus();
+      });
+    } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+      e.preventDefault();
+      const prev = (idx - 1 + settingsGroups.length) % settingsGroups.length;
+      selectedId = settingsGroups[prev].id;
+      queueMicrotask(() => {
+        const el = document.querySelector<HTMLButtonElement>(`[data-cat="${selectedId}"]`);
+        el?.focus();
+      });
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      selectedId = settingsGroups[0].id;
+    } else if (e.key === "End") {
+      e.preventDefault();
+      selectedId = settingsGroups[settingsGroups.length - 1].id;
+    }
+  }
 </script>
 
 <div class="flex-1 flex flex-col h-full overflow-hidden min-h-0" id="panel-settings">
@@ -293,88 +318,149 @@
     </div>
   </header>
 
-  <div class="flex-1 overflow-auto p-5 bg-background min-h-0">
-    <div class="max-w-3xl mx-auto space-y-3">
+  <!-- Two-pane layout: left nav + right content -->
+  <div class="flex-1 flex overflow-hidden min-h-0 bg-background
+              flex-col sm:flex-row">
+    <!-- Category navigation -->
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+    <nav
+      class="shrink-0 flex flex-row sm:flex-col gap-1 p-2 sm:p-2 sm:py-3
+             border-b sm:border-b-0 sm:border-r border-border bg-surface
+             overflow-x-auto sm:overflow-y-auto sm:overflow-x-hidden
+             w-full sm:w-[220px] lg:w-[240px]
+             scrollbar-thin"
+      aria-label="Settings categories"
+      role="tablist"
+      aria-orientation="vertical"
+      onkeydown={onCategoryKeydown}
+    >
       {#each settingsGroups as group (group.id)}
+        {@const active = selectedId === group.id}
+        <button
+          type="button"
+          data-cat={group.id}
+          class="flex items-center gap-3 text-left rounded-md px-2.5 py-2.5 transition-colors duration-150
+                 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus-visible:ring-offset-1 focus-visible:ring-offset-surface
+                 min-w-[160px] sm:min-w-0 sm:w-full
+                 {active
+                   ? 'bg-primary/10 text-primary border border-primary/20 shadow-sm'
+                   : 'border border-transparent text-muted-foreground hover:bg-elevated hover:text-foreground hover:border-border'}"
+          aria-current={active ? 'page' : undefined}
+          aria-selected={active}
+          role="tab"
+          tabindex={active ? 0 : -1}
+          onclick={() => (selectedId = group.id)}
+        >
+          <span
+            class="w-8 h-8 rounded-md flex items-center justify-center shrink-0
+                   {active ? 'bg-primary/15 text-primary' : 'bg-elevated text-muted-foreground'}"
+            aria-hidden="true"
+          >
+            <Icon name={group.icon} size={16} />
+          </span>
+          <span class="flex-1 min-w-0 hidden sm:block">
+            <span class="block text-xs font-semibold leading-tight truncate {active ? 'text-primary' : 'text-foreground'}"
+              >{group.label}</span
+            >
+            <span class="block text-[11px] leading-tight truncate {active ? 'text-primary/70' : 'text-muted-foreground'}"
+              >{group.description}</span
+            >
+          </span>
+          <!-- compact label for very narrow (mobile) horizontal strip: show label only -->
+          <span class="sm:hidden text-xs font-medium truncate {active ? 'text-primary' : 'text-foreground'}">{group.label}</span>
+          {#if active}
+            <Icon name="chevron-right" size={14} class="hidden sm:block text-primary/60 shrink-0" />
+          {/if}
+        </button>
+      {/each}
+    </nav>
+
+    <!-- Selected category content -->
+    <div class="flex-1 overflow-auto min-w-0 min-h-0 bg-background">
+      <div class="max-w-[720px] mx-auto p-4 sm:p-5 lg:p-6">
+        <!-- Category header -->
+        <div class="flex items-start gap-3 mb-4">
+          <span class="w-9 h-9 rounded-lg bg-elevated border border-border flex items-center justify-center text-muted-foreground shrink-0">
+            <Icon name={selectedGroup.icon} size={18} />
+          </span>
+          <div class="min-w-0">
+            <h2 class="text-sm font-semibold text-foreground leading-tight">{selectedGroup.label}</h2>
+            <p class="text-xs text-muted-foreground mt-0.5 leading-relaxed">{selectedGroup.description}</p>
+          </div>
+        </div>
+
         <section
           class="card overflow-hidden"
-          aria-labelledby={`heading-${group.id}`}
+          aria-labelledby="settings-heading-{selectedGroup.id}"
         >
-          <h2 class="sr-only">{group.label}</h2>
-          <button
-            type="button"
-            class="w-full flex items-center gap-3 px-4 py-3 border-b border-border/50 text-left transition-colors duration-150
-                   hover:bg-elevated/40 focus:outline-none focus-visible:bg-elevated/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/70"
-            onclick={() => toggleGroup(group.id)}
-            aria-expanded={expandedGroups.has(group.id)}
-            aria-controls={`content-${group.id}`}
-            id={`heading-${group.id}`}
-          >
-            <span
-              class="w-8 h-8 rounded-md bg-elevated flex items-center justify-center text-muted-foreground shrink-0"
-            >
-              <Icon name={group.icon} size={17} />
-            </span>
-            <span class="flex-1 min-w-0">
-              <span class="block text-sm font-medium text-foreground truncate"
-                >{group.label}</span
-              >
-              <span class="block text-[11px] text-muted-foreground truncate"
-                >{group.description}</span
-              >
-            </span>
-            <Icon
-              name="chevron-right"
-              size={16}
-              class={`text-muted-foreground transition-transform duration-150 ${expandedGroups.has(group.id) ? "rotate-90" : ""}`}
-            />
-          </button>
+          <h3 id="settings-heading-{selectedGroup.id}" class="sr-only">{selectedGroup.label} settings</h3>
 
-          {#if expandedGroups.has(group.id)}
-            <div
-              id={`content-${group.id}`}
-              role="region"
-              aria-labelledby={`heading-${group.id}`}
-              class="px-4 animate-fade-in"
-            >
-              <div class="divide-y divide-border/50">
-                {#each group.fields as field (field.key)}
-                  <div
-                    class="py-3.5 first:pt-1 last:pb-1 flex items-center justify-between gap-6"
+          {#if selectedGroup.id === "advanced"}
+            <!-- Destructive zone: clearly separated -->
+            <div class="p-3 bg-danger/[0.04] border-b border-danger/15 flex items-center gap-2">
+              <span class="w-6 h-6 rounded-md bg-danger/10 text-danger flex items-center justify-center shrink-0">
+                <Icon name="alert-triangle" size={13} strokeWidth={2} />
+              </span>
+              <div class="min-w-0">
+                <div class="text-xs font-semibold text-danger leading-tight">Danger zone</div>
+                <div class="text-[11px] text-muted-foreground leading-tight">Destructive actions — use with caution</div>
+              </div>
+            </div>
+            <div class="divide-y divide-border/50">
+              {#each selectedGroup.fields as field (field.key)}
+                {@const f = field as any}
+                <div class="px-4 py-3.5 flex items-center justify-between gap-6">
+                  <div class="min-w-0 flex-1">
+                    <span class="block text-sm font-medium text-danger">{field.label}</span>
+                    <p class="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">{field.description}</p>
+                  </div>
+                  <button
+                    class={f.variant === "danger"
+                      ? (f.action === "reset" ? "btn-danger-quiet shrink-0" : "btn-danger shrink-0")
+                      : "btn-primary shrink-0"}
+                    onclick={() => handleAction(f.action)}
                   >
-                    {#if field.type === "button"}
-                      <div class="min-w-0">
-                        <span class="block text-sm font-medium text-danger"
-                          >{field.label}</span
-                        >
-                        <p class="text-[11px] text-muted-foreground mt-0.5">
-                          {field.description}
-                        </p>
-                      </div>
-                      <button
-                        class={field.variant === "danger"
-                          ? (field.action === "reset" ? "btn-danger-quiet shrink-0" : "btn-danger shrink-0")
-                          : "btn-primary shrink-0"}
-                        onclick={() => handleAction(field.action)}
+                    {f.action === "reset" ? "Reset" : f.action === "clearMessages" ? "Clear" : "Action"}
+                  </button>
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <div class="divide-y divide-border/50">
+              {#each selectedGroup.fields as field (field.key)}
+                <div class="px-4 py-3.5 flex items-center justify-between gap-4 sm:gap-6
+                            flex-wrap sm:flex-nowrap">
+                  {#if field.type === "button"}
+                    <div class="min-w-0 flex-1">
+                      <span class="block text-sm font-medium text-foreground">{field.label}</span>
+                      <p class="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
+                        {field.description}
+                      </p>
+                    </div>
+                    <button
+                      class="btn-primary shrink-0"
+                      onclick={() => handleAction(field.action)}
+                    >
+                      Check
+                    </button>
+                  {:else if field.type === "checkbox" || field.type === "select" || field.type === "number" || field.type === "text"}
+                    <label
+                      class="flex-1 min-w-[200px] cursor-pointer"
+                      for={fieldId(selectedGroup, field)}
+                    >
+                      <span class="block text-sm font-medium text-foreground leading-tight"
+                        >{field.label}</span
                       >
-                        {field.action === "reset" ? "Reset" : field.action === "checkUpdates" ? "Check" : "Clear"}
-                      </button>
-                    {:else}
-                      <label
-                        class="flex-1 min-w-0 cursor-pointer"
-                        for={fieldId(group, field)}
+                      <span
+                        class="block text-[11px] text-muted-foreground mt-1 leading-relaxed"
+                        >{field.description}</span
                       >
-                        <span class="block text-sm font-medium text-foreground"
-                          >{field.label}</span
-                        >
-                        <span
-                          class="block text-[11px] text-muted-foreground mt-0.5"
-                          >{field.description}</span
-                        >
-                      </label>
+                    </label>
+                    <div class="shrink-0 flex items-center">
                       {#if field.type === "checkbox"}
                         <input
-                          id={fieldId(group, field)}
+                          id={fieldId(selectedGroup, field)}
                           type="checkbox"
                           class="checkbox w-4 h-4"
                           checked={getNestedValue(
@@ -394,8 +480,8 @@
                         />
                       {:else if field.type === "select"}
                         <select
-                          id={fieldId(group, field)}
-                          class="input w-auto min-w-[180px] max-w-[220px] text-sm shrink-0"
+                          id={fieldId(selectedGroup, field)}
+                          class="input w-[180px] sm:w-[200px] text-sm shrink-0"
                           value={getNestedValue(
                             settingsStore,
                             `${field.bind}.${field.key}`,
@@ -417,9 +503,9 @@
                         </select>
                       {:else if field.type === "number"}
                         <input
-                          id={fieldId(group, field)}
+                          id={fieldId(selectedGroup, field)}
                           type="number"
-                          class="input w-auto min-w-[110px] max-w-[140px] text-sm shrink-0 font-mono tabular-nums"
+                          class="input w-[130px] sm:w-[140px] text-sm shrink-0 font-mono tabular-nums"
                           value={getNestedValue(
                             settingsStore,
                             `${field.bind}.${field.key}`,
@@ -430,20 +516,22 @@
                           onchange={(e) => {
                             const target = e.target as HTMLInputElement;
                             const value = parseInt(target.value, 10);
-                            setNestedValue(
-                              settingsStore,
-                              `${field.bind}.${field.key}`,
-                              value,
-                            );
-                            const setter = setterFor(field.bind);
-                            if (setter) setter({ [field.key]: value });
+                            if (!Number.isNaN(value)) {
+                              setNestedValue(
+                                settingsStore,
+                                `${field.bind}.${field.key}`,
+                                value,
+                              );
+                              const setter = setterFor(field.bind);
+                              if (setter) setter({ [field.key]: value });
+                            }
                           }}
                         />
                       {:else if field.type === "text"}
                         <input
-                          id={fieldId(group, field)}
+                          id={fieldId(selectedGroup, field)}
                           type="text"
-                          class="input w-auto min-w-[240px] max-w-[320px] text-xs shrink-0 font-mono"
+                          class="input w-[260px] sm:w-[300px] max-w-full text-xs shrink-0 font-mono"
                           value={getNestedValue(
                             settingsStore,
                             `${field.bind}.${field.key}`,
@@ -462,14 +550,27 @@
                           }}
                         />
                       {/if}
-                    {/if}
-                  </div>
-                {/each}
-              </div>
+                    </div>
+                  {/if}
+                </div>
+              {/each}
             </div>
           {/if}
         </section>
-      {/each}
+
+        <!-- Helper note -->
+        <p class="text-[11px] text-muted-foreground/70 mt-3 px-1">
+          {#if selectedGroup.id === "appearance"}
+            Theme and column visibility apply immediately.
+          {:else if selectedGroup.id === "otp"}
+            Custom regex is applied to newly received messages.
+          {:else if selectedGroup.id === "updates"}
+            Updates are fetched from the official release endpoint only.
+          {:else}
+            Changes are saved automatically.
+          {/if}
+        </p>
+      </div>
     </div>
   </div>
 

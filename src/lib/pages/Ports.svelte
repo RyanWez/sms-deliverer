@@ -11,15 +11,48 @@
 
   let refreshing = $state(false);
   let activePortName = $state<string | null>(null);
-  let query = $state('');
+  let rawQuery = $state('');
+  let debouncedQuery = $state('');
   let statusFilter = $state<'all' | 'selected' | 'errors'>('all');
 
+  // debounce port search 150ms — trivial cost for 64 ports but avoids reactive churn
+  let portSearchTimer: ReturnType<typeof setTimeout> | null = null;
+  function onPortSearchInput(v: string) {
+    rawQuery = v;
+    if (portSearchTimer) clearTimeout(portSearchTimer);
+    portSearchTimer = setTimeout(() => {
+      portSearchTimer = null;
+      debouncedQuery = v;
+    }, 150);
+  }
+  function clearPortSearch() {
+    if (portSearchTimer) clearTimeout(portSearchTimer);
+    portSearchTimer = null;
+    rawQuery = '';
+    debouncedQuery = '';
+  }
+
+  $effect(() => {
+    return () => {
+      if (portSearchTimer) clearTimeout(portSearchTimer);
+    };
+  });
+
   const totalPorts = $derived(portsStore.items.length);
-  const checkedCount = $derived(portsStore.items.filter(p => p.checked).length);
-  const errorCount = $derived(portsStore.items.filter(p => p.live_error).length);
+  const counts = $derived.by(() => {
+    let checked = 0;
+    let errors = 0;
+    for (const p of portsStore.items) {
+      if (p.checked) checked++;
+      if (p.live_error) errors++;
+    }
+    return { checked, errors };
+  });
+  const checkedCount = $derived(counts.checked);
+  const errorCount = $derived(counts.errors);
 
   const filteredPorts = $derived.by(() => {
-    const q = query.trim().toLowerCase();
+    const q = debouncedQuery.trim().toLowerCase();
     return portsStore.items.filter(p => {
       if (statusFilter === 'selected' && !p.checked) return false;
       if (statusFilter === 'errors' && !p.live_error) return false;
@@ -29,7 +62,7 @@
     });
   });
 
-  const isFiltering = $derived(statusFilter !== 'all' || query.trim().length > 0);
+  const isFiltering = $derived(statusFilter !== 'all' || debouncedQuery.trim().length > 0);
 
   onMount(() => {
     if (!portsStore.hasLoaded) void refreshPorts();
@@ -67,19 +100,11 @@
   }
 
   function portMessageCount(port: PortInfo): number {
-    let n = 0;
-    for (const item of messagesStore.items) {
-      if (item.message.port === port.name) n++;
-    }
-    return n;
+    return messagesStore.getMessageCountForPort(port.name);
   }
 
   function portOtpCount(port: PortInfo): number {
-    let n = 0;
-    for (const item of messagesStore.items) {
-      if (item.message.port === port.name && item.otp) n++;
-    }
-    return n;
+    return messagesStore.getOtpCountForPort(port.name);
   }
 
   function formatSimNumber(num: string): string {
@@ -87,27 +112,42 @@
     return num;
   }
 
+  let lastPortTrigger: HTMLElement | null = $state(null);
+  let prevActivePort: string | null = $state(null);
+  $effect(() => {
+    if (activePortName !== null && prevActivePort === null) {
+      lastPortTrigger = document.activeElement as HTMLElement | null;
+    }
+    prevActivePort = activePortName;
+  });
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape' && activePortName !== null) {
       activePortName = null;
+      requestAnimationFrame(() => lastPortTrigger?.focus());
     }
+  }
+
+  function closePortDetail() {
+    activePortName = null;
+    requestAnimationFrame(() => lastPortTrigger?.focus());
   }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="flex-1 flex flex-col h-full overflow-hidden" id="panel-ports">
+<div class="flex-1 flex flex-col h-full overflow-hidden min-w-0" id="panel-ports">
   <header class="page-header">
-    <div class="flex items-center gap-3 mr-auto min-w-0">
-      <h1 class="page-title">Ports</h1>
-      <span class="badge badge-primary font-mono tabular-nums" title="Detected ports">
+    <div class="flex items-center gap-2 sm:gap-3 mr-auto min-w-0 flex-wrap gap-y-1">
+      <h1 class="page-title shrink-0">Ports</h1>
+      <span class="badge badge-primary font-mono tabular-nums shrink-0" title="Detected ports">
         {totalPorts} port{totalPorts !== 1 ? 's' : ''}
       </span>
       {#if errorCount > 0}
-        <span class="badge badge-danger font-mono tabular-nums">{errorCount} error{errorCount !== 1 ? 's' : ''}</span>
+        <span class="badge badge-danger font-mono tabular-nums shrink-0">{errorCount} error{errorCount !== 1 ? 's' : ''}</span>
       {/if}
     </div>
-    <div class="flex items-center gap-2 flex-wrap">
+    <div class="flex items-center gap-1.5 sm:gap-2 flex-wrap w-full sm:w-auto">
       <button
         class="btn-secondary"
         onclick={() => setAllChecked(true)}
@@ -124,7 +164,7 @@
       >
         Deselect All
       </button>
-      <div class="w-px h-5 bg-border mx-0.5" role="separator"></div>
+      <div class="hidden sm:block w-px h-5 bg-border mx-0.5" role="separator" aria-hidden="true"></div>
       <button
         class="btn-primary"
         onclick={() => api.getSimNumbers()}
@@ -146,8 +186,8 @@
     </div>
   </header>
 
-  <div class="flex items-center gap-2 px-5 py-2 bg-surface border-b border-border shrink-0 flex-wrap">
-    <div class="relative w-56 max-w-full">
+  <div class="flex items-center gap-2 gap-y-2 px-3 sm:px-5 py-2 bg-surface border-b border-border shrink-0 flex-wrap">
+    <div class="relative w-full sm:w-56 max-w-full min-w-[180px] flex-1 sm:flex-none">
       <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" aria-hidden="true">
         <Icon name="search" size={13} />
       </span>
@@ -155,14 +195,14 @@
         type="text"
         class="input text-xs py-0 pl-8 pr-7"
         placeholder="Search name or SIM number…"
-        value={query}
-        oninput={(e) => { query = (e.target as HTMLInputElement).value; }}
+        value={rawQuery}
+        oninput={(e) => { onPortSearchInput((e.target as HTMLInputElement).value); }}
         aria-label="Search ports"
       />
-      {#if query}
+      {#if rawQuery}
         <button
           class="btn-icon absolute right-1 top-1/2 -translate-y-1/2 w-5 h-5"
-          onclick={() => { query = ''; }}
+          onclick={clearPortSearch}
           title="Clear search"
           aria-label="Clear search"
         >
@@ -204,17 +244,17 @@
       </button>
     </div>
 
-    <div class="flex-1"></div>
+    <div class="hidden lg:block flex-1 min-w-[12px]"></div>
 
-    <span class="text-xs text-muted-foreground font-mono tabular-nums whitespace-nowrap">
+    <span class="text-xs text-muted-foreground font-mono tabular-nums whitespace-nowrap shrink-0">
       {isFiltering ? `${filteredPorts.length} of ${totalPorts} shown` : ''}
     </span>
   </div>
 
-  <div class="flex-1 flex overflow-hidden min-h-0">
-    <div class="flex-1 overflow-auto p-5 bg-background min-w-0">
+  <div class="flex-1 flex overflow-hidden min-h-0 min-w-0 relative">
+    <div class="flex-1 overflow-auto p-3 sm:p-5 bg-background min-w-0 min-h-0">
       {#if refreshing && !portsStore.hasLoaded}
-        <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));" aria-label="Loading ports">
+        <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));" aria-label="Loading ports">
           {#each Array(6) as _, i (i)}
             <div class="card p-4 animate-pulse">
               <div class="flex items-start gap-3">
@@ -245,13 +285,13 @@
           <div class="empty-state-hint">No ports match the current search or status filter</div>
           <button
             class="btn-secondary mt-4"
-            onclick={() => { query = ''; statusFilter = 'all'; }}
+            onclick={() => { clearPortSearch(); statusFilter = 'all'; }}
           >
             Clear Filters
           </button>
         </div>
       {:else}
-        <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));">
+        <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));">
           {#each filteredPorts as port (port.name)}
             {@const st = portStatus(port, liveStore.on)}
             <div
@@ -349,18 +389,18 @@
           const p = portsStore.find(activePortName!);
           if (p) togglePort(p);
         }}
-        onclose={() => { activePortName = null; }}
+        onclose={closePortDetail}
       />
     {/if}
   </div>
 
-  <footer class="page-footer font-mono">
-    <span class="tabular-nums">Checked: {checkedCount} / {totalPorts}</span>
-    <span class="flex items-center gap-3 tabular-nums">
+  <footer class="page-footer font-mono flex-wrap">
+    <span class="tabular-nums whitespace-nowrap">Checked: {checkedCount} / {totalPorts}</span>
+    <span class="flex items-center gap-2 sm:gap-3 tabular-nums flex-wrap">
       {#if errorCount > 0}
-        <span class="text-danger">{errorCount} error{errorCount !== 1 ? 's' : ''}</span>
+        <span class="text-danger whitespace-nowrap">{errorCount} error{errorCount !== 1 ? 's' : ''}</span>
       {/if}
-      <span class="flex items-center gap-1.5">
+      <span class="flex items-center gap-1.5 whitespace-nowrap">
         <span
           class="w-1.5 h-1.5 rounded-full {liveStore.on ? 'bg-success animate-pulse-dot' : 'bg-muted-foreground/50'}"
           aria-hidden="true"

@@ -17,14 +17,14 @@
 </script>
 
 {#if messagesStore.visible.length > 0}
-  <div class="page-footer font-mono">
-    <div class="flex-1 tabular-nums">
+  <div class="page-footer font-mono flex-wrap">
+    <div class="flex-1 min-w-[140px] tabular-nums text-[11px]">
       {#if messagesStore.pageRows.length > 0}
         Showing {messagesStore.pageIndexStart + 1}–{messagesStore.pageIndexStart + messagesStore.pageRows.length} of {messagesStore.visible.length}
       {/if}
     </div>
 
-    <nav class="flex items-center gap-1" aria-label="Pagination">
+    <nav class="flex items-center gap-1 shrink-0" aria-label="Pagination">
       <button
         class="btn-icon border border-border w-8 h-7"
         onclick={() => cur > 1 && messagesStore.goTo(cur - 1)}
@@ -62,7 +62,7 @@
       </button>
     </nav>
 
-    <div class="flex-1 text-right tabular-nums">
+    <div class="flex-1 min-w-[80px] text-right tabular-nums text-[11px] hidden sm:block">
       Page {cur} / {total}
     </div>
   </div>

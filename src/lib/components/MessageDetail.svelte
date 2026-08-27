@@ -5,10 +5,24 @@
   import { portLabel } from '$lib/utils/port';
   import { fmtFullDateTime } from '$lib/utils/format';
 
+  let { oncloseFocusReturn }: { oncloseFocusReturn?: () => void } = $props();
+
   const item = $derived(messagesStore.activeItem);
 
   let copiedField = $state<'message' | 'otp' | null>(null);
   let resetTimer: ReturnType<typeof setTimeout> | undefined;
+  let panelEl: HTMLElement | undefined = $state();
+
+  $effect(() => {
+    if (item && panelEl) {
+      // focus close button for keyboard accessibility
+      const btn = panelEl.querySelector<HTMLButtonElement>('[data-close-detail]');
+      btn?.focus();
+    }
+    return () => {
+      clearTimeout(resetTimer);
+    };
+  });
 
   function flashCopied(field: 'message' | 'otp') {
     copiedField = field;
@@ -31,18 +45,30 @@
   function simNumber(port: string): string {
     return portsStore.find(port)?.sim_number || 'Unknown';
   }
+
+  function close() {
+    messagesStore.setActive(null);
+    oncloseFocusReturn?.();
+  }
 </script>
 
 {#if item}
-  <aside class="detail-panel w-[clamp(280px,26vw,400px)]" aria-label="Message details" aria-live="polite">
+  <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+  <aside
+    bind:this={panelEl}
+    class="detail-panel w-[clamp(300px,32%,420px)] max-w-[48%] min-w-[300px]"
+    aria-label="Message details"
+    aria-live="polite"
+  >
     <header class="detail-header">
-      <span class="detail-title">Message Details</span>
+      <span class="detail-title truncate min-w-0">Message Details</span>
       {#if item.otp}
-        <span class="badge badge-otp"><Icon name="zap" size={11} /> OTP</span>
+        <span class="badge badge-otp shrink-0"><Icon name="zap" size={11} /> OTP</span>
       {/if}
       <button
-        class="btn-icon"
-        onclick={() => messagesStore.setActive(null)}
+        class="btn-icon shrink-0"
+        data-close-detail
+        onclick={close}
         title="Close details (Esc)"
         aria-label="Close details"
       >
@@ -57,15 +83,15 @@
       </dd>
 
       <dt class="meta-label">SIM number</dt>
-      <dd class="meta-value font-mono tabular-nums" title={simNumber(item.message.port)}>
+      <dd class="meta-value font-mono tabular-nums truncate max-w-[160px]" title={simNumber(item.message.port)}>
         {simNumber(item.message.port)}
       </dd>
 
       <dt class="meta-label">Sender</dt>
-      <dd class="meta-value font-mono">{item.message.from || 'Unknown'}</dd>
+      <dd class="meta-value font-mono truncate max-w-[160px]" title={item.message.from}>{item.message.from || 'Unknown'}</dd>
 
       <dt class="meta-label">Received</dt>
-      <dd class="meta-value font-mono tabular-nums whitespace-nowrap">{fmtFullDateTime(item.message.received)}</dd>
+      <dd class="meta-value font-mono tabular-nums whitespace-nowrap text-[11px]">{fmtFullDateTime(item.message.received)}</dd>
 
       <dt class="meta-label">Status</dt>
       <dd><span class="badge badge-muted">{item.message.status || 'Unknown'}</span></dd>

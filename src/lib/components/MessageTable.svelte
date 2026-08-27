@@ -37,6 +37,8 @@
   let containerEl: HTMLElement | undefined = $state();
   let theadEl: HTMLElement | undefined = $state();
   let ro: ResizeObserver | null = null;
+  let rafPending = false;
+  let rafId: number | null = null;
 
   function updateAvail() {
     if (!containerEl) return;
@@ -46,29 +48,46 @@
     messagesStore.setAvail(h);
   }
 
+  function scheduleUpdate() {
+    if (rafPending) return;
+    rafPending = true;
+    rafId = requestAnimationFrame(() => {
+      rafPending = false;
+      rafId = null;
+      updateAvail();
+    });
+  }
+
   $effect(() => {
     void messagesStore.viewMode;
     if (!containerEl) return;
     updateAvail();
-    ro = new ResizeObserver(() => updateAvail());
+    ro = new ResizeObserver(() => scheduleUpdate());
     ro.observe(containerEl);
     return () => {
       ro?.disconnect();
       ro = null;
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafPending = false;
     };
   });
 
   $effect(() => {
     void messagesStore.pageRows;
     if (!containerEl) return;
-    const nodes = containerEl.querySelectorAll<HTMLElement>('[data-id]');
-    if (nodes.length === 0) return;
-    const entries = Array.from(nodes).map(n => ({
-      id: Number(n.dataset.id),
-      h: n.offsetHeight,
-      expanded: messagesStore.isExpanded(Number(n.dataset.id)),
-    }));
-    messagesStore.reportHeights(entries);
+    // Defer height measurement to next frame to avoid layout thrashing
+    const id = requestAnimationFrame(() => {
+      if (!containerEl) return;
+      const nodes = containerEl.querySelectorAll<HTMLElement>('[data-id]');
+      if (nodes.length === 0) return;
+      const entries = Array.from(nodes).map(n => ({
+        id: Number(n.dataset.id),
+        h: n.offsetHeight,
+        expanded: messagesStore.isExpanded(Number(n.dataset.id)),
+      }));
+      messagesStore.reportHeights(entries);
+    });
+    return () => cancelAnimationFrame(id);
   });
 </script>
 
@@ -86,8 +105,8 @@
 {/snippet}
 
 {#if messagesStore.viewMode === 'Table'}
-  <div bind:this={containerEl} class="table-container flex-1 overflow-hidden min-h-0 border-0 rounded-none">
-    <table class="table">
+  <div bind:this={containerEl} class="table-container flex-1 overflow-auto min-h-0 border-0 rounded-none">
+    <table class="table min-w-[720px]">
       <thead bind:this={theadEl}>
         <tr>
           <th class="!w-10">
@@ -133,22 +152,22 @@
               />
             </td>
             {#if settingsStore.appearance.showPortColumn}
-              <td class="font-mono text-xs font-semibold" title={item.message.port}>{portLabel(item.message.port)}</td>
+              <td class="font-mono text-xs font-semibold truncate max-w-[110px]" title={item.message.port}>{portLabel(item.message.port)}</td>
             {/if}
             {#if settingsStore.appearance.showSIMColumn}
-              <td class="font-mono text-xs text-muted-foreground">{simNumber(item.message.port)}</td>
+              <td class="font-mono text-xs text-muted-foreground truncate max-w-[130px]" title={simNumber(item.message.port)}>{simNumber(item.message.port)}</td>
             {/if}
-            <td class="text-xs truncate max-w-[120px]">{item.message.from || '-'}</td>
+            <td class="text-xs truncate max-w-[120px]" title={item.message.from}>{item.message.from || '-'}</td>
             <td class="font-mono text-xs text-muted-foreground whitespace-nowrap">{fmtDateTime(item.message.received)}</td>
             <td>
-              <span class="badge badge-muted">{item.message.status || '-'}</span>
+              <span class="badge badge-muted truncate max-w-[90px] inline-flex">{item.message.status || '-'}</span>
             </td>
             <td onclick={(e) => e.stopPropagation()}>
               {#if item.otp}
                 <button
-                  class="badge-otp cursor-pointer font-mono font-bold tracking-wider hover:brightness-110 active:scale-[0.97] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-otp/70"
+                  class="badge-otp cursor-pointer font-mono font-bold tracking-wider hover:brightness-110 active:scale-[0.97] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-otp/70 truncate max-w-[110px]"
                   onclick={() => messagesStore.copyOtp(item.otp)}
-                  title="Click to copy OTP"
+                  title="Click to copy OTP: {item.otp}"
                 >
                   {item.otp}
                 </button>
@@ -156,11 +175,11 @@
                 <span class="text-xs text-muted-foreground">-</span>
               {/if}
             </td>
-            <td class="text-xs text-muted-foreground max-w-xs" class:truncate={!messagesStore.isExpanded(item.id)}>
+            <td class="text-xs text-muted-foreground max-w-[280px] lg:max-w-xs" class:truncate={!messagesStore.isExpanded(item.id)} title={item.message.text}>
               {#if item.is_new}
-                <span class="w-1.5 h-1.5 rounded-full bg-primary inline-block mr-1.5 animate-pulse-dot" title="Unread"></span>
+                <span class="w-1.5 h-1.5 rounded-full bg-primary inline-block mr-1.5 animate-pulse-dot shrink-0" title="Unread"></span>
               {/if}
-              {item.message.text.replace(/\n/g, ' ')}
+              <span class="break-words">{item.message.text.replace(/\n/g, ' ')}</span>
             </td>
           </tr>
         {/each}

@@ -14,9 +14,46 @@
     { label: 'Has OTP', value: 'Otp', badge: () => messagesStore.otpCount },
     { label: 'Today', value: 'Today' },
   ];
+
+  // Debounced search: local input mirrors store query but commits after 180ms of idle
+  let localQuery = $state(messagesStore.query);
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Keep local in sync when store is cleared externally (e.g. clear button)
+  $effect(() => {
+    if (messagesStore.query === '' && localQuery !== '') {
+      localQuery = '';
+    } else if (messagesStore.query !== localQuery && debounceTimer === null) {
+      // external update not from typing (e.g. navigation) — sync immediately
+      // avoid overriding user typing mid-debounce
+      localQuery = messagesStore.query;
+    }
+  });
+
+  function onSearchInput(v: string) {
+    localQuery = v;
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      messagesStore.query = v;
+    }, 180);
+  }
+
+  function clearSearch() {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = null;
+    localQuery = '';
+    messagesStore.query = '';
+  }
+
+  $effect(() => {
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+    };
+  });
 </script>
 
-<div class="flex items-center gap-2 px-5 py-2 bg-surface border-b border-border shrink-0 flex-wrap">
+<div class="flex items-center gap-2 gap-y-2 px-3 sm:px-5 py-2 bg-surface border-b border-border shrink-0 flex-wrap">
   <div
     class="flex items-center gap-0.5 p-0.5 rounded-md bg-background border border-border"
     role="group"
@@ -46,7 +83,7 @@
   </div>
 
   <select
-    class="input w-40 text-xs py-0 pl-2.5 pr-6"
+    class="input w-32 sm:w-40 text-xs py-0 pl-2.5 pr-6 shrink-0"
     value={messagesStore.portFilter ?? ''}
     onchange={(e) => {
       const v = (e.target as HTMLSelectElement).value;
@@ -60,9 +97,9 @@
     {/each}
   </select>
 
-  <div class="flex-1"></div>
+  <div class="hidden lg:block flex-1 min-w-[12px]"></div>
 
-  <div class="relative w-56">
+  <div class="relative w-full sm:w-56 sm:ml-auto lg:ml-0 flex-1 sm:flex-none min-w-[180px] max-w-full sm:max-w-[260px]">
     <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" aria-hidden="true">
       <Icon name="search" size={13} />
     </span>
@@ -70,14 +107,14 @@
       type="text"
       class="input h-7 text-xs py-0 pl-8 pr-7"
       placeholder="Search messages…"
-      value={messagesStore.query}
-      oninput={(e) => { messagesStore.query = (e.target as HTMLInputElement).value; }}
+      value={localQuery}
+      oninput={(e) => { onSearchInput((e.target as HTMLInputElement).value); }}
       aria-label="Search messages"
     />
-    {#if messagesStore.query}
+    {#if localQuery}
       <button
         class="btn-icon absolute right-1 top-1/2 -translate-y-1/2 w-5 h-5"
-        onclick={() => { messagesStore.query = ''; }}
+        onclick={clearSearch}
         title="Clear search"
         aria-label="Clear search"
       >
@@ -98,6 +135,7 @@
                ? 'bg-elevated text-foreground shadow-sm'
                : 'text-muted-foreground hover:text-foreground'}"
       aria-pressed={messagesStore.viewMode === 'Table'}
+      aria-label="Table view"
       onclick={() => { messagesStore.viewMode = 'Table'; }}
       title="Table view"
     >
@@ -110,6 +148,7 @@
                ? 'bg-elevated text-foreground shadow-sm'
                : 'text-muted-foreground hover:text-foreground'}"
       aria-pressed={messagesStore.viewMode === 'Cards'}
+      aria-label="Card view"
       onclick={() => { messagesStore.viewMode = 'Cards'; }}
       title="Card view"
     >
