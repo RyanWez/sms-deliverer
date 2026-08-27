@@ -38,9 +38,11 @@ pub fn new_shared_state() -> SharedState {
     let ports: Vec<PortInfo> = crate::core::modem::get_port_names()
         .into_iter()
         .map(|name| {
-            let sim = settings.sim_of(&name).to_string();
+            let path = crate::core::modem::stable_id(&name);
+            let sim = settings.sim_of_stable(&path, &name);
             PortInfo {
                 name,
+                path,
                 checked: true,
                 sim_number: sim,
                 live_ready: false,
@@ -76,15 +78,18 @@ pub fn refresh_ports(state: tauri::State<'_, SharedState>) -> Vec<PortInfo> {
         .into_iter()
         .map(|n| {
             if let Some(mut old) = old_map.get(&n).cloned() {
-                old.sim_number = st.settings.sim_of(&n).to_string();
+                old.path = crate::core::modem::stable_id(&n);
+                old.sim_number = st.settings.sim_of_stable(&old.path, &n);
                 old.live_ready = false;
                 old.live_error = None;
                 old
             } else {
+                let path = crate::core::modem::stable_id(&n);
                 PortInfo {
                     name: n.clone(),
+                    path: path.clone(),
                     checked: true,
-                    sim_number: st.settings.sim_of(&n).to_string(),
+                    sim_number: st.settings.sim_of_stable(&path, &n),
                     live_ready: false,
                     live_error: None,
                 }
@@ -181,10 +186,23 @@ pub fn start_scan(
     let total = ports.len();
     log::info!("Scan started on {} port(s)", total);
 
-    for port in ports {
+    // Cap concurrent port reads to protect the USB bridge from contention.
+    // With 60+ sticks, firing 64 simultaneous AT probes backs up the modem
+    // hardware and the OS USB stack; a bounded worker pool fan-out preserves
+    // the shared-state/progress accounting while limiting parallelism.
+    const MAX_CONCURRENT_SCAN: usize = 16;
+    let work = Arc::new(Mutex::new(ports));
+    let workers = total.min(MAX_CONCURRENT_SCAN);
+    let mut handles = Vec::with_capacity(workers);
+    for _ in 0..workers {
+        let work2 = Arc::clone(&work);
         let state_clone = Arc::clone(&state);
         let app2 = app.clone();
-        thread::spawn(move || {
+        handles.push(thread::spawn(move || loop {
+            let port = match work2.lock().unwrap().pop() {
+                Some(port) => port,
+                None => break,
+            };
             let result = crate::core::modem::read_port(&port);
             let crate::core::modem::ReadResult {
                 ok,
@@ -252,7 +270,10 @@ pub fn start_scan(
                 status_text = st.status_text.clone();
             }
             let _ = app2.emit("status:update", &serde_json::json!({ "text": status_text }));
-        });
+        }));
+    }
+    for h in handles {
+        let _ = h.join();
     }
 
     Ok("Scan started".into())
@@ -281,13 +302,23 @@ pub fn get_sim_numbers(
         let total = ports.len();
         let found = Arc::new(AtomicUsize::new(0));
         let done = Arc::new(AtomicUsize::new(0));
-        let mut handles = Vec::with_capacity(total);
-        for port in ports {
+        // Same bounded fan-out as scanning: cap simultaneous USSD probes so a
+        // large bank of sticks doesn't flood the USB bridge with AT requests.
+        const MAX_CONCURRENT_USSD: usize = 16;
+        let work = Arc::new(Mutex::new(ports));
+        let workers = total.min(MAX_CONCURRENT_USSD);
+        let mut handles = Vec::with_capacity(workers);
+        for _ in 0..workers {
+            let work2 = Arc::clone(&work);
             let st2 = Arc::clone(&state_clone);
             let found2 = Arc::clone(&found);
             let done2 = Arc::clone(&done);
             let app3 = app2.clone();
-            handles.push(thread::spawn(move || {
+            handles.push(thread::spawn(move || loop {
+                let port = match work2.lock().unwrap().pop() {
+                    Some(port) => port,
+                    None => break,
+                };
                 let (num, err) = crate::core::modem::get_sim_number(&port);
                 if let Some(ref n) = num {
                     found2.fetch_add(1, Ordering::Relaxed);
@@ -295,7 +326,15 @@ pub fn get_sim_numbers(
                     let ports_snapshot;
                     {
                         let mut st = st2.lock().unwrap();
-                        st.settings.sim_numbers.insert(port.clone(), n.clone());
+                        // Key the cache by the stable path so ttyUSB renumbering
+                        // doesn't drop/reassign the SIM number later.
+                        let key = st
+                            .ports
+                            .iter()
+                            .find(|p| p.name == *port)
+                            .map(|p| p.path.clone())
+                            .unwrap_or_else(|| port.clone());
+                        st.settings.sim_numbers.insert(key, n.clone());
                         if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
                             p.sim_number = n.clone();
                         }
@@ -498,7 +537,10 @@ pub fn start_live(
                             ports_snapshot = st.ports.clone();
                         }
                         let _ = app2.emit("status:update", &serde_json::json!({ "text": text }));
-                        let _ = app2.emit("ports:updated", &serde_json::json!({ "ports": ports_snapshot }));
+                        let _ = app2.emit(
+                            "ports:updated",
+                            &serde_json::json!({ "ports": ports_snapshot }),
+                        );
                     }
                 };
                 crate::core::live::run_live(port, stop, sender);
@@ -537,7 +579,10 @@ pub fn stop_live(app: tauri::AppHandle, state: tauri::State<'_, SharedState>) {
     let ports_snapshot = st.ports.clone();
     drop(st);
     let _ = app.emit("status:update", &serde_json::json!({ "text": text }));
-    let _ = app.emit("ports:updated", &serde_json::json!({ "ports": ports_snapshot }));
+    let _ = app.emit(
+        "ports:updated",
+        &serde_json::json!({ "ports": ports_snapshot }),
+    );
 }
 
 #[tauri::command]
@@ -560,7 +605,9 @@ pub fn delete_selected(
             if let Some(item) = st.messages.iter().find(|m| m.id == *id) {
                 // Assembled long SMS span multiple SIM indices: remove them all.
                 let mut idxs = item.message.part_indices.clone();
-                if idxs.is_empty() || idxs.len() == 1 && !item.message.part_indices.contains(&item.message.index) {
+                if idxs.is_empty()
+                    || idxs.len() == 1 && !item.message.part_indices.contains(&item.message.index)
+                {
                     idxs = vec![item.message.index];
                 }
                 map.entry(item.message.port.clone())
@@ -587,7 +634,10 @@ pub fn delete_selected(
         st.status_text = format!("Deleting {} message(s)...", ids.len());
         initial_status = st.status_text.clone();
     }
-    let _ = app.emit("status:update", &serde_json::json!({ "text": initial_status }));
+    let _ = app.emit(
+        "status:update",
+        &serde_json::json!({ "text": initial_status }),
+    );
     let state_clone = Arc::clone(&state);
     let app2 = app.clone();
     thread::spawn(move || {
@@ -632,6 +682,50 @@ pub fn clear_all(app: tauri::AppHandle, state: tauri::State<'_, SharedState>) {
     drop(st);
     let _ = app.emit("messages:reset", &serde_json::json!({}));
     let _ = app.emit("status:update", &serde_json::json!({ "text": text }));
+}
+
+/// Write exported SMS content to a user-chosen location.
+///
+/// The native save dialog runs on the Rust side and the file is written
+/// directly with std::fs, which sidesteps the fs-plugin path ACL entirely —
+/// the user's chosen path is always writable with no capability gymnastics.
+/// Progress/outcome is reported back through the `export:saved` /
+/// `export:failed` events so the UI can toast the real result.
+#[tauri::command]
+pub fn export_messages(app: tauri::AppHandle, contents: String, suggested: String) -> Result<(), String> {
+    use tauri_plugin_dialog::DialogExt;
+    let handle = app.clone();
+    app.dialog()
+        .file()
+        .add_filter("SMS export", &["csv", "json"])
+        .set_file_name(suggested)
+        .save_file(move |file_path| {
+            let Some(path) = file_path else {
+                return; // user cancelled the dialog — stay silent
+            };
+            match path {
+                tauri_plugin_dialog::FilePath::Path(pb) => {
+                    match std::fs::write(&pb, &contents) {
+                        Ok(_) => {
+                            log::info!("Exported SMS to {}", pb.display());
+                            let _ = handle.emit(
+                                "export:saved",
+                                &serde_json::json!({ "path": pb.display().to_string() }),
+                            );
+                        }
+                        Err(e) => {
+                            log::error!("Export write failed: {}", e);
+                            let _ = handle.emit(
+                                "export:failed",
+                                &serde_json::json!({ "error": e.to_string() }),
+                            );
+                        }
+                    }
+                }
+                _ => { /* remote URL path not applicable */ }
+            }
+        });
+    Ok(())
 }
 
 #[cfg(test)]

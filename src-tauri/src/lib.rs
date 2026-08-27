@@ -34,6 +34,7 @@ pub fn run() {
             commands::stop_live,
             commands::delete_selected,
             commands::clear_all,
+            commands::export_messages,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
