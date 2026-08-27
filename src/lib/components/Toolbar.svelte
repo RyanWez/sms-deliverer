@@ -15,11 +15,11 @@
 <header class="page-header toolbar">
   <div class="flex items-center gap-2 sm:gap-3 mr-auto min-w-0 flex-wrap gap-y-1.5">
     <h1 class="page-title shrink-0">Inbox</h1>
-    <span class="badge badge-primary font-mono tabular-nums shrink-0">
+    <span class="badge badge-primary font-mono tabular-nums shrink-0 min-w-[82px] justify-center">
       {messagesStore.items.length} message{messagesStore.items.length !== 1 ? 's' : ''}
     </span>
     <span
-      class="badge {liveStore.on ? 'badge-success' : 'badge-muted'} shrink-0"
+      class="badge {liveStore.on ? 'badge-success' : 'badge-muted'} shrink-0 min-w-[96px] justify-center font-mono tabular-nums"
       title={liveStore.on ? 'Live monitoring active' : 'Live monitoring off'}
     >
       <span
@@ -31,7 +31,7 @@
 
   <div class="flex items-center gap-1.5 sm:gap-2 flex-wrap w-full sm:w-auto">
     <button
-      class="btn-primary"
+      class="btn-primary min-w-[130px] justify-center"
       disabled={busy}
       onclick={() => api.startScan()}
       title="Read SMS from all checked ports"
@@ -45,7 +45,7 @@
     </button>
 
     <button
-      class="{liveStore.on ? 'btn-danger' : 'btn-success'}"
+      class="{liveStore.on ? 'btn-danger' : 'btn-success'} min-w-[98px] justify-center"
       disabled={messagesStore.deleteBusy || liveStore.scanBusy || liveStore.ussdBusy}
       onclick={() => (liveStore.on ? api.stopLive() : api.startLive())}
       title={liveStore.on ? 'Stop live monitoring' : 'Start live monitoring on checked ports'}

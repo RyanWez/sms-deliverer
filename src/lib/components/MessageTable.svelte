@@ -139,10 +139,10 @@
 
 {#if messagesStore.viewMode === 'Table'}
   <div bind:this={containerEl} class="table-container flex-1 overflow-auto min-h-0 border-0 rounded-none">
-    <table class="table min-w-[720px]">
+    <table class="table min-w-[720px] table-fixed w-full">
       <thead bind:this={theadEl}>
         <tr>
-          <th class="!w-10">
+          <th class="w-10 min-w-[40px] max-w-[40px] text-center">
             <input
               type="checkbox"
               class="checkbox w-3.5 h-3.5"
@@ -152,75 +152,73 @@
             />
           </th>
           {#if settingsStore.appearance.showPortColumn}
-            <th class="!w-20">Port</th>
+            <th class="w-20 min-w-[80px] max-w-[80px]">Port</th>
           {/if}
           {#if settingsStore.appearance.showSIMColumn}
-            <th class="!w-28">SIM</th>
+            <th class="w-28 min-w-[110px] max-w-[120px]">SIM</th>
           {/if}
-          <th class="!w-24">From</th>
-          <th class="!w-36">Received</th>
-          <th class="!w-20">Status</th>
-          <th class="!w-20">OTP</th>
-          <th>Message</th>
+          <th class="w-24 min-w-[90px] max-w-[100px]">From</th>
+          <th class="w-36 min-w-[140px] max-w-[150px]">Received</th>
+          <th class="w-20 min-w-[80px] max-w-[80px]">Status</th>
+          <th class="w-20 min-w-[80px] max-w-[80px]">OTP</th>
+          <th class="min-w-[200px]">Message</th>
         </tr>
       </thead>
-      {#key messagesStore.waveVersion}
-        <tbody>
-          {#each messagesStore.pageRows as item, index (item.id)}
-            <tr
-              data-id={item.id}
-              tabindex="0"
-              class="animate-msg-wave {item.is_new ? 'new-msg-highlight' : ''}"
-              style="animation-delay: {Math.min(index * 24, 280)}ms;"
-              class:selected={messagesStore.isSelected(item.id)}
-              class:active={messagesStore.isActive(item.id)}
-              onclick={() => inspect(item.id)}
-              onkeydown={(e) => rowKeydown(item.id, e)}
-              title="View message details"
-            >
-              <td onclick={(e) => e.stopPropagation()}>
-                <input
-                  type="checkbox"
-                  class="checkbox w-3.5 h-3.5"
-                  checked={messagesStore.isSelected(item.id)}
-                  onchange={() => messagesStore.toggleSelected(item.id)}
-                  aria-label="Select message for deletion"
-                />
-              </td>
-              {#if settingsStore.appearance.showPortColumn}
-                <td class="font-mono text-xs font-semibold truncate max-w-[110px]" title={item.message.port}>{portLabel(item.message.port)}</td>
+      <tbody>
+        {#each messagesStore.pageRows as item, index (item.id)}
+          <tr
+            data-id={item.id}
+            tabindex="0"
+            class="waterfall-row {item.is_new ? 'new-msg-highlight' : ''}"
+            style="animation-delay: {Math.min(index * 28, 320)}ms;"
+            class:selected={messagesStore.isSelected(item.id)}
+            class:active={messagesStore.isActive(item.id)}
+            onclick={() => inspect(item.id)}
+            onkeydown={(e) => rowKeydown(item.id, e)}
+            title="View message details"
+          >
+            <td class="w-10 min-w-[40px] max-w-[40px] text-center" onclick={(e) => e.stopPropagation()}>
+              <input
+                type="checkbox"
+                class="checkbox w-3.5 h-3.5"
+                checked={messagesStore.isSelected(item.id)}
+                onchange={() => messagesStore.toggleSelected(item.id)}
+                aria-label="Select message for deletion"
+              />
+            </td>
+            {#if settingsStore.appearance.showPortColumn}
+              <td class="w-20 min-w-[80px] max-w-[80px] font-mono text-xs font-semibold truncate" title={item.message.port}>{portLabel(item.message.port)}</td>
+            {/if}
+            {#if settingsStore.appearance.showSIMColumn}
+              <td class="w-28 min-w-[110px] max-w-[120px] font-mono text-xs text-muted-foreground truncate" title={simNumber(item.message.port)}>{simNumber(item.message.port)}</td>
+            {/if}
+            <td class="w-24 min-w-[90px] max-w-[100px] text-xs truncate" title={item.message.from}>{item.message.from || '-'}</td>
+            <td class="w-36 min-w-[140px] max-w-[150px] font-mono text-xs text-muted-foreground whitespace-nowrap">{fmtDateTime(item.message.received)}</td>
+            <td class="w-20 min-w-[80px] max-w-[80px]">
+              <span class="badge badge-muted truncate max-w-[70px] inline-flex">{item.message.status || '-'}</span>
+            </td>
+            <td class="w-20 min-w-[80px] max-w-[80px]" onclick={(e) => e.stopPropagation()}>
+              {#if item.otp}
+                <button
+                  class="badge-otp cursor-pointer font-mono font-bold tracking-wider hover:brightness-110 active:scale-[0.97] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-otp/70 truncate max-w-[70px]"
+                  onclick={() => messagesStore.copyOtp(item.otp)}
+                  title="Click to copy OTP: {item.otp}"
+                >
+                  {item.otp}
+                </button>
+              {:else}
+                <span class="text-xs text-muted-foreground">-</span>
               {/if}
-              {#if settingsStore.appearance.showSIMColumn}
-                <td class="font-mono text-xs text-muted-foreground truncate max-w-[130px]" title={simNumber(item.message.port)}>{simNumber(item.message.port)}</td>
+            </td>
+            <td class="text-xs text-muted-foreground" class:truncate={!messagesStore.isExpanded(item.id)} title={item.message.text}>
+              {#if item.is_new}
+                <span class="w-1.5 h-1.5 rounded-full bg-primary inline-block mr-1.5 animate-pulse-dot shrink-0" title="Unread"></span>
               {/if}
-              <td class="text-xs truncate max-w-[120px]" title={item.message.from}>{item.message.from || '-'}</td>
-              <td class="font-mono text-xs text-muted-foreground whitespace-nowrap">{fmtDateTime(item.message.received)}</td>
-              <td>
-                <span class="badge badge-muted truncate max-w-[90px] inline-flex">{item.message.status || '-'}</span>
-              </td>
-              <td onclick={(e) => e.stopPropagation()}>
-                {#if item.otp}
-                  <button
-                    class="badge-otp cursor-pointer font-mono font-bold tracking-wider hover:brightness-110 active:scale-[0.97] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-otp/70 truncate max-w-[110px]"
-                    onclick={() => messagesStore.copyOtp(item.otp)}
-                    title="Click to copy OTP: {item.otp}"
-                  >
-                    {item.otp}
-                  </button>
-                {:else}
-                  <span class="text-xs text-muted-foreground">-</span>
-                {/if}
-              </td>
-              <td class="text-xs text-muted-foreground max-w-[280px] lg:max-w-xs" class:truncate={!messagesStore.isExpanded(item.id)} title={item.message.text}>
-                {#if item.is_new}
-                  <span class="w-1.5 h-1.5 rounded-full bg-primary inline-block mr-1.5 animate-pulse-dot shrink-0" title="Unread"></span>
-                {/if}
-                <span class="break-words">{item.message.text.replace(/\n/g, ' ')}</span>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      {/key}
+              <span class="break-words">{item.message.text.replace(/\n/g, ' ')}</span>
+            </td>
+          </tr>
+        {/each}
+      </tbody>
     </table>
 
     {#if liveStore.scanBusy && messagesStore.visible.length === 0}
@@ -236,64 +234,62 @@
     {:else if messagesStore.visible.length === 0}
       {@render emptyState()}
     {:else}
-      {#key messagesStore.waveVersion}
-        <div class="grid gap-3 port-grid msg-card-grid" style="grid-template-columns: repeat(auto-fill, minmax(260px, 1fr))">
-          {#each messagesStore.pageRows as item, index (item.id)}
-            <div
-              role="button"
-              tabindex="0"
-              data-id={item.id}
-              class="card p-3.5 text-left transition-colors duration-150 cursor-pointer animate-msg-wave {item.is_new ? 'new-msg-highlight' : ''}
-                     hover:bg-elevated/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70
-                     {messagesStore.isActive(item.id)
-                       ? 'border-primary bg-primary/5'
-                       : messagesStore.isSelected(item.id) ? 'border-primary/40' : ''}"
-              style="animation-delay: {Math.min(index * 24, 280)}ms;"
-              onclick={() => inspect(item.id)}
-              onkeydown={(e) => rowKeydown(item.id, e)}
-              title="View message details"
-            >
-              <div class="flex items-center gap-2 mb-2">
-                <input
-                  type="checkbox"
-                  class="checkbox w-3.5 h-3.5"
-                  checked={messagesStore.isSelected(item.id)}
-                  onclick={(e) => e.stopPropagation()}
-                  onchange={() => messagesStore.toggleSelected(item.id)}
-                  onkeydown={(e) => e.stopPropagation()}
-                  aria-label="Select message for deletion"
-                />
-                {#if settingsStore.appearance.showPortColumn}
-                  <span class="font-mono text-[11px] font-bold text-primary" title={item.message.port}>{portLabel(item.message.port)}</span>
-                {/if}
-                {#if settingsStore.appearance.showSIMColumn}
-                  <span class="font-mono text-[10px] text-muted-foreground">{simNumber(item.message.port)}</span>
-                {/if}
-                {#if item.is_new}
-                  <span class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-dot" title="Unread"></span>
-                {/if}
-                <span class="flex-1"></span>
-                <span class="font-mono text-[10px] text-muted-foreground tabular-nums">{fmtDateTime(item.message.received)}</span>
-              </div>
-              {#if item.otp}
-                <span
-                  role="button"
-                  tabindex="0"
-                  class="badge-otp text-sm font-mono font-bold tracking-wider mb-2 cursor-pointer hover:brightness-110 inline-block active:scale-[0.97] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-otp/70"
-                  onclick={(e) => { e.stopPropagation(); messagesStore.copyOtp(item.otp); }}
-                  onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); messagesStore.copyOtp(item.otp); } }}
-                  title="Click to copy OTP"
-                >
-                  {item.otp}
-                </span>
+      <div class="grid gap-3 port-grid msg-card-grid" style="grid-template-columns: repeat(auto-fill, minmax(260px, 1fr))">
+        {#each messagesStore.pageRows as item, index (item.id)}
+          <div
+            role="button"
+            tabindex="0"
+            data-id={item.id}
+            class="card p-3.5 text-left transition-colors duration-150 cursor-pointer waterfall-row {item.is_new ? 'new-msg-highlight' : ''}
+                   hover:bg-elevated/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70
+                   {messagesStore.isActive(item.id)
+                     ? 'border-primary bg-primary/5'
+                     : messagesStore.isSelected(item.id) ? 'border-primary/40' : ''}"
+            style="animation-delay: {Math.min(index * 28, 320)}ms;"
+            onclick={() => inspect(item.id)}
+            onkeydown={(e) => rowKeydown(item.id, e)}
+            title="View message details"
+          >
+            <div class="flex items-center gap-2 mb-2">
+              <input
+                type="checkbox"
+                class="checkbox w-3.5 h-3.5"
+                checked={messagesStore.isSelected(item.id)}
+                onclick={(e) => e.stopPropagation()}
+                onchange={() => messagesStore.toggleSelected(item.id)}
+                onkeydown={(e) => e.stopPropagation()}
+                aria-label="Select message for deletion"
+              />
+              {#if settingsStore.appearance.showPortColumn}
+                <span class="font-mono text-[11px] font-bold text-primary" title={item.message.port}>{portLabel(item.message.port)}</span>
               {/if}
-              <div class="text-xs text-muted-foreground leading-relaxed line-clamp-2">
-                {item.message.text.replace(/\n/g, ' ')}
-              </div>
+              {#if settingsStore.appearance.showSIMColumn}
+                <span class="font-mono text-[10px] text-muted-foreground">{simNumber(item.message.port)}</span>
+              {/if}
+              {#if item.is_new}
+                <span class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-dot" title="Unread"></span>
+              {/if}
+              <span class="flex-1"></span>
+              <span class="font-mono text-[10px] text-muted-foreground tabular-nums">{fmtDateTime(item.message.received)}</span>
             </div>
-          {/each}
-        </div>
-      {/key}
+            {#if item.otp}
+              <span
+                role="button"
+                tabindex="0"
+                class="badge-otp text-sm font-mono font-bold tracking-wider mb-2 cursor-pointer hover:brightness-110 inline-block active:scale-[0.97] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-otp/70"
+                onclick={(e) => { e.stopPropagation(); messagesStore.copyOtp(item.otp); }}
+                onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); messagesStore.copyOtp(item.otp); } }}
+                title="Click to copy OTP"
+              >
+                {item.otp}
+              </span>
+            {/if}
+            <div class="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+              {item.message.text.replace(/\n/g, ' ')}
+            </div>
+          </div>
+        {/each}
+      </div>
     {/if}
   </div>
 {/if}

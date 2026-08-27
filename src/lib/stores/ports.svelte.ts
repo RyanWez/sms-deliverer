@@ -20,6 +20,14 @@ export function createPortsStore() {
         items[idx] = { ...items[idx], ...changes };
       }
     },
+    batchUpdatePorts(updates: Array<{ name: string; changes: Partial<PortInfo> }>) {
+      if (updates.length === 0) return;
+      const map = new Map(updates.map(u => [u.name, u.changes]));
+      items = items.map(p => {
+        const ch = map.get(p.name);
+        return ch ? { ...p, ...ch } : p;
+      });
+    },
     resetLive() {
       items = items.map(p => ({ ...p, live_ready: false, live_error: null }));
     },

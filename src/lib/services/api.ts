@@ -50,17 +50,61 @@ export const api = {
     try {
       const { listen } = await import('@tauri-apps/api/event');
 
+      // High-performance batching buffer for Live & Scan events
+      let msgBuffer: SmsItem[] = [];
+      let msgTimer: ReturnType<typeof setTimeout> | null = null;
+      let isInitialGathering = false;
+
+      function flushMsgBuffer() {
+        if (msgBuffer.length === 0) {
+          msgTimer = null;
+          isInitialGathering = false;
+          return;
+        }
+        const incoming = msgBuffer;
+        msgBuffer = [];
+        msgTimer = null;
+        isInitialGathering = false;
+
+        const existing = new Set(messagesStore.items.map((m) => m.id));
+        const toAdd = incoming.filter((i) => !existing.has(i.id));
+        if (toAdd.length > 0) {
+          messagesStore.items = [...messagesStore.items, ...toAdd];
+        }
+      }
+
+      let readyBuffer: string[] = [];
+      let readyTimer: ReturnType<typeof setTimeout> | null = null;
+      function flushReadyBuffer() {
+        if (readyBuffer.length === 0) return;
+        const ports = readyBuffer;
+        readyBuffer = [];
+        readyTimer = null;
+        const updates = ports.map((p) => ({
+          name: p,
+          changes: { live_ready: true, live_error: null },
+        }));
+        portsStore.batchUpdatePorts(updates);
+        liveStore.readyPorts = portsStore.items
+          .filter((p) => p.live_ready)
+          .map((p) => p.name);
+      }
+
       await listen('messages:reset', () => {
+        if (msgTimer) clearTimeout(msgTimer);
+        msgBuffer = [];
+        msgTimer = null;
+        isInitialGathering = true;
         messagesStore.items = [];
         messagesStore.clearSelection();
       });
 
       await listen<{ items: SmsItem[] }>('messages:added', (event) => {
-        const existing = new Set(messagesStore.items.map((m) => m.id));
-        const incoming = event.payload.items.filter((i) => !existing.has(i.id));
-        if (incoming.length > 0) {
-          messagesStore.items = [...messagesStore.items, ...incoming];
-          messagesStore.triggerWave();
+        msgBuffer.push(...event.payload.items);
+        if (!msgTimer) {
+          // Gather initial thread outputs for 200ms so all rows drop in together as a unified waterfall!
+          const delay = isInitialGathering ? 200 : 50;
+          msgTimer = setTimeout(flushMsgBuffer, delay);
         }
       });
 
@@ -98,15 +142,15 @@ export const api = {
       });
 
       await listen<{ port: string }>('sms:ready', (event) => {
-        portsStore.updatePort(event.payload.port, { live_ready: true });
-        liveStore.readyPorts = portsStore.items
-          .filter(p => p.live_ready)
-          .map(p => p.name);
+        readyBuffer.push(event.payload.port);
+        if (!readyTimer) {
+          readyTimer = setTimeout(flushReadyBuffer, 50);
+        }
       });
 
       await listen('scan:done', () => {
+        flushMsgBuffer();
         liveStore.scanBusy = false;
-        messagesStore.triggerWave();
       });
 
       await listen('ussd:done', () => {

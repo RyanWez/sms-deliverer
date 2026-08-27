@@ -181,8 +181,8 @@ export function createMessagesStore() {
     if (collapsed.length === 0) return;
     const candidate =
       collapsed.reduce((s, e) => s + e.h, 0) / collapsed.length;
-    if (avgRowH === null || Math.abs(candidate - avgRowH) >= 1) {
-      avgRowH = candidate;
+    if (avgRowH === null || Math.abs(candidate - avgRowH) >= 4) {
+      avgRowH = Math.round(candidate);
     }
   }
 
