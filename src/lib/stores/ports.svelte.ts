@@ -20,6 +20,9 @@ export function createPortsStore() {
         items[idx] = { ...items[idx], ...changes };
       }
     },
+    resetLive() {
+      items = items.map(p => ({ ...p, live_ready: false, live_error: null }));
+    },
     find(name: string): PortInfo | undefined {
       return items.find(p => p.name === name);
     },

@@ -3,9 +3,11 @@ import { listen } from '@tauri-apps/api/event';
 import { portsStore } from '$lib/stores/ports.svelte';
 import { messagesStore } from '$lib/stores/messages.svelte';
 import { liveStore } from '$lib/stores/live.svelte';
+import { settingsStore } from '$lib/stores/settings.svelte';
 import type { SmsItem, ToastData, PortInfo } from '$lib/types';
 
 let nextToastId = 1;
+let initialized = false;
 
 function toast(kind: ToastData['kind'], title: string, body: string, otp?: string | null) {
   liveStore.addToast({
@@ -31,6 +33,9 @@ async function refreshFromBackend() {
 
 export const api = {
   async init() {
+    if (initialized) return;
+    initialized = true;
+
     await refreshFromBackend();
 
     await listen('messages:reset', () => {
@@ -80,6 +85,10 @@ export const api = {
         .filter(p => p.live_ready)
         .map(p => p.name);
     });
+
+    if (settingsStore.general.autoStartLive && portsStore.items.some(p => p.checked)) {
+      void api.startLive(true);
+    }
   },
 
   async refreshPorts() {
@@ -95,10 +104,11 @@ export const api = {
     }
   },
 
-  async startLive() {
+  async startLive(silent = false) {
     try {
       const ports = await invoke<PortInfo[]>('get_ports');
       portsStore.set(ports);
+      portsStore.resetLive();
       const checked = ports.filter(p => p.checked);
       liveStore.on = true;
       liveStore.totalPorts = checked.length;
@@ -106,7 +116,10 @@ export const api = {
       await invoke('start_live');
     } catch (e) {
       liveStore.on = false;
-      toast('Danger', 'Live failed', String(e));
+      liveStore.totalPorts = 0;
+      liveStore.readyPorts = [];
+      portsStore.resetLive();
+      if (!silent) toast('Danger', 'Live failed', String(e));
     }
   },
 
@@ -115,6 +128,9 @@ export const api = {
       await invoke('stop_live');
     } finally {
       liveStore.on = false;
+      liveStore.totalPorts = 0;
+      liveStore.readyPorts = [];
+      portsStore.resetLive();
     }
   },
 
@@ -127,13 +143,13 @@ export const api = {
   },
 
   async deleteSelected(ids: number[]) {
+    if (ids.length === 0) return;
     messagesStore.deleteBusy = true;
     try {
       await invoke('delete_selected', { ids });
     } catch (e) {
       toast('Danger', 'Delete failed', String(e));
     } finally {
-      messagesStore.removeByIds(ids);
       messagesStore.deleteBusy = false;
     }
   },

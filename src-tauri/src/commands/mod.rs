@@ -77,6 +77,8 @@ pub fn refresh_ports(state: tauri::State<'_, SharedState>) -> Vec<PortInfo> {
         .map(|n| {
             if let Some(mut old) = old_map.get(&n).cloned() {
                 old.sim_number = st.settings.sim_of(&n).to_string();
+                old.live_ready = false;
+                old.live_error = None;
                 old
             } else {
                 PortInfo {
@@ -478,7 +480,7 @@ pub fn start_live(
                         );
                     }
                     crate::core::live::LiveEvent::Closed { port, error } => {
-                        let text;
+                        let (text, ports_snapshot);
                         {
                             let mut st = st2.lock().unwrap();
                             if let Some(e) = error {
@@ -491,8 +493,10 @@ pub fn start_live(
                                 st.status_text = format!("{} FAILED: {}", port, e);
                             }
                             text = st.status_text.clone();
+                            ports_snapshot = st.ports.clone();
                         }
                         let _ = app2.emit("status:update", &serde_json::json!({ "text": text }));
+                        let _ = app2.emit("ports:updated", &serde_json::json!({ "ports": ports_snapshot }));
                     }
                 };
                 crate::core::live::run_live(port, stop, sender);
@@ -521,11 +525,17 @@ pub fn stop_live(app: tauri::AppHandle, state: tauri::State<'_, SharedState>) {
         stop.store(true, Ordering::Relaxed);
     }
     st.live_on = false;
+    for p in &mut st.ports {
+        p.live_ready = false;
+        p.live_error = None;
+    }
     st.status_text = "Stopping live...".into();
     log::info!("Live stop requested");
     let text = st.status_text.clone();
+    let ports_snapshot = st.ports.clone();
     drop(st);
     let _ = app.emit("status:update", &serde_json::json!({ "text": text }));
+    let _ = app.emit("ports:updated", &serde_json::json!({ "ports": ports_snapshot }));
 }
 
 #[tauri::command]

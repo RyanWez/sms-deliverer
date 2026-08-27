@@ -2,6 +2,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import { messagesStore } from '$lib/stores/messages.svelte';
   import { liveStore } from '$lib/stores/live.svelte';
+  import { settingsStore } from '$lib/stores/settings.svelte';
   import { api } from '$lib/services/api';
 
   const busy = $derived(
@@ -64,7 +65,7 @@
       class="btn-danger"
       disabled={messagesStore.selectedCount === 0 || busy}
       onclick={() => {
-        if (confirm(`Delete ${messagesStore.selectedCount} message(s)?`)) {
+        if (!settingsStore.general.confirmDelete || confirm(`Delete ${messagesStore.selectedCount} message(s)?`)) {
           api.deleteSelected([...messagesStore.selected]);
         }
       }}
@@ -78,7 +79,7 @@
       class="btn-danger-quiet"
       disabled={busy}
       onclick={() => {
-        if (confirm('Delete ALL messages from checked ports?')) {
+        if (!settingsStore.general.confirmDelete || confirm('Delete ALL messages from checked ports?')) {
           api.clearAll();
         }
       }}

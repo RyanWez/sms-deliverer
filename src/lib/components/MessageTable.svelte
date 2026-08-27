@@ -2,6 +2,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import { messagesStore } from '$lib/stores/messages.svelte';
   import { portsStore } from '$lib/stores/ports.svelte';
+  import { settingsStore } from '$lib/stores/settings.svelte';
   import { portLabel } from '$lib/utils/port';
   import { fmtDateTime } from '$lib/utils/format';
 
@@ -98,8 +99,12 @@
               aria-label="Select all visible messages"
             />
           </th>
-          <th class="!w-20">Port</th>
-          <th class="!w-28">SIM</th>
+          {#if settingsStore.appearance.showPortColumn}
+            <th class="!w-20">Port</th>
+          {/if}
+          {#if settingsStore.appearance.showSIMColumn}
+            <th class="!w-28">SIM</th>
+          {/if}
           <th class="!w-24">From</th>
           <th class="!w-36">Received</th>
           <th class="!w-20">Status</th>
@@ -127,8 +132,12 @@
                 aria-label="Select message for deletion"
               />
             </td>
-            <td class="font-mono text-xs font-semibold" title={item.message.port}>{portLabel(item.message.port)}</td>
-            <td class="font-mono text-xs text-muted-foreground">{simNumber(item.message.port)}</td>
+            {#if settingsStore.appearance.showPortColumn}
+              <td class="font-mono text-xs font-semibold" title={item.message.port}>{portLabel(item.message.port)}</td>
+            {/if}
+            {#if settingsStore.appearance.showSIMColumn}
+              <td class="font-mono text-xs text-muted-foreground">{simNumber(item.message.port)}</td>
+            {/if}
             <td class="text-xs truncate max-w-[120px]">{item.message.from || '-'}</td>
             <td class="font-mono text-xs text-muted-foreground whitespace-nowrap">{fmtDateTime(item.message.received)}</td>
             <td>
@@ -192,8 +201,12 @@
                 onkeydown={(e) => e.stopPropagation()}
                 aria-label="Select message for deletion"
               />
-              <span class="font-mono text-[11px] font-bold text-primary" title={item.message.port}>{portLabel(item.message.port)}</span>
-              <span class="font-mono text-[10px] text-muted-foreground">{simNumber(item.message.port)}</span>
+              {#if settingsStore.appearance.showPortColumn}
+                <span class="font-mono text-[11px] font-bold text-primary" title={item.message.port}>{portLabel(item.message.port)}</span>
+              {/if}
+              {#if settingsStore.appearance.showSIMColumn}
+                <span class="font-mono text-[10px] text-muted-foreground">{simNumber(item.message.port)}</span>
+              {/if}
               {#if item.is_new}
                 <span class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-dot" title="Unread"></span>
               {/if}

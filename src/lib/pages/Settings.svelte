@@ -236,7 +236,7 @@
         settingsStore.resetToDefaults();
       }
     } else if (action === "clearMessages") {
-      if (confirm("Permanently delete ALL messages? This cannot be undone.")) {
+      if (!settingsStore.general.confirmDelete || confirm("Permanently delete ALL messages? This cannot be undone.")) {
         await api.clearAll();
       }
     } else if (action === "checkUpdates") {
