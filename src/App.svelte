@@ -7,10 +7,20 @@
   import Ports from "$lib/pages/Ports.svelte";
   import Settings from "$lib/pages/Settings.svelte";
   import { api } from "$lib/services/api";
+  import { restartAutoUpdater } from "$lib/services/updater";
+  import { settingsStore } from "$lib/stores/settings.svelte";
   import { navigationStore } from "$lib/stores/navigation.svelte";
 
   onMount(() => {
     api.init();
+  });
+
+  // Schedule background update checks on launch and re-schedule them whenever
+  // the user toggles autoCheck / checkInterval in Settings → Updates.
+  $effect(() => {
+    void settingsStore.updates.autoCheck;
+    void settingsStore.updates.checkInterval;
+    restartAutoUpdater();
   });
 </script>
 

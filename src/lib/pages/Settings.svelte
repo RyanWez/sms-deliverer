@@ -3,7 +3,10 @@
   import type { IconName } from "$lib/icons";
   import { settingsStore } from "$lib/stores/settings.svelte";
   import { api } from "$lib/services/api";
-  import { isTauri } from "$lib/utils/tauri";
+  import { runUpdateCheck } from "$lib/services/updater";
+  import { confirm as nativeConfirm } from "@tauri-apps/plugin-dialog";
+  import { getVersion } from "@tauri-apps/api/app";
+  import { onMount } from "svelte";
 
   const settingsGroups = [
     {
@@ -222,6 +225,15 @@
 
   let selectedId = $state<string>("general");
   let updateChecking = $state(false);
+  let appVersion = $state<string | null>(null);
+
+  onMount(async () => {
+    try {
+      appVersion = await getVersion();
+    } catch {
+      appVersion = null;
+    }
+  });
 
   const selectedGroup = $derived(
     settingsGroups.find((g) => g.id === selectedId) ?? settingsGroups[0]
@@ -229,39 +241,33 @@
 
   async function handleAction(action: string) {
     if (action === "reset") {
-      if (confirm("Reset all settings to defaults? This cannot be undone.")) {
+      if (
+        await nativeConfirm("Reset all settings to defaults? This cannot be undone.", {
+          title: "Reset settings",
+          kind: "warning",
+          okLabel: "Reset",
+          cancelLabel: "Cancel",
+        })
+      ) {
         settingsStore.resetToDefaults();
       }
     } else if (action === "clearMessages") {
-      if (!settingsStore.general.confirmDelete || confirm("Permanently delete ALL messages? This cannot be undone.")) {
+      if (
+        !settingsStore.general.confirmDelete ||
+        (await nativeConfirm("Permanently delete ALL messages? This cannot be undone.", {
+          title: "Clear all messages",
+          kind: "warning",
+          okLabel: "Delete all",
+          cancelLabel: "Cancel",
+        }))
+      ) {
         await api.clearAll();
       }
     } else if (action === "checkUpdates") {
-      if (!isTauri()) {
-        alert("Updater is only available when running in the Tauri desktop application.");
-        return;
-      }
       if (updateChecking) return;
       updateChecking = true;
       try {
-        const { check } = await import("@tauri-apps/plugin-updater");
-        const update = await check();
-        if (update) {
-          if (confirm(`Version ${update.version} is available. Do you want to download and install it now?`)) {
-            await update.downloadAndInstall();
-            alert("Update installed successfully. The application will now restart.");
-            try {
-              const { relaunch } = await import("@tauri-apps/plugin-process");
-              await relaunch();
-            } catch (e) {
-              alert("Please restart the app manually to apply the update.");
-            }
-          }
-        } else {
-          alert("You are already on the latest version.");
-        }
-      } catch (error) {
-        alert("Failed to check for updates: " + error);
+        await runUpdateCheck(true);
       } finally {
         updateChecking = false;
       }
@@ -594,6 +600,6 @@
 
   <footer class="page-footer">
     <span>Settings are saved automatically</span>
-    <span class="font-mono">v2.0.0</span>
+    <span class="font-mono">{appVersion ? `v${appVersion}` : ""}</span>
   </footer>
 </div>

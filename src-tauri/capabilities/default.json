@@ -11,6 +11,7 @@
     "core:window:allow-close",
     "core:window:allow-start-dragging",
     "updater:default",
-    "process:default"
+    "process:default",
+    "dialog:default"
   ]
 }
