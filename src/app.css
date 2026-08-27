@@ -324,6 +324,55 @@ body {
   }
 }
 
+/* ---------- Layout isolation for smooth sidebar ---------- */
+.app-shell {
+  contain: layout paint;
+}
+.main-content {
+  contain: layout paint style;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  /* isolate paint layer so width anim doesn't blur text subpixel */
+  isolation: isolate;
+  /* prevent scrollbar-gutter jitter during width anim */
+  scrollbar-gutter: stable;
+}
+.main-content > * {
+  min-width: 0;
+}
+
+/* During sidebar width transition: freeze expensive reflows */
+.sidebar-animating .main-content {
+  overflow: clip !important;
+  contain: layout paint style;
+  /* promote to GPU layer for duration of animation */
+  will-change: transform;
+}
+.sidebar-animating .table-container {
+  overflow: hidden !important;
+  contain: paint;
+  transform: translateZ(0);
+}
+.sidebar-animating .port-grid {
+  contain: paint layout;
+  /* keep grid from recomputing columns mid-flight */
+  will-change: contents;
+  transform: translateZ(0);
+}
+.sidebar-animating .page-header,
+.sidebar-animating .filter-bar,
+.sidebar-animating .toolbar {
+  flex-wrap: nowrap !important;
+  overflow: clip !important;
+  contain: paint;
+}
+/* Avoid subpixel blur on text during width interpolation */
+.sidebar-animating .main-content,
+.sidebar-animating aside {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
 /* ---------- Animations ---------- */
 @keyframes slide-in {
   from { opacity: 0; transform: translateX(12px); }
@@ -349,5 +398,8 @@ body {
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+  aside[style*="transition: width"] {
+    transition: none !important;
   }
 }

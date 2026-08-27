@@ -5,6 +5,7 @@
   import { portsStore } from '$lib/stores/ports.svelte';
   import { messagesStore } from '$lib/stores/messages.svelte';
   import { liveStore } from '$lib/stores/live.svelte';
+  import { navigationStore } from '$lib/stores/navigation.svelte';
   import { api } from '$lib/services/api';
   import { portLabel, portStatus } from '$lib/utils/port';
   import type { PortInfo } from '$lib/types';
@@ -119,6 +120,20 @@
       lastPortTrigger = document.activeElement as HTMLElement | null;
     }
     prevActivePort = activePortName;
+  });
+
+  // Freeze port grid columns during sidebar animation to avoid column-jump wobble
+  let portGridEl: HTMLDivElement | undefined = $state();
+  let lockedGridCols: string | null = $state(null);
+  $effect(() => {
+    if (navigationStore.isAnimating) {
+      if (portGridEl) {
+        // snapshot current computed columns (e.g. "260px 260px 260px")
+        lockedGridCols = getComputedStyle(portGridEl).gridTemplateColumns;
+      }
+    } else {
+      lockedGridCols = null;
+    }
   });
 
   function handleKeydown(e: KeyboardEvent) {
@@ -259,7 +274,7 @@
   <div class="flex-1 flex overflow-hidden min-h-0 min-w-0 relative">
     <div class="flex-1 overflow-auto p-3 sm:p-5 bg-background min-w-0 min-h-0">
       {#if refreshing && !portsStore.hasLoaded}
-        <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));" aria-label="Loading ports">
+        <div class="grid gap-3 port-grid" style={lockedGridCols ? `grid-template-columns: ${lockedGridCols}` : `grid-template-columns: repeat(auto-fill, minmax(260px, 1fr))`} aria-label="Loading ports">
           {#each Array(6) as _, i (i)}
             <div class="card p-4 animate-pulse">
               <div class="flex items-start gap-3">
@@ -296,7 +311,7 @@
           </button>
         </div>
       {:else}
-        <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));">
+        <div bind:this={portGridEl} class="grid gap-3 port-grid" style={lockedGridCols ? `grid-template-columns: ${lockedGridCols}` : `grid-template-columns: repeat(auto-fill, minmax(260px, 1fr))`}>
           {#each filteredPorts as port (port.name)}
             {@const st = portStatus(port, liveStore.on)}
             <div

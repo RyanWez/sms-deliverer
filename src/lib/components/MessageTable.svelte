@@ -3,6 +3,7 @@
   import { messagesStore } from '$lib/stores/messages.svelte';
   import { portsStore } from '$lib/stores/ports.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
+  import { navigationStore } from '$lib/stores/navigation.svelte';
   import { portLabel } from '$lib/utils/port';
   import { fmtDateTime } from '$lib/utils/format';
 
@@ -36,9 +37,20 @@
 
   let containerEl: HTMLElement | undefined = $state();
   let theadEl: HTMLElement | undefined = $state();
+  let cardGridEl: HTMLElement | undefined = $state();
   let ro: ResizeObserver | null = null;
   let rafPending = false;
   let rafId: number | null = null;
+
+  // Freeze card grid columns during sidebar animation to avoid wobble
+  let lockedCardCols: string | null = $state(null);
+  $effect(() => {
+    if (navigationStore.isAnimating) {
+      if (cardGridEl) lockedCardCols = getComputedStyle(cardGridEl).gridTemplateColumns;
+    } else {
+      lockedCardCols = null;
+    }
+  });
 
   function updateAvail() {
     if (!containerEl) return;
@@ -49,6 +61,8 @@
   }
 
   function scheduleUpdate() {
+    // Pause ResizeObserver churn during sidebar animation — avoids 60fps layout thrash
+    if (navigationStore.isAnimating) return;
     if (rafPending) return;
     rafPending = true;
     rafId = requestAnimationFrame(() => {
@@ -70,6 +84,15 @@
       if (rafId !== null) cancelAnimationFrame(rafId);
       rafPending = false;
     };
+  });
+
+  // After sidebar animation ends, recalc available height once (debounced)
+  $effect(() => {
+    if (!navigationStore.isAnimating && containerEl) {
+      // one frame after paint settles
+      const id = requestAnimationFrame(() => updateAvail());
+      return () => cancelAnimationFrame(id);
+    }
   });
 
   $effect(() => {
@@ -195,7 +218,7 @@
     {#if messagesStore.visible.length === 0}
       {@render emptyState()}
     {:else}
-      <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));">
+      <div bind:this={cardGridEl} class="grid gap-3 port-grid msg-card-grid" style={lockedCardCols ? `grid-template-columns: ${lockedCardCols}` : `grid-template-columns: repeat(auto-fill, minmax(260px, 1fr))`}>
         {#each messagesStore.pageRows as item (item.id)}
           <div
             role="button"

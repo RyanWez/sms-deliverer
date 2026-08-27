@@ -12,7 +12,7 @@
   let exportOpen = $state(false);
 </script>
 
-<header class="page-header">
+<header class="page-header toolbar">
   <div class="flex items-center gap-2 sm:gap-3 mr-auto min-w-0 flex-wrap gap-y-1.5">
     <h1 class="page-title shrink-0">Inbox</h1>
     <span class="badge badge-primary font-mono tabular-nums shrink-0">

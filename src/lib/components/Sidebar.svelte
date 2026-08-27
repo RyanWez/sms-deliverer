@@ -33,15 +33,16 @@
 </script>
 
 <aside
-  class="flex flex-col bg-surface border-r border-border shrink-0 select-none overflow-hidden relative"
-  style="width: {navigationStore.sidebarCollapsed ? '56px' : '220px'}; transition: width 300ms cubic-bezier(0.2, 0.0, 0, 1.0); will-change: width;"
+  class="flex flex-col bg-surface border-r border-border shrink-0 select-none overflow-hidden relative isolate"
+  style="width: {navigationStore.sidebarCollapsed ? '56px' : '220px'}; transition: width 240ms cubic-bezier(0.32,0.72,0,1); will-change: width; contain: layout paint style; transform: translateZ(0); backface-visibility: hidden;"
 >
   <!-- Header -->
   <div
     class="h-12 flex items-center justify-between px-3 border-b border-border relative overflow-hidden shrink-0"
   >
     <span
-      class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)]"
+      class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap overflow-hidden will-change-[opacity,transform] transition-all duration-[240ms] ease-[cubic-bezier(0.32,0.72,0,1)]"
+      style="transform: translateZ(0);"
       class:opacity-100={!navigationStore.sidebarCollapsed}
       class:max-w-[140px]={!navigationStore.sidebarCollapsed}
       class:opacity-0={navigationStore.sidebarCollapsed}
@@ -51,7 +52,8 @@
       SMS Reader
     </span>
     <button
-      class="btn-icon shrink-0 transition-transform duration-300 ease-[cubic-bezier(0.2,0,0,1)]"
+      class="btn-icon shrink-0 transition-transform duration-[240ms] ease-[cubic-bezier(0.32,0.72,0,1)]"
+      style="transform: translateZ(0);"
       onclick={() => navigationStore.toggleSidebar()}
       title={navigationStore.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
       aria-label={navigationStore.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -59,7 +61,7 @@
       <Icon
         name="chevrons-left"
         size={15}
-        class="transition-transform duration-300 ease-[cubic-bezier(0.2,0,0,1)] {navigationStore.sidebarCollapsed ? 'rotate-180' : ''}"
+        class="transition-transform duration-[240ms] ease-[cubic-bezier(0.32,0.72,0,1)] {navigationStore.sidebarCollapsed ? 'rotate-180' : ''}"
       />
     </button>
   </div>
@@ -92,7 +94,8 @@
               <Icon name={item.icon} size={17} />
             </div>
             <span
-              class="truncate whitespace-nowrap text-left transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)] overflow-hidden"
+              class="truncate whitespace-nowrap text-left will-change-[opacity,transform] transition-all duration-[240ms] ease-[cubic-bezier(0.32,0.72,0,1)] overflow-hidden"
+              style="transform: translateZ(0);"
               class:opacity-100={!navigationStore.sidebarCollapsed}
               class:max-w-[140px]={!navigationStore.sidebarCollapsed}
               class:ml-3={!navigationStore.sidebarCollapsed}
@@ -109,7 +112,8 @@
 
     <!-- Quick Stats -->
     <div
-      class="mx-2 mt-4 pt-3 border-t border-border overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)] whitespace-nowrap"
+      class="mx-2 mt-4 pt-3 border-t border-border overflow-hidden will-change-[opacity,transform] transition-all duration-[240ms] ease-[cubic-bezier(0.32,0.72,0,1)] whitespace-nowrap"
+      style="transform: translateZ(0);"
       class:opacity-100={!navigationStore.sidebarCollapsed}
       class:max-h-40={!navigationStore.sidebarCollapsed}
       class:opacity-0={navigationStore.sidebarCollapsed}
@@ -137,7 +141,8 @@
 
   <!-- Footer -->
   <div
-    class="p-3 border-t border-border overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)] whitespace-nowrap shrink-0"
+    class="p-3 border-t border-border overflow-hidden will-change-[opacity,transform] transition-all duration-[240ms] ease-[cubic-bezier(0.32,0.72,0,1)] whitespace-nowrap shrink-0"
+    style="transform: translateZ(0);"
     class:opacity-100={!navigationStore.sidebarCollapsed}
     class:max-h-20={!navigationStore.sidebarCollapsed}
     class:opacity-0={navigationStore.sidebarCollapsed}

@@ -25,11 +25,11 @@
   });
 </script>
 
-<div class="h-full flex flex-col bg-background">
+<div class="h-full flex flex-col bg-background" class:sidebar-animating={navigationStore.isAnimating}>
   <TitleBar />
-  <div class="flex-1 flex overflow-hidden min-h-0">
+  <div class="flex-1 flex overflow-hidden min-h-0 app-shell">
     <Sidebar />
-    <main class="flex-1 flex flex-col overflow-hidden min-w-0 min-h-0">
+    <main class="flex-1 flex flex-col overflow-hidden min-w-0 min-h-0 main-content">
       {#if navigationStore.currentSection === "inbox"}
         <Inbox />
       {:else if navigationStore.currentSection === "ports"}
