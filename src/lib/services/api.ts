@@ -65,6 +65,11 @@ export const api = {
 
       await listen<{ ids: number[] }>('messages:removed', (event) => {
         messagesStore.removeByIds(event.payload.ids);
+        messagesStore.deleteBusy = false;
+      });
+
+      await listen('delete:done', () => {
+        messagesStore.deleteBusy = false;
       });
 
       await listen<{ ports: PortInfo[] }>('ports:updated', (event) => {
@@ -207,18 +212,21 @@ export const api = {
 
   async deleteSelected(ids: number[]) {
     if (ids.length === 0) return;
+    if (messagesStore.deleteBusy) return;
     messagesStore.deleteBusy = true;
     try {
       if (isTauri()) {
         const { invoke } = await import('@tauri-apps/api/core');
         await invoke('delete_selected', { ids });
       } else {
-        messagesStore.removeByIds(ids);
+        setTimeout(() => {
+          messagesStore.removeByIds(ids);
+          messagesStore.deleteBusy = false;
+        }, 800);
       }
     } catch (e) {
-      toast('Danger', 'Delete failed', String(e));
-    } finally {
       messagesStore.deleteBusy = false;
+      toast('Danger', 'Delete failed', String(e));
     }
   },
 

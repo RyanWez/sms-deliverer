@@ -36,8 +36,10 @@
     >
       {#if liveStore.scanBusy}
         <Icon name="loader" size={14} class="animate-spin" />
+        <span>Scanning...</span>
+      {:else}
+        <span>Scan &amp; Read All</span>
       {/if}
-      Scan &amp; Read All
     </button>
 
     <button
@@ -60,10 +62,11 @@
     >
       {#if liveStore.ussdBusy}
         <Icon name="loader" size={14} class="animate-spin" />
+        <span>Getting SIMs...</span>
       {:else}
         <Icon name="sim" size={14} />
+        <span>Get SIM Numbers</span>
       {/if}
-      Get SIM Numbers
     </button>
 
     <div class="hidden sm:block w-px h-5 bg-border mx-0.5" role="separator" aria-hidden="true"></div>
@@ -80,10 +83,11 @@
     >
       {#if messagesStore.deleteBusy}
         <Icon name="loader" size={14} class="animate-spin" />
+        <span>Deleting...</span>
       {:else}
         <Icon name="trash" size={14} />
+        <span class="hidden sm:inline">Delete Selected</span><span class="sm:hidden">Delete</span> ({messagesStore.selectedCount})
       {/if}
-      <span class="hidden sm:inline">Delete Selected</span><span class="sm:hidden">Delete</span> ({messagesStore.selectedCount})
     </button>
 
     <button

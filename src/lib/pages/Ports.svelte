@@ -173,10 +173,11 @@
       >
         {#if liveStore.ussdBusy}
           <Icon name="loader" size={14} class="animate-spin" />
+          <span>Getting SIMs...</span>
         {:else}
           <Icon name="sim" size={14} />
+          <span>Get SIM Numbers</span>
         {/if}
-        Get SIM Numbers
       </button>
       <button
         class="btn-secondary"

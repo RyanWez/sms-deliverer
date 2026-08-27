@@ -580,10 +580,14 @@ pub fn delete_selected(
     if to_delete.is_empty() {
         return Err("No messages selected.".into());
     }
+    let initial_status;
     {
         let mut st = state.lock().unwrap();
         st.delete_busy = true;
+        st.status_text = format!("Deleting {} message(s)...", ids.len());
+        initial_status = st.status_text.clone();
     }
+    let _ = app.emit("status:update", &serde_json::json!({ "text": initial_status }));
     let state_clone = Arc::clone(&state);
     let app2 = app.clone();
     thread::spawn(move || {
@@ -613,6 +617,7 @@ pub fn delete_selected(
             text = st.status_text.clone();
         }
         let _ = app2.emit("messages:removed", &serde_json::json!({ "ids": &ids }));
+        let _ = app2.emit("delete:done", &serde_json::json!({}));
         let _ = app2.emit("status:update", &serde_json::json!({ "text": text }));
     });
     Ok("Delete started".into())
