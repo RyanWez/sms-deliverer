@@ -162,10 +162,6 @@ export const api = {
         toast('Danger', 'Export failed', event.payload.error);
       });
 
-      await listen<LogEntry>('log:entry', (event) => {
-        logsStore.addEntry(event.payload);
-      });
-
       if (settingsStore.general.autoStartLive && portsStore.items.some(p => p.checked)) {
         void api.startLive(true);
       }
@@ -421,6 +417,20 @@ export const api = {
     } catch (e) {
       toast('Danger', 'Open Folder Failed', String(e));
     }
+  },
+
+  async purgeExpiredMessages(retentionHours: number) {
+    if (!retentionHours || retentionHours <= 0) return 0;
+    const purgedInStore = messagesStore.purgeExpired(retentionHours);
+    if (isTauri()) {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('purge_expired_messages', { maxAgeHours: retentionHours });
+      } catch (e) {
+        console.warn('Failed to purge expired messages from backend:', e);
+      }
+    }
+    return purgedInStore;
   },
 };
 

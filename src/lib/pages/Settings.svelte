@@ -47,6 +47,30 @@
           max: 300,
           step: 5,
         },
+        {
+          key: "autoDeleteExpired",
+          label: "Auto-Delete Expired Messages",
+          description:
+            "Automatically remove messages older than the retention period in the background",
+          type: "checkbox" as const,
+          bind: "general",
+        },
+        {
+          key: "retentionHours",
+          label: "Message Retention Period",
+          description:
+            "How long to keep received SMS before automatic background deletion",
+          type: "select" as const,
+          bind: "general",
+          options: [
+            { value: 1, label: "1 Hour" },
+            { value: 2, label: "2 Hours (Default)" },
+            { value: 4, label: "4 Hours" },
+            { value: 8, label: "8 Hours" },
+            { value: 24, label: "24 Hours (1 Day)" },
+            { value: 168, label: "7 Days" },
+          ],
+        },
       ],
     },
     {
@@ -577,13 +601,17 @@
                           )}
                           onchange={(e) => {
                             const target = e.target as HTMLSelectElement;
+                            const currentVal = getNestedValue(settingsStore, `${field.bind}.${field.key}`);
+                            const parsedVal = typeof currentVal === 'number' && !Number.isNaN(Number(target.value))
+                              ? Number(target.value)
+                              : target.value;
                             setNestedValue(
                               settingsStore,
                               `${field.bind}.${field.key}`,
-                              target.value,
+                              parsedVal,
                             );
                             const setter = setterFor(field.bind);
-                            if (setter) setter({ [field.key]: target.value });
+                            if (setter) setter({ [field.key]: parsedVal });
                           }}
                         >
                           {#each field.options as opt (opt.value)}

@@ -16,7 +16,6 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            logging::set_app_handle(app.handle().clone());
             let state = commands::new_shared_state();
             app.manage(state);
             Ok(())
@@ -40,6 +39,7 @@ pub fn run() {
             commands::clear_logs,
             commands::get_log_file_path,
             commands::open_log_folder,
+            commands::purge_expired_messages,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

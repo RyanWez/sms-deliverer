@@ -37,9 +37,21 @@
     tick().then(() => scrollToBottom());
   });
 
+  let refreshTimer: ReturnType<typeof setInterval> | null = null;
+
+  async function fetchLogs() {
+    if (!logsStore.isStreaming) return;
+    await api.getLogs(1000);
+  }
+
   onMount(() => {
-    void api.getLogs();
-    tick().then(() => scrollToBottom(true));
+    void fetchLogs().then(() => tick().then(() => scrollToBottom(true)));
+    refreshTimer = setInterval(() => {
+      void fetchLogs();
+    }, 1000);
+    return () => {
+      if (refreshTimer) clearInterval(refreshTimer);
+    };
   });
 
   function levelPill(level: string) {

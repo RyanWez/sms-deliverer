@@ -6,7 +6,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 use chrono::Local;
 use log::Level;
 use serde::Serialize;
-use tauri::Emitter;
 
 pub const MAX_RING_BUFFER: usize = 1000;
 
@@ -21,17 +20,9 @@ pub struct LogEntry {
 
 static ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 static LOG_BUFFER: OnceLock<Arc<Mutex<VecDeque<LogEntry>>>> = OnceLock::new();
-static APP_HANDLE: OnceLock<Mutex<Option<tauri::AppHandle>>> = OnceLock::new();
 
 pub fn get_log_buffer() -> &'static Arc<Mutex<VecDeque<LogEntry>>> {
     LOG_BUFFER.get_or_init(|| Arc::new(Mutex::new(VecDeque::with_capacity(MAX_RING_BUFFER))))
-}
-
-pub fn set_app_handle(app: tauri::AppHandle) {
-    let holder = APP_HANDLE.get_or_init(|| Mutex::new(None));
-    if let Ok(mut lock) = holder.lock() {
-        *lock = Some(app);
-    }
 }
 
 pub fn capture_entry(level: Level, target: &str, message: &str) -> LogEntry {
@@ -52,14 +43,6 @@ pub fn capture_entry(level: Level, target: &str, message: &str) -> LogEntry {
             lock.pop_front();
         }
         lock.push_back(entry.clone());
-    }
-
-    if let Some(holder) = APP_HANDLE.get() {
-        if let Ok(lock) = holder.lock() {
-            if let Some(app) = lock.as_ref() {
-                let _ = app.emit("log:entry", &entry);
-            }
-        }
     }
 
     entry

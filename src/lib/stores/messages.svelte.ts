@@ -162,6 +162,34 @@ export function createMessagesStore() {
     selected = next;
   }
 
+  function purgeExpired(retentionHours: number): number {
+    if (retentionHours <= 0 || items.length === 0) return 0;
+    const maxAgeMs = retentionHours * 3600 * 1000;
+    const now = Date.now();
+    const beforeCount = items.length;
+    const purgedIds: number[] = [];
+
+    items = items.filter(m => {
+      const receivedTime = new Date(m.message.received).getTime();
+      if (Number.isNaN(receivedTime)) return true;
+      const isExpired = (now - receivedTime) > maxAgeMs;
+      if (isExpired) {
+        purgedIds.push(m.id);
+        return false;
+      }
+      return true;
+    });
+
+    if (purgedIds.length > 0) {
+      if (activeId !== null && purgedIds.includes(activeId)) activeId = null;
+      const nextSel = new Set(selected);
+      for (const id of purgedIds) nextSel.delete(id);
+      selected = nextSel;
+    }
+
+    return beforeCount - items.length;
+  }
+
   function goTo(p: number) {
     const next = Math.min(Math.max(1, p), totalPages);
     if (next !== page) {
@@ -271,6 +299,7 @@ export function createMessagesStore() {
     selectAll,
     clearSelection,
     removeByIds,
+    purgeExpired,
     prettyPort,
   };
 }

@@ -72,6 +72,8 @@ export interface SettingsState {
     minimizeToTray: boolean;
     confirmDelete: boolean;
     portRefreshInterval: number;
+    autoDeleteExpired: boolean;
+    retentionHours: number;
   };
   notifications: {
     enabled: boolean;
@@ -111,6 +113,8 @@ export const DEFAULT_SETTINGS: SettingsState = {
     minimizeToTray: false,
     confirmDelete: true,
     portRefreshInterval: 30,
+    autoDeleteExpired: true,
+    retentionHours: 2,
   },
   notifications: {
     enabled: true,

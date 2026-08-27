@@ -13,6 +13,7 @@
 | [02-release-automation.md](./02-release-automation.md) | Release pipeline architecture + configs (release-please / tauri-action / updater) |
 | [03-troubleshooting.md](./03-troubleshooting.md) | တကယ်ကြုံခဲ့ရတဲ့ bug ၇ ခု — symptom → root cause → fix |
 | [04-conventions.md](./04-conventions.md) | Commit စံနှုန်း၊ verification loop၊ security rules၊ command cheatsheet |
+| [05-feature-roadmap.md](./05-feature-roadmap.md) | အနာဂတ်တွင် ဆက်လက် အကောင်အထည်ဖော်မည့် Features & Roadmap စာရင်း |
 
 ## ⚡ TL;DR — ဒီ Project ရဲ့ Golden Rules
 

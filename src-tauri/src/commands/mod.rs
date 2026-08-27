@@ -684,6 +684,36 @@ pub fn clear_all(app: tauri::AppHandle, state: tauri::State<'_, SharedState>) {
     let _ = app.emit("status:update", &serde_json::json!({ "text": text }));
 }
 
+#[tauri::command]
+pub fn purge_expired_messages(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    max_age_hours: f64,
+) -> Result<usize, String> {
+    let max_age_seconds = (max_age_hours * 3600.0) as i64;
+    let now = chrono::Utc::now();
+    let mut purged_count = 0;
+    let mut purged_ids = Vec::new();
+    {
+        let mut st = state.lock().unwrap();
+        st.messages.retain(|m| {
+            let age_secs = (now - m.message.received).num_seconds();
+            if age_secs > max_age_seconds {
+                purged_count += 1;
+                purged_ids.push(m.id);
+                false
+            } else {
+                true
+            }
+        });
+    }
+    if purged_count > 0 {
+        let _ = app.emit("messages:removed", &serde_json::json!({ "ids": &purged_ids }));
+        log::info!("Auto-purged {} expired message(s) older than {} hour(s)", purged_count, max_age_hours);
+    }
+    Ok(purged_count)
+}
+
 /// Write exported SMS content to a user-chosen location.
 ///
 /// The native save dialog runs on the Rust side and the file is written

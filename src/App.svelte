@@ -15,6 +15,15 @@
 
   onMount(() => {
     api.init();
+
+    // Periodic sweep: Purge expired messages every 60s if enabled
+    const timer = setInterval(() => {
+      if (settingsStore.general.autoDeleteExpired) {
+        void api.purgeExpiredMessages(settingsStore.general.retentionHours);
+      }
+    }, 60_000);
+
+    return () => clearInterval(timer);
   });
 
   // Schedule background update checks on launch and re-schedule them whenever
