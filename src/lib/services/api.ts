@@ -60,6 +60,7 @@ export const api = {
         const incoming = event.payload.items.filter((i) => !existing.has(i.id));
         if (incoming.length > 0) {
           messagesStore.items = [...messagesStore.items, ...incoming];
+          messagesStore.triggerWave();
         }
       });
 
@@ -105,6 +106,7 @@ export const api = {
 
       await listen('scan:done', () => {
         liveStore.scanBusy = false;
+        messagesStore.triggerWave();
       });
 
       await listen('ussd:done', () => {
@@ -145,7 +147,17 @@ export const api = {
 
   async startScan() {
     if (!isTauri()) {
+      liveStore.scanBusy = true;
       toast('Info', 'Scan Simulation', 'Scanning simulated ports...');
+      const { generateSyntheticMessages } = await import('$lib/utils/synthetic');
+      messagesStore.items = [];
+      setTimeout(() => {
+        const msgs = generateSyntheticMessages(18, portsStore.items);
+        messagesStore.items = msgs;
+        messagesStore.triggerWave();
+        liveStore.scanBusy = false;
+        toast('Success', 'Scan Complete', `Found ${msgs.length} messages`);
+      }, 700);
       return;
     }
     try {

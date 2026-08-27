@@ -297,16 +297,17 @@
         </div>
       {:else}
         <div class="grid gap-3 port-grid" style="grid-template-columns: repeat(auto-fill, minmax(260px, 1fr))">
-          {#each filteredPorts as port (port.name)}
+          {#each filteredPorts as port, index (port.name)}
             {@const st = portStatus(port, liveStore.on)}
             <div
               role="button"
               tabindex="0"
               data-port={port.name}
-              class="group card p-4 text-left transition-colors duration-150 cursor-pointer hover:border-muted-foreground/40
+              class="group card p-4 text-left transition-colors duration-150 cursor-pointer hover:border-muted-foreground/40 animate-msg-enter
                      focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70
                      {activePortName === port.name ? 'border-primary ring-1 ring-primary/40' : ''}
                      {st.key === 'error' ? 'bg-danger/[0.04]' : ''}"
+              style="animation-delay: {Math.min(index * 16, 160)}ms;"
               onclick={(e) => {
                 if ((e.target as HTMLElement).closest('input, label')) return;
                 inspect(port);

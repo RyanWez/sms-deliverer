@@ -14,6 +14,11 @@ export function createMessagesStore() {
   let portFilter = $state<string | null>(null);
   let viewMode = $state<ViewMode>('Table');
   let deleteBusy = $state(false);
+  let waveVersion = $state(0);
+
+  function triggerWave() {
+    waveVersion++;
+  }
 
   let page = $state(1);
   let availH = $state(600);
@@ -158,7 +163,11 @@ export function createMessagesStore() {
   }
 
   function goTo(p: number) {
-    page = Math.min(Math.max(1, p), totalPages);
+    const next = Math.min(Math.max(1, p), totalPages);
+    if (next !== page) {
+      page = next;
+      waveVersion++;
+    }
   }
 
   function setAvail(h: number) {
@@ -226,13 +235,13 @@ export function createMessagesStore() {
     set items(v: SmsItem[]) { items = v; },
     get selected() { return selected; },
     get query() { return query; },
-    set query(v: string) { query = v; page = 1; },
+    set query(v: string) { query = v; page = 1; waveVersion++; },
     get quickFilter() { return quickFilter; },
-    set quickFilter(v: QuickFilter) { quickFilter = v; page = 1; },
+    set quickFilter(v: QuickFilter) { quickFilter = v; page = 1; waveVersion++; },
     get portFilter() { return portFilter; },
-    set portFilter(v: string | null) { portFilter = v; page = 1; },
+    set portFilter(v: string | null) { portFilter = v; page = 1; waveVersion++; },
     get viewMode() { return viewMode; },
-    set viewMode(v: ViewMode) { viewMode = v; page = 1; },
+    set viewMode(v: ViewMode) { viewMode = v; page = 1; waveVersion++; },
     get deleteBusy() { return deleteBusy; },
     set deleteBusy(v: boolean) { deleteBusy = v; },
     get visible() { return visible; },
@@ -240,6 +249,8 @@ export function createMessagesStore() {
     get totalPages() { return totalPages; },
     get page() { return safePage; },
     get pageIndexStart() { return pageIndexStart; },
+    get waveVersion() { return waveVersion; },
+    triggerWave,
     goTo,
     setAvail,
     reportHeights,
