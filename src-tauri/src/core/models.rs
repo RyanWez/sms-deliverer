@@ -9,6 +9,10 @@ pub struct SmsMessage {
     pub received: DateTime<Utc>,
     pub status: String,
     pub text: String,
+    /// SIM memory indices of every fragment this message was assembled from.
+    /// Empty for single-part messages (only `index` applies).
+    #[serde(default)]
+    pub part_indices: Vec<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,17 +117,17 @@ impl SmsMessage {
             received: DateTime::UNIX_EPOCH,
             status: String::new(),
             text: String::new(),
+            part_indices: Vec::new(),
         }
     }
 }
 
 pub fn pretty_port(name: &str) -> String {
-    if let Some(num) = name
+    if let Ok(num) = name
         .trim_start_matches("COM")
         .trim_start_matches("ttyUSB")
         .trim_start_matches("ttyACM")
         .parse::<u32>()
-        .ok()
     {
         format!("Port {num}")
     } else {

@@ -1,9 +1,18 @@
 <script lang="ts">
   import Icon from '$lib/components/Icon.svelte';
   import { messagesStore } from '$lib/stores/messages.svelte';
+  import { settingsStore } from '$lib/stores/settings.svelte';
 
   const total = $derived(messagesStore.totalPages);
   const cur = $derived(messagesStore.page);
+  const pageSize = $derived(settingsStore.settings.appearance.pageSize);
+
+  function setPageSize(v: string) {
+    const parsed: 'auto' | number = v === 'auto' ? 'auto' : Number(v);
+    if (typeof parsed === 'number' && (!Number.isFinite(parsed) || parsed <= 0)) return;
+    settingsStore.setAppearance({ pageSize: parsed });
+    messagesStore.goTo(1);
+  }
 
   function pageNumbers(): number[] {
     const win = 5;
@@ -62,8 +71,25 @@
       </button>
     </nav>
 
-    <div class="flex-1 min-w-[80px] text-right tabular-nums text-[11px] hidden sm:block">
-      Page {cur} / {total}
+    <div class="flex-1 min-w-[80px] flex items-center justify-end gap-2 text-[11px] hidden sm:flex">
+      <label
+        class="flex items-center gap-1 text-muted-foreground whitespace-nowrap cursor-pointer"
+        for="page-size"
+      >
+        Rows per page
+        <select
+          id="page-size"
+          class="bg-elevated border border-border rounded-md px-1 py-0.5 text-[11px] font-mono cursor-pointer
+                 hover:border-primary/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+          value={String(pageSize)}
+          onchange={(e) => setPageSize((e.target as HTMLSelectElement).value)}
+        >
+          {#each ['auto', '10', '25', '50', '100'] as opt (opt)}
+            <option value={opt}>{opt === 'auto' ? 'Auto' : opt}</option>
+          {/each}
+        </select>
+      </label>
+      <span class="tabular-nums whitespace-nowrap">Page {cur} / {total}</span>
     </div>
   </div>
 {/if}

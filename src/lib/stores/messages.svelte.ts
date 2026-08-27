@@ -1,6 +1,7 @@
 import type { SmsItem, QuickFilter, ViewMode } from '$lib/types';
 import { portsStore } from './ports.svelte';
 import { liveStore } from './live.svelte';
+import { settingsStore } from './settings.svelte';
 import { portLabel } from '$lib/utils/port';
 
 let toastCounter = 10000;
@@ -16,11 +17,10 @@ export function createMessagesStore() {
 
   let page = $state(1);
   let availH = $state(600);
-  let measureTick = $state(0);
+  // Measured average height of a collapsed table row; drives 'auto' page size.
+  let avgRowH = $state<number | null>(null);
   let expandedIds = $state<Set<number>>(new Set());
   let activeId = $state<number | null>(null);
-  const hCollapsed = new Map<string, number>();
-  const hExpanded = new Map<string, number>();
 
   // Map port -> sim for fast lookup during filtering (avoids O(ports) find per message)
   const simLookup = $derived.by(() => {
@@ -82,66 +82,40 @@ export function createMessagesStore() {
     });
   });
 
-  const defaultRowH = $derived(viewMode === 'Cards' ? 118 : 57);
+  const CARDS_PAGE_SIZE = 24;
+  const TABLE_ROW_FALLBACK_H = 46;
+  const MIN_PAGE_ROWS = 6;
+  const MAX_PAGE_ROWS = 200;
 
-  function cacheKey(id: number, expanded: boolean): string {
-    return `${viewMode === 'Cards' ? 'c' : 't'}${expanded ? 'e' : 'n'}${id}`;
-  }
-
-  function estHeight(m: SmsItem): number {
-    if (expandedIds.has(m.id)) {
-      const known = hExpanded.get(cacheKey(m.id, true));
-      if (known) return known;
-      const lines = Math.max(1, Math.ceil(m.message.text.length / 90));
-      return defaultRowH + lines * 17 + 8;
-    }
-    return hCollapsed.get(cacheKey(m.id, false)) ?? defaultRowH;
-  }
-
-  const pages = $derived.by(() => {
-    void availH;
-    void measureTick;
-    void expandedIds.size;
+  const rowsPerPage = $derived.by(() => {
     void viewMode;
-    const out: SmsItem[][] = [];
-    let cur: SmsItem[] = [];
-
-    if (viewMode === 'Cards') {
-      const pageSize = 24;
-      for (const m of visible) {
-        if (cur.length >= pageSize) {
-          out.push(cur);
-          cur = [];
-        }
-        cur.push(m);
-      }
-    } else {
-      const cap = Math.max(availH, 120);
-      let used = 0;
-      for (const m of visible) {
-        const h = estHeight(m);
-        if (cur.length > 0 && used + h > cap) {
-          out.push(cur);
-          cur = [];
-          used = 0;
-        }
-        cur.push(m);
-        used += h;
-      }
+    void availH;
+    const cfg = settingsStore.settings.appearance.pageSize;
+    if (typeof cfg === 'number') {
+      return Math.max(4, Math.min(cfg, MAX_PAGE_ROWS));
     }
+    if (viewMode === 'Cards') return CARDS_PAGE_SIZE;
+    // Auto: fill the available viewport using the measured average row height,
+    // with a floor so a bad measurement can never produce tiny pages.
+    const rowH = Math.max(avgRowH ?? TABLE_ROW_FALLBACK_H, 30);
+    const cap = Math.max(availH, 120);
+    return Math.min(Math.max(Math.floor(cap / rowH), MIN_PAGE_ROWS), MAX_PAGE_ROWS);
+  });
 
-    if (cur.length > 0) out.push(cur);
+  // Deterministic, count-based paging: every page except the last is exactly
+  // rowsPerPage items, so pages fill up instead of breaking early.
+  const pages = $derived.by(() => {
+    const out: SmsItem[][] = [];
+    for (let i = 0; i < visible.length; i += rowsPerPage) {
+      out.push(visible.slice(i, i + rowsPerPage));
+    }
     return out.length > 0 ? out : [[]];
   });
 
   const totalPages = $derived(Math.max(1, pages.length));
   const safePage = $derived(Math.min(Math.max(1, page), totalPages));
   const pageRows = $derived(pages[safePage - 1] ?? []);
-  const pageIndexStart = $derived.by(() => {
-    let n = 0;
-    for (let i = 0; i < safePage - 1 && i < pages.length; i++) n += pages[i].length;
-    return n;
-  });
+  const pageIndexStart = $derived((safePage - 1) * rowsPerPage);
 
   const selectedCount = $derived.by(() => selected.size);
   const otpCount = $derived(aggregates.totalOtp);
@@ -192,17 +166,15 @@ export function createMessagesStore() {
   }
 
   function reportHeights(entries: Array<{ id: number; h: number; expanded: boolean }>) {
-    let changed = false;
-    for (const e of entries) {
-      if (e.h <= 0) continue;
-      const key = cacheKey(e.id, e.expanded);
-      const cache = e.expanded ? hExpanded : hCollapsed;
-      if (cache.get(key) !== e.h) {
-        cache.set(key, e.h);
-        changed = true;
-      }
+    // Track the average collapsed-row height so 'auto' page size fills the
+    // viewport with real measurements instead of guesses.
+    const collapsed = entries.filter(e => !e.expanded && e.h > 0);
+    if (collapsed.length === 0) return;
+    const candidate =
+      collapsed.reduce((s, e) => s + e.h, 0) / collapsed.length;
+    if (avgRowH === null || Math.abs(candidate - avgRowH) >= 1) {
+      avgRowH = candidate;
     }
-    if (changed) measureTick++;
   }
 
   function isExpanded(id: number) { return expandedIds.has(id); }

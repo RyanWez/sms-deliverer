@@ -47,6 +47,58 @@ static DATE_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static PDU_DATA_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9A-Fa-f]{8,}$").unwrap());
 
+// ── Concatenated SMS (UDH) ──
+
+/// Concat info carried in the User Data Header of a SMS-DELIVER PDU
+/// (IEI 0x00 = 8-bit reference, IEI 0x08 = 16-bit reference).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ConcatInfo {
+    pub ref_num: u16,
+    pub total: u8,
+    pub seq: u8,
+}
+
+/// Result of decoding a SMS-DELIVER PDU: the message itself plus the
+/// concatenation header when this message is a fragment of a long SMS.
+#[derive(Debug, Clone)]
+pub struct DeliverInfo {
+    pub message: SmsMessage,
+    pub concat: Option<ConcatInfo>,
+}
+
+fn extract_concat_from_udh(udh: &[u8]) -> Option<ConcatInfo> {
+    let mut pos = 0usize;
+    while pos + 2 <= udh.len() {
+        let iei = udh[pos];
+        let len = udh[pos + 1] as usize;
+        if len > 0 && udh.len() >= pos + 2 + len {
+            let data = &udh[pos + 2..pos + 2 + len];
+            match (iei, len) {
+                (0x00, l) if l >= 3 => {
+                    return Some(ConcatInfo {
+                        ref_num: data[0] as u16,
+                        total: data[1],
+                        seq: data[2],
+                    });
+                }
+                (0x08, l) if l >= 4 => {
+                    return Some(ConcatInfo {
+                        ref_num: ((data[0] as u16) << 8) | data[1] as u16,
+                        total: data[2],
+                        seq: data[3],
+                    });
+                }
+                _ => {}
+            }
+            pos += 2 + len;
+        } else {
+            break;
+        }
+    }
+    None
+}
+
+
 const GSM7_BASIC: [&str; 128] = [
     "@", "£", "$", "¥", "è", "é", "ù", "ì", "ò", "Ç", "\n", "Ø", "ø", "\r", "Å", "æ", "Æ", "É",
     "Δ", "Φ", "Γ", "Λ", "Ω", "Π", "Ψ", "Σ", "Θ", "Ξ", "Þ", "ß", "É", " ", " ", "!", "\"", "#", "¤",
@@ -113,7 +165,7 @@ pub fn decode_hex_or_raw(s: &str) -> String {
         return String::new();
     }
     let t = s.trim().trim_matches('"');
-    if t.len() >= 4 && t.len() % 4 == 0 && is_hex(t) {
+    if t.len() >= 4 && t.len().is_multiple_of(4) && is_hex(t) {
         let mut result = String::with_capacity(t.len() / 4);
         let mut chars = t.chars();
         loop {
@@ -143,10 +195,9 @@ pub fn decode_hex_or_raw(s: &str) -> String {
 
 pub fn normalize_number(raw: &str) -> String {
     let digits: String = raw.chars().filter(|c| c.is_ascii_digit()).collect();
+    // Only 95xxxxxxxxx needs rewriting; everything else passes through as-is.
     if digits.starts_with("95") && digits.len() >= 11 {
         format!("0{}", &digits[2..])
-    } else if digits.starts_with("09") && digits.len() >= 10 {
-        digits
     } else {
         digits
     }
@@ -279,6 +330,7 @@ pub fn parse_text_mode_list(resp: &str, port: &str) -> Vec<SmsMessage> {
                     received,
                     status: stat,
                     text: decode_hex_or_raw(&hex_buf),
+                    part_indices: Vec::new(),
                 });
                 hex_buf.clear();
             }
@@ -295,6 +347,7 @@ pub fn parse_text_mode_list(resp: &str, port: &str) -> Vec<SmsMessage> {
             received,
             status: stat,
             text: decode_hex_or_raw(&hex_buf),
+            part_indices: Vec::new(),
         });
     }
     list
@@ -357,12 +410,13 @@ pub fn parse_cmgr(resp: &str, port: &str) -> Option<SmsMessage> {
         from,
         received,
         text: decode_hex_or_raw(&hex_buf),
+        part_indices: Vec::new(),
     })
 }
 
 // ── PDU mode ──
 
-pub fn parse_pdu_list(resp: &str, port: &str) -> Vec<SmsMessage> {
+pub fn parse_pdu_list(resp: &str, port: &str) -> Vec<DeliverInfo> {
     let mut list = Vec::new();
     let mut cur_index: i32 = 0;
     let mut cur_stat = String::new();
@@ -374,14 +428,18 @@ pub fn parse_pdu_list(resp: &str, port: &str) -> Vec<SmsMessage> {
             cur_index = f.first().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
             cur_stat = f.get(1).map(|s| s.trim().to_string()).unwrap_or_default();
         } else if cur_index > 0 && PDU_DATA_RE.is_match(line) && line.len() % 2 == 0 {
-            if let Some(m) = decode_deliver(line, port) {
-                list.push(SmsMessage {
-                    port: port.to_string(),
-                    index: cur_index,
-                    from: m.from,
-                    received: m.received,
-                    status: cur_stat.clone(),
-                    text: m.text,
+            if let Some(info) = decode_deliver(line, port) {
+                list.push(DeliverInfo {
+                    message: SmsMessage {
+                        port: port.to_string(),
+                        index: cur_index,
+                        from: info.message.from,
+                        received: info.message.received,
+                        status: cur_stat.clone(),
+                        text: info.message.text,
+                        part_indices: Vec::new(),
+                    },
+                    concat: info.concat,
                 });
             }
             cur_index = 0;
@@ -390,7 +448,51 @@ pub fn parse_pdu_list(resp: &str, port: &str) -> Vec<SmsMessage> {
     list
 }
 
-fn decode_deliver(pdu_hex: &str, port: &str) -> Option<SmsMessage> {
+/// Parse an `AT+CMGR` response while the modem is in PDU mode
+/// (`AT+CMGF=0`). Response looks like:
+/// `+CMGR: <stat>,...,<length>\n<pdu hex>\nOK`
+pub fn parse_pdu_cmgr(resp: &str, port: &str) -> Option<DeliverInfo> {
+    let mut stat: Option<String> = None;
+    for raw in resp.replace("\r\n", "\n").lines() {
+        let line = raw.trim();
+        if let Some(rest) = line.strip_prefix("+CMGR:") {
+            if stat.is_none() {
+                let head = rest
+                    .split(',')
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                let clean = head.trim_matches('"');
+                if !clean.is_empty() {
+                    stat = Some(clean.to_string());
+                }
+            }
+        } else if stat.is_some() && PDU_DATA_RE.is_match(line) && line.len() % 2 == 0 {
+            let info = decode_deliver(line, port)?;
+            return Some(DeliverInfo {
+                message: SmsMessage {
+                    index: 0,
+                    status: normalize_pdu_stat(stat.as_deref().unwrap_or("")),
+                    ..info.message
+                },
+                concat: info.concat,
+            });
+        }
+    }
+    None
+}
+
+fn normalize_pdu_stat(raw: &str) -> String {
+    match raw {
+        "0" => "REC UNREAD".into(),
+        "1" => "REC READ".into(),
+        "2" => "STO UNSENT".into(),
+        "3" => "STO SENT".into(),
+        other => other.to_string(),
+    }
+}
+
+fn decode_deliver(pdu_hex: &str, port: &str) -> Option<DeliverInfo> {
     let bytes = hex::decode(pdu_hex).ok()?;
     let mut i = 0;
     let sca_len = *bytes.get(i)? as usize;
@@ -404,7 +506,7 @@ fn decode_deliver(pdu_hex: &str, port: &str) -> Option<SmsMessage> {
     i += 1;
     let toa = *bytes.get(i)?;
     i += 1;
-    let addr_bytes = (addr_len + 1) / 2;
+    let addr_bytes = addr_len.div_ceil(2);
     if i + addr_len > bytes.len() {
         return None;
     }
@@ -429,12 +531,16 @@ fn decode_deliver(pdu_hex: &str, port: &str) -> Option<SmsMessage> {
     }
     let udl = *bytes.get(i)? as usize;
     i += 1;
-    let udh = (first & 0x40) != 0;
+    let has_udh = (first & 0x40) != 0;
+    let mut concat: Option<ConcatInfo> = None;
     let is_ucs2 = ((dcs >> 2) & 0x03) == 2;
     let text = if is_ucs2 {
         let mut udhl = 0;
-        if udh && i < bytes.len() {
+        if has_udh && i < bytes.len() {
             udhl = bytes[i] as usize;
+            if udhl > 0 && i + 1 + udhl <= bytes.len() {
+                concat = extract_concat_from_udh(&bytes[i + 1..i + 1 + udhl]);
+            }
             i += 1 + udhl;
         }
         let mut len = udl.saturating_sub(udhl);
@@ -445,21 +551,28 @@ fn decode_deliver(pdu_hex: &str, port: &str) -> Option<SmsMessage> {
     } else {
         let mut septets = udl;
         let mut skip = 0;
-        if udh && i < bytes.len() {
+        if has_udh && i < bytes.len() {
             let udhl = bytes[i] as usize;
+            if udhl > 0 && i + 1 + udhl <= bytes.len() {
+                concat = extract_concat_from_udh(&bytes[i + 1..i + 1 + udhl]);
+            }
             i += 1 + udhl;
-            skip = ((udhl + 1) * 8 + 6) / 7;
+            skip = ((udhl + 1) * 8).div_ceil(7);
             septets = udl.saturating_sub(skip);
         }
         decode_gsm7(&bytes, i, septets, skip)
     };
-    Some(SmsMessage {
-        port: port.to_string(),
-        index: 0,
-        from,
-        received: ts,
-        status: String::new(),
-        text,
+    Some(DeliverInfo {
+        message: SmsMessage {
+            port: port.to_string(),
+            index: 0,
+            from,
+            received: ts,
+            status: String::new(),
+            text,
+            part_indices: Vec::new(),
+        },
+        concat,
     })
 }
 
@@ -607,9 +720,7 @@ mod tests {
         payload: &[u8],
         udl_override: Option<u8>,
     ) -> String {
-        let mut b: Vec<u8> = Vec::new();
-        b.push(0x00); // SCA length 0
-        b.push(0x04); // first octet: MTI=deliver, no UDHI
+        let mut b = vec![0x00u8, 0x04]; // SCA length 0; MTI=deliver, no UDHI
         b.push(sender.len() as u8); // address length (digits)
         b.push(0x91); // TOA: international
         for i in (0..sender.len()).step_by(2) {
@@ -797,7 +908,7 @@ mod tests {
         let pdu = build_deliver_pdu("959123456789", 0x08, &payload, None);
         let m = decode_deliver(&pdu, "/dev/ttyUSB5");
         assert!(m.is_some());
-        let m = m.unwrap();
+        let m = m.unwrap().message;
         assert_eq!(m.from, "959123456789");
         assert_eq!(m.text, "မင်္ဂလာပါ Hi");
         assert_eq!(m.received.year(), 2001);
@@ -809,8 +920,119 @@ mod tests {
         let pdu = build_deliver_pdu("09680001122", 0x00, &payload, Some(12));
         let m = decode_deliver(&pdu, "COM7");
         assert!(m.is_some());
-        let m = m.unwrap();
+        let m = m.unwrap().message;
         assert_eq!(m.text, "Hello world!");
         assert_eq!(m.from, "09680001122");
+    }
+
+    #[test]
+    fn concat_iei_16bit() {
+        let info = extract_concat_from_udh(&[0x08, 4, 0x01, 0x02, 3, 1]);
+        assert_eq!(
+            info,
+            Some(ConcatInfo {
+                ref_num: 0x0102,
+                total: 3,
+                seq: 1
+            })
+        );
+    }
+
+    #[test]
+    fn concat_iei_8bit() {
+        let info = extract_concat_from_udh(&[0x00, 3, 42, 3, 2]);
+        assert_eq!(
+            info,
+            Some(ConcatInfo {
+                ref_num: 42,
+                total: 3,
+                seq: 2
+            })
+        );
+    }
+
+    /// Build a deliver PDU carrying a User Data Header (for concatenated SMS).
+    fn build_deliver_pdu_udh(sender: &str, dcs: u8, udh: &[u8], payload: &[u8]) -> String {
+        let mut b = vec![0x00u8, 0x44]; // SCA length, MTI=deliver + UDHI
+        b.push(sender.len() as u8);
+        b.push(0x91);
+        for i in (0..sender.len()).step_by(2) {
+            let lo = sender.as_bytes()[i] - b'0';
+            let hi = if i + 1 < sender.len() {
+                sender.as_bytes()[i + 1] - b'0'
+            } else {
+                0x0F
+            };
+            b.push((hi << 4) | lo);
+        }
+        b.push(0x00); // PID
+        b.push(dcs); // DCS
+        b.extend_from_slice(&[0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x00]); // SCTS
+        b.push((udh.len() + payload.len()) as u8); // UDL includes UDH
+        b.extend_from_slice(&[udh.len() as u8]); // UDHL
+        b.extend_from_slice(udh);
+        b.extend_from_slice(payload);
+        b.iter().map(|x| format!("{:02x}", x)).collect()
+    }
+
+    #[test]
+    fn pdu_concat_ucs2_two_parts() {
+        let udh16 = |ref_hi: u8, ref_lo: u8, total: u8, seq: u8| -> Vec<u8> {
+            vec![0x08, 4, ref_hi, ref_lo, total, seq]
+        };
+        let pdu1 = build_deliver_pdu_udh(
+            "959123456789",
+            0x08,
+            &udh16(0x12, 0x34, 2, 1),
+            &utf16be_bytes("ဝိုး! ဒေတာ 1.5GB ကို ၉၉၉ ကျပ်နဲ့ "),
+        );
+        let pdu2 = build_deliver_pdu_udh(
+            "959123456789",
+            0x08,
+            &udh16(0x12, 0x34, 2, 2),
+            &utf16be_bytes("15 ရက်စာ အသုံးပြုနိုင်ပါသည်"),
+        );
+        let resp = format!(
+            "+CMGL: 11,\"REC UNREAD\",\"\",26/08/26,12:00:00+26\n{}\n+CMGL: 12,\"REC UNREAD\",\"\",26/08/26,12:00:00+26\n{}\nOK\n",
+            pdu1, pdu2
+        );
+        let infos = parse_pdu_list(&resp, "COM3");
+        assert_eq!(infos.len(), 2);
+        assert_eq!(infos[0].concat.map(|c| (c.ref_num, c.total, c.seq)), Some((0x1234, 2, 1)));
+        assert_eq!(infos[0].message.index, 11);
+
+        use crate::core::reassemble::Reassembler;
+        let mut asm = Reassembler::new();
+        let mut out: Vec<SmsMessage> = Vec::new();
+        for d in infos {
+            match d.concat {
+                Some(c) => {
+                    if let Some(done) = asm.push(&d.message, c) {
+                        out.push(done);
+                    }
+                }
+                None => out.push(d.message),
+            }
+        }
+        assert_eq!(out.len(), 1);
+        assert_eq!(
+            out[0].text,
+            "ဝိုး! ဒေတာ 1.5GB ကို ၉၉၉ ကျပ်နဲ့ 15 ရက်စာ အသုံးပြုနိုင်ပါသည်"
+        );
+        assert_eq!(out[0].part_indices, vec![11, 12]);
+    }
+
+    #[test]
+    fn pdumgr_single_read() {
+        let payload = utf16be_bytes("Hi there");
+        let pdu = build_deliver_pdu("959123456789", 0x08, &payload, None);
+        let resp = format!("+CMGR: 0,,{0}\n{1}\nOK\n", pdu.len() / 2, pdu);
+        let d = parse_pdu_cmgr(&resp, "COM7");
+        assert!(d.is_some());
+        let d = d.unwrap();
+        assert_eq!(d.message.text, "Hi there");
+        assert_eq!(d.message.status, "REC UNREAD");
+        assert_eq!(d.message.port, "COM7");
+        assert!(d.concat.is_none());
     }
 }

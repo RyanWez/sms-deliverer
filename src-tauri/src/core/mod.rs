@@ -3,4 +3,5 @@ pub mod decoder;
 pub mod live;
 pub mod models;
 pub mod modem;
+pub mod reassemble;
 pub mod settings;

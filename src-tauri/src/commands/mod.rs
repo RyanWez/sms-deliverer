@@ -558,12 +558,24 @@ pub fn delete_selected(
         let mut map: std::collections::HashMap<String, Vec<i32>> = std::collections::HashMap::new();
         for id in &ids {
             if let Some(item) = st.messages.iter().find(|m| m.id == *id) {
+                // Assembled long SMS span multiple SIM indices: remove them all.
+                let mut idxs = item.message.part_indices.clone();
+                if idxs.is_empty() || idxs.len() == 1 && !item.message.part_indices.contains(&item.message.index) {
+                    idxs = vec![item.message.index];
+                }
                 map.entry(item.message.port.clone())
                     .or_default()
-                    .push(item.message.index);
+                    .extend(idxs);
             }
         }
-        to_delete = map.into_iter().collect();
+        to_delete = map
+            .into_iter()
+            .map(|(port, mut idxs)| {
+                idxs.sort_unstable();
+                idxs.dedup();
+                (port, idxs)
+            })
+            .collect();
     }
     if to_delete.is_empty() {
         return Err("No messages selected.".into());

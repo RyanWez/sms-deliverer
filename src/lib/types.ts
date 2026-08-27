@@ -13,6 +13,8 @@ export interface SmsMessage {
   received: string;
   status: string;
   text: string;
+  /** SIM memory indices of every fragment a concatenated SMS was assembled from. */
+  part_indices?: number[];
 }
 
 export interface SmsItem {
@@ -86,6 +88,8 @@ export interface SettingsState {
     compactMode: boolean;
     showSIMColumn: boolean;
     showPortColumn: boolean;
+    /** Rows/messages per page. 'auto' fills the available viewport height. */
+    pageSize: 'auto' | number;
   };
   updates: {
     autoCheck: boolean;
@@ -117,6 +121,7 @@ export const DEFAULT_SETTINGS: SettingsState = {
     compactMode: false,
     showSIMColumn: true,
     showPortColumn: true,
+    pageSize: 'auto',
   },
   updates: {
     autoCheck: true,

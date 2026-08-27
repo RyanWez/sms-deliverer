@@ -90,7 +90,41 @@ pub fn read_port(port_name: &str) -> ReadResult {
         }
     };
 
-    ch.send("ATE0;+CMGF=1;+CSCS=\"UCS2\"", 4000);
+    // PDU mode first: it exposes the UDH needed to reassemble long
+    // (concatenated) SMS instead of showing truncated fragments.
+    if ch.send("ATE0;+CMGF=0", 4000).contains("OK") {
+        let r = ch.send("AT+CMGL=4", 15000);
+        if r.contains("+CMGL:") || r.contains("OK") {
+            let mut msgs: Vec<SmsMessage> = Vec::new();
+            let mut asm = crate::core::reassemble::Reassembler::new();
+            for d in decoder::parse_pdu_list(&r, port_name) {
+                match d.concat {
+                    Some(c) => {
+                        if let Some(done) = asm.push(&d.message, c) {
+                            msgs.push(done);
+                        }
+                    }
+                    None => msgs.push(d.message),
+                }
+            }
+            msgs.extend(asm.flush_stale(Duration::ZERO));
+            log::info!(
+                "{}: pdu-mode read -> {} msg(s)",
+                port_name,
+                msgs.len()
+            );
+            let _ = ch.send("AT+CSCS=\"GSM\"", 1000);
+            let _ = ch.send("AT+CMGF=1", 1000);
+            return ReadResult {
+                ok: true,
+                messages: msgs,
+                error: None,
+            };
+        }
+    }
+
+    log::debug!("{}: falling back to text mode", port_name);
+    ch.send("AT+CMGF=1;+CSCS=\"UCS2\"", 4000);
     let r = ch.send("AT+CMGL=\"ALL\"", 15000);
 
     if r.contains("+CMGL:") {
@@ -109,20 +143,6 @@ pub fn read_port(port_name: &str) -> ReadResult {
         return ReadResult {
             ok: true,
             messages: vec![],
-            error: None,
-        };
-    }
-
-    log::debug!("{}: falling back to PDU mode", port_name);
-    ch.send("AT+CMGF=0", 4000);
-    let r2 = ch.send("AT+CMGL=4", 15000);
-    if r2.contains("+CMGL:") {
-        let msgs = decoder::parse_pdu_list(&r2, port_name);
-        log::info!("{}: pdu-mode read -> {} msg(s)", port_name, msgs.len());
-        ch.send("AT+CSCS=\"GSM\"", 1500);
-        return ReadResult {
-            ok: true,
-            messages: msgs,
             error: None,
         };
     }
@@ -280,12 +300,22 @@ pub fn expire_old(port_name: &str, cutoff_ms: i64) -> OpResult {
             indices: vec![],
         };
     }
-    let old: Vec<i32> = r
-        .messages
-        .iter()
-        .filter(|m| m.received.timestamp_millis() > 0 && m.received.timestamp_millis() < cutoff_ms)
-        .map(|m| m.index)
-        .collect();
+    let old: Vec<i32> = {
+        let mut ids: Vec<i32> = Vec::new();
+        for m in r.messages.iter().filter(|m| {
+            let t = m.received.timestamp_millis();
+            t > 0 && t < cutoff_ms
+        }) {
+            if m.part_indices.len() > 1 {
+                ids.extend(m.part_indices.iter().copied());
+            } else {
+                ids.push(m.index);
+            }
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    };
     if old.is_empty() {
         return OpResult {
             ok: true,
