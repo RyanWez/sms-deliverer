@@ -67,3 +67,26 @@ server-side probe (curl/gh api) > local reproduce > CI logs > user screenshot/me
 ```
 Cache/CDN illusions ကို အရင်ပယ် — ပြီးမှ configuration hunt စ။ ဒီ approach နဲ့
 404-releases-page scare ကို ၅ မိနစ်အတွင်း resolve လုပ်နိုင်ခဲ့တယ်။
+
+
+## G. Hardware Live-Check Playbook (SIM Bank ချိတ်ထားတဲ့ machine မှာ)
+
+ဒီနေ့ validated လုပ်ခဲ့တဲ့ layer-by-layer method (2026-08-27, 64-port SIM bank):
+
+1. **Hardware layer** — device ရှိ? permission OK?
+   ```bash
+   ls /dev/ttyUSB* /dev/serial/by-id    # zsh glob no-match ဖြစ်ရင် command တစ်ခုလုံး abort — setopt nullglob သတိ
+   groups | grep dialout                # rw လုပ်ဖို့ member ဖြစ်ရမယ် (crw-rw---- root dialout)
+   # AT handshake probe (parallel, read-only ATI → OK):
+   stty -F $p 115200 raw -echo -icanon min 0 time 20; exec 3<>$p; printf 'ATI\r' >&3
+   ```
+   Result day-X: **64/64 RESPOND, zero silent/fail** → USB hub + modems healthy။
+2. **Backend logic** — `cargo test --manifest-path src-tauri/Cargo.toml` → PDU decode/OTP/reassemble/AT-channel unit tests (49 passed; mock transport harness `at.rs::with_transport` via cfg(test))။
+3. **Frontend build** — `npm run build` + `npx svelte-check` (vite dynamic-import chunk warnings တွေ harmless noise)။
+4. **Live boot** — `setsid bash -c 'exec npm run tauri dev' >/tmp/app_dev.log 2>&1 &` (debug build logs → stderr w/ timestamps)၊
+   look for `SIM Bank SMS Reader starting...` + zero panic; bonus: `tauri_plugin_updater` lines = updater E2E free-proof။
+5. **Cleanup discipline** — dev instance kill group: `kill -TERM -$PGID`; **multiple instances check first**:
+   `ps -o pid,ppid,lstart,args -C sms-tauri` (user's own running session ≠ your test one — PPID/lstart နဲ့ခွဲပြီး mine-only kill!)
+   Idle app က serial port hold မလုပ်ဘူး — probe နဲ့ conflict မရှိ။
+
+> ⚠️ Gotcha: startup မှာ port list auto-checked (`checked:true`) — "Scan & Read All" နှိပ်ရင် checked ports အားလုံး thread spawn (`AT+CMGL=4`, 15s timeout each)။
