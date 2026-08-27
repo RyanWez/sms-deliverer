@@ -492,6 +492,51 @@ fn normalize_pdu_stat(raw: &str) -> String {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SmsAlphabet {
+    Gsm7,
+    EightBit,
+    Ucs2,
+}
+
+pub fn parse_dcs(dcs: u8) -> SmsAlphabet {
+    let hi = (dcs >> 4) & 0x0F;
+    match hi {
+        // Group 00xx (0x00..0x3F): General Data Coding
+        // Group 01xx (0x40..0x7F): Automatic Deletion Group
+        0x0..=0x7 => match (dcs >> 2) & 0x03 {
+            0x00 => SmsAlphabet::Gsm7,
+            0x01 => SmsAlphabet::EightBit,
+            0x02 => SmsAlphabet::Ucs2,
+            _ => SmsAlphabet::Gsm7,
+        },
+        // Group 10xx (0x80..0xBF): Operator-specific / Reserved
+        0x8..=0xB => {
+            if (dcs & 0x0C) == 0x08 {
+                SmsAlphabet::Ucs2
+            } else if (dcs & 0x0C) == 0x04 {
+                SmsAlphabet::EightBit
+            } else {
+                SmsAlphabet::Gsm7
+            }
+        }
+        // Group 1100 (0xC0..0xCF): Discard message (GSM 7-bit)
+        // Group 1101 (0xD0..0xDF): Store message (GSM 7-bit)
+        0xC | 0xD => SmsAlphabet::Gsm7,
+        // Group 1110 (0xE0..0xEF): Store message (UCS-2) (common on Myanmar carrier gateways)
+        0xE => SmsAlphabet::Ucs2,
+        // Group 1111 (0xF0..0xFF): Data coding / message class
+        0xF => {
+            if (dcs & 0x04) != 0 {
+                SmsAlphabet::EightBit
+            } else {
+                SmsAlphabet::Gsm7
+            }
+        }
+        _ => SmsAlphabet::Gsm7,
+    }
+}
+
 fn decode_deliver(pdu_hex: &str, port: &str) -> Option<DeliverInfo> {
     let bytes = hex::decode(pdu_hex).ok()?;
     let mut i = 0;
@@ -533,34 +578,83 @@ fn decode_deliver(pdu_hex: &str, port: &str) -> Option<DeliverInfo> {
     i += 1;
     let has_udh = (first & 0x40) != 0;
     let mut concat: Option<ConcatInfo> = None;
-    let is_ucs2 = ((dcs >> 2) & 0x03) == 2;
-    let text = if is_ucs2 {
-        let mut udhl = 0;
-        if has_udh && i < bytes.len() {
-            udhl = bytes[i] as usize;
-            if udhl > 0 && i + 1 + udhl <= bytes.len() {
-                concat = extract_concat_from_udh(&bytes[i + 1..i + 1 + udhl]);
+    let alphabet = parse_dcs(dcs);
+    let text = match alphabet {
+        SmsAlphabet::Ucs2 => {
+            let mut udhl = 0;
+            if has_udh && i < bytes.len() {
+                udhl = bytes[i] as usize;
+                if udhl > 0 && i + 1 + udhl <= bytes.len() {
+                    concat = extract_concat_from_udh(&bytes[i + 1..i + 1 + udhl]);
+                }
+                i += 1 + udhl;
             }
-            i += 1 + udhl;
-        }
-        let mut len = udl.saturating_sub(udhl);
-        if i + len > bytes.len() {
-            len = bytes.len() - i;
-        }
-        utf16be_to_string(&bytes, i, len)
-    } else {
-        let mut septets = udl;
-        let mut skip = 0;
-        if has_udh && i < bytes.len() {
-            let udhl = bytes[i] as usize;
-            if udhl > 0 && i + 1 + udhl <= bytes.len() {
-                concat = extract_concat_from_udh(&bytes[i + 1..i + 1 + udhl]);
+            let mut len = udl.saturating_sub(udhl);
+            if i + len > bytes.len() {
+                len = bytes.len() - i;
             }
-            i += 1 + udhl;
-            skip = ((udhl + 1) * 8).div_ceil(7);
-            septets = udl.saturating_sub(skip);
+            utf16be_to_string(&bytes, i, len)
         }
-        decode_gsm7(&bytes, i, septets, skip)
+        SmsAlphabet::EightBit => {
+            let mut udhl = 0;
+            if has_udh && i < bytes.len() {
+                udhl = bytes[i] as usize;
+                if udhl > 0 && i + 1 + udhl <= bytes.len() {
+                    concat = extract_concat_from_udh(&bytes[i + 1..i + 1 + udhl]);
+                }
+                i += 1 + udhl;
+            }
+            let mut len = udl.saturating_sub(udhl);
+            if i + len > bytes.len() {
+                len = bytes.len() - i;
+            }
+            let slice = if i < bytes.len() {
+                &bytes[i..(i + len).min(bytes.len())]
+            } else {
+                &[]
+            };
+            if slice.len() >= 2 && slice.len() % 2 == 0 && (slice[0] == 0x10 || slice[0] == 0x00) {
+                utf16be_to_string(&bytes, i, len)
+            } else if let Ok(s) = std::str::from_utf8(slice) {
+                s.to_string()
+            } else {
+                String::from_utf8_lossy(slice).into_owned()
+            }
+        }
+        SmsAlphabet::Gsm7 => {
+            let mut septets = udl;
+            let mut skip = 0;
+            if has_udh && i < bytes.len() {
+                let udhl = bytes[i] as usize;
+                if udhl > 0 && i + 1 + udhl <= bytes.len() {
+                    concat = extract_concat_from_udh(&bytes[i + 1..i + 1 + udhl]);
+                }
+                i += 1 + udhl;
+                skip = ((udhl + 1) * 8).div_ceil(7);
+                septets = udl.saturating_sub(skip);
+            }
+            let decoded = decode_gsm7(&bytes, i, septets, skip);
+            // Automatic recovery: If GSM-7 output contains corrupt symbols and raw payload is valid UTF-16BE
+            let raw_len = bytes.len().saturating_sub(i);
+            if raw_len >= 2 && decoded.chars().any(|c| "¿ΩÉÑ¡ΔΦΓΛΠΨΣΘΞÞßῪῤò".contains(c)) {
+                let ucs2_candidate = utf16be_to_string(&bytes, i, raw_len);
+                let myanmar_or_ascii = ucs2_candidate
+                    .chars()
+                    .filter(|c| {
+                        ('\u{1000}'..='\u{109F}').contains(c)
+                            || c.is_ascii_alphanumeric()
+                            || c.is_ascii_whitespace()
+                    })
+                    .count();
+                if myanmar_or_ascii > 0 && myanmar_or_ascii >= ucs2_candidate.chars().count() / 2 {
+                    ucs2_candidate
+                } else {
+                    decoded
+                }
+            } else {
+                decoded
+            }
+        }
     };
     Some(DeliverInfo {
         message: SmsMessage {
@@ -1034,5 +1128,38 @@ mod tests {
         assert_eq!(d.message.status, "REC UNREAD");
         assert_eq!(d.message.port, "COM7");
         assert!(d.concat.is_none());
+    }
+
+    #[test]
+    fn pdu_dcs_store_ucs2_0xe0() {
+        let payload = utf16be_bytes("၂၀၀ ကျပ်တန် အထူးအစီအစဉ်များ!");
+        let pdu = build_deliver_pdu("966", 0xE0, &payload, None);
+        let d = decode_deliver(&pdu, "COM17");
+        assert!(d.is_some());
+        let d = d.unwrap();
+        assert_eq!(d.message.text, "၂၀၀ ကျပ်တန် အထူးအစီအစဉ်များ!");
+        assert_eq!(d.message.from, "966");
+    }
+
+    #[test]
+    fn pdu_dcs_8bit_ucs2_payload() {
+        let payload = utf16be_bytes("၂၀၀ ကျပ်တန်");
+        let pdu = build_deliver_pdu("966", 0x04, &payload, None);
+        let d = decode_deliver(&pdu, "COM17");
+        assert!(d.is_some());
+        let d = d.unwrap();
+        assert_eq!(d.message.text, "၂၀၀ ကျပ်တန်");
+    }
+
+    #[test]
+    fn test_parse_dcs_mappings() {
+        assert_eq!(parse_dcs(0x00), SmsAlphabet::Gsm7);
+        assert_eq!(parse_dcs(0x04), SmsAlphabet::EightBit);
+        assert_eq!(parse_dcs(0x08), SmsAlphabet::Ucs2);
+        assert_eq!(parse_dcs(0x18), SmsAlphabet::Ucs2);
+        assert_eq!(parse_dcs(0x48), SmsAlphabet::Ucs2);
+        assert_eq!(parse_dcs(0xE0), SmsAlphabet::Ucs2);
+        assert_eq!(parse_dcs(0xE4), SmsAlphabet::Ucs2);
+        assert_eq!(parse_dcs(0xF4), SmsAlphabet::EightBit);
     }
 }
