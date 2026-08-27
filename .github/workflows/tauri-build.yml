@@ -35,7 +35,7 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libudev-dev
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libudev-dev libxdo-dev
 
       - name: install frontend dependencies
         run: npm install
@@ -48,6 +48,5 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseId: ${{ github.event.release.id }}
-          action: 'updateRelease'
           args: ${{ matrix.args }}
           updaterJsonPreferNsis: true
