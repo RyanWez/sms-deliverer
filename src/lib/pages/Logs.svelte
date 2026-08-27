@@ -1,6 +1,8 @@
 <script lang="ts">
   import Icon from '$lib/components/Icon.svelte';
   import { logsStore } from '$lib/stores/logs.svelte';
+  import { portsStore } from '$lib/stores/ports.svelte';
+  import { portLabel } from '$lib/utils/port';
   import { api } from '$lib/services/api';
   import type { LogLevelFilter } from '$lib/types/logs';
   import { onMount, tick } from 'svelte';
@@ -108,12 +110,32 @@
 
     <!-- Right-side Action Controls -->
     <div class="flex items-center gap-2 flex-wrap">
+      <!-- Port Filter Dropdown -->
+      {#if portsStore.items.length > 0}
+        <div class="relative">
+          <select
+            class="input h-8 text-xs font-mono pr-7 pl-2 py-0 bg-surface min-w-[110px] cursor-pointer"
+            value={logsStore.portFilter ?? ''}
+            onchange={(e) => {
+              const val = (e.target as HTMLSelectElement).value;
+              logsStore.portFilter = val ? val : null;
+            }}
+            aria-label="Filter logs by COM port"
+          >
+            <option value="">All Ports</option>
+            {#each portsStore.items as p (p.name)}
+              <option value={p.name}>{portLabel(p.name)} ({p.name})</option>
+            {/each}
+          </select>
+        </div>
+      {/if}
+
       <!-- Search Input -->
-      <div class="relative w-48 sm:w-60">
+      <div class="relative w-44 sm:w-56">
         <Icon name="search" size={13} class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
         <input
           type="text"
-          placeholder="Filter logs (e.g. COM2, error)..."
+          placeholder="Filter logs (e.g. timeout, AT)..."
           class="input pl-8 pr-7 py-1 h-8 text-xs font-mono w-full bg-surface"
           bind:value={logsStore.searchQuery}
         />

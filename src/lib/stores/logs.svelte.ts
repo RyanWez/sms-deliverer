@@ -16,6 +16,7 @@ function toast(kind: 'Success' | 'Info' | 'Warning' | 'Danger' | 'Otp', title: s
 export function createLogsStore() {
   let items = $state<LogEntry[]>([]);
   let filterLevel = $state<LogLevelFilter>('ALL');
+  let portFilter = $state<string | null>(null);
   let searchQuery = $state('');
   let isStreaming = $state(true);
   let autoScroll = $state(true);
@@ -43,7 +44,13 @@ export function createLogsStore() {
 
   const filtered = $derived.by(() => {
     const q = searchQuery.trim().toLowerCase();
+    const pf = portFilter ? portFilter.trim().toLowerCase() : null;
     return items.filter((item) => {
+      // Port filter
+      if (pf) {
+        const hayPort = `${item.target} ${item.message}`.toLowerCase();
+        if (!hayPort.includes(pf)) return false;
+      }
       // Level filter
       if (filterLevel !== 'ALL') {
         const lvl = item.level.toUpperCase();
@@ -68,6 +75,8 @@ export function createLogsStore() {
     get counts() { return counts; },
     get filterLevel() { return filterLevel; },
     set filterLevel(v: LogLevelFilter) { filterLevel = v; },
+    get portFilter() { return portFilter; },
+    set portFilter(v: string | null) { portFilter = v; },
     get searchQuery() { return searchQuery; },
     set searchQuery(v: string) { searchQuery = v; },
     get isStreaming() { return isStreaming; },

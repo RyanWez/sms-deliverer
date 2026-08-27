@@ -13,7 +13,16 @@
   let activePortName = $state<string | null>(null);
   let rawQuery = $state('');
   let debouncedQuery = $state('');
-  let statusFilter = $state<'all' | 'selected' | 'errors'>('all');
+  let statusFilter = $state<'all' | 'with_sim' | 'no_sim' | 'selected' | 'errors'>('all');
+
+  function hasValidSim(p: PortInfo): boolean {
+    return Boolean(
+      p.sim_number &&
+      p.sim_number !== '-' &&
+      p.sim_number.trim() !== '' &&
+      p.sim_number !== 'Unknown'
+    );
+  }
 
   // debounce port search 150ms — trivial cost for 64 ports but avoids reactive churn
   let portSearchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -42,18 +51,26 @@
   const counts = $derived.by(() => {
     let checked = 0;
     let errors = 0;
+    let withSim = 0;
+    let noSim = 0;
     for (const p of portsStore.items) {
       if (p.checked) checked++;
       if (p.live_error) errors++;
+      if (hasValidSim(p)) withSim++;
+      else noSim++;
     }
-    return { checked, errors };
+    return { checked, errors, withSim, noSim };
   });
   const checkedCount = $derived(counts.checked);
   const errorCount = $derived(counts.errors);
+  const withSimCount = $derived(counts.withSim);
+  const noSimCount = $derived(counts.noSim);
 
   const filteredPorts = $derived.by(() => {
     const q = debouncedQuery.trim().toLowerCase();
     return portsStore.items.filter(p => {
+      if (statusFilter === 'with_sim' && !hasValidSim(p)) return false;
+      if (statusFilter === 'no_sim' && hasValidSim(p)) return false;
       if (statusFilter === 'selected' && !p.checked) return false;
       if (statusFilter === 'errors' && !p.live_error) return false;
       if (!q) return true;
@@ -81,6 +98,21 @@
   function setAllChecked(checked: boolean) {
     api.setAllPortsChecked(checked);
     portsStore.setCheckedAll(checked);
+  }
+
+  function selectWithSim() {
+    if (liveStore.on) return;
+    const updates: Array<{ name: string; changes: { checked: boolean } }> = [];
+    for (const p of portsStore.items) {
+      const nextChecked = hasValidSim(p);
+      if (p.checked !== nextChecked) {
+        api.togglePortChecked(p.name, nextChecked);
+        updates.push({ name: p.name, changes: { checked: nextChecked } });
+      }
+    }
+    if (updates.length > 0) {
+      portsStore.batchUpdatePorts(updates);
+    }
   }
 
   function togglePort(port: PortInfo) {
@@ -148,6 +180,15 @@
       {/if}
     </div>
     <div class="flex items-center gap-1.5 sm:gap-2 flex-wrap w-full sm:w-auto">
+      <button
+        class="btn-secondary text-primary border-primary/30 hover:bg-primary/10 gap-1.5"
+        onclick={selectWithSim}
+        disabled={liveStore.on || totalPorts === 0 || withSimCount === 0}
+        title="Check only ports with detected SIM numbers"
+      >
+        <Icon name="sim" size={13} />
+        <span>Select with SIM ({withSimCount})</span>
+      </button>
       <button
         class="btn-secondary"
         onclick={() => setAllChecked(true)}
@@ -218,7 +259,7 @@
 
     <div class="flex items-center gap-0.5 p-0.5 rounded-md bg-background border border-border" role="group" aria-label="Port status filter">
       <button
-        class="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-[5px] text-xs font-medium transition-colors duration-150
+        class="inline-flex items-center gap-1.5 h-7 px-2 rounded-[5px] text-xs font-medium transition-colors duration-150
                focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70
                {statusFilter === 'all' ? 'bg-elevated text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}"
         aria-pressed={statusFilter === 'all'}
@@ -228,7 +269,27 @@
         <span class="px-1.5 min-w-[18px] text-center rounded-full text-[10px] leading-4 tabular-nums bg-muted text-muted-foreground">{totalPorts}</span>
       </button>
       <button
-        class="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-[5px] text-xs font-medium transition-colors duration-150
+        class="inline-flex items-center gap-1.5 h-7 px-2 rounded-[5px] text-xs font-medium transition-colors duration-150
+               focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70
+               {statusFilter === 'with_sim' ? 'bg-elevated text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}"
+        aria-pressed={statusFilter === 'with_sim'}
+        onclick={() => { statusFilter = 'with_sim'; }}
+      >
+        With SIM
+        <span class="px-1.5 min-w-[18px] text-center rounded-full text-[10px] leading-4 tabular-nums bg-success/20 text-success">{withSimCount}</span>
+      </button>
+      <button
+        class="inline-flex items-center gap-1.5 h-7 px-2 rounded-[5px] text-xs font-medium transition-colors duration-150
+               focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70
+               {statusFilter === 'no_sim' ? 'bg-elevated text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}"
+        aria-pressed={statusFilter === 'no_sim'}
+        onclick={() => { statusFilter = 'no_sim'; }}
+      >
+        No SIM
+        <span class="px-1.5 min-w-[18px] text-center rounded-full text-[10px] leading-4 tabular-nums bg-muted text-muted-foreground">{noSimCount}</span>
+      </button>
+      <button
+        class="inline-flex items-center gap-1.5 h-7 px-2 rounded-[5px] text-xs font-medium transition-colors duration-150
                focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70
                {statusFilter === 'selected' ? 'bg-elevated text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}"
         aria-pressed={statusFilter === 'selected'}
@@ -238,7 +299,7 @@
         <span class="px-1.5 min-w-[18px] text-center rounded-full text-[10px] leading-4 tabular-nums bg-primary/15 text-primary">{checkedCount}</span>
       </button>
       <button
-        class="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-[5px] text-xs font-medium transition-colors duration-150
+        class="inline-flex items-center gap-1.5 h-7 px-2 rounded-[5px] text-xs font-medium transition-colors duration-150
                focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70
                {statusFilter === 'errors' ? 'bg-elevated text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}"
         aria-pressed={statusFilter === 'errors'}
@@ -343,11 +404,18 @@
                       {st.label}
                     </span>
                   </div>
-                  <div class="flex items-center gap-3 text-xs text-muted-foreground mb-2">
-                    <span class="flex items-center gap-1.5 font-mono truncate" title={port.sim_number || 'Unknown'}>
-                      <Icon name="sim" size={12} />
-                      {formatSimNumber(port.sim_number || 'Unknown')}
-                    </span>
+                  <div class="flex items-center gap-3 text-xs mb-2">
+                    {#if hasValidSim(port)}
+                      <span class="flex items-center gap-1.5 font-mono text-foreground font-medium truncate" title={`SIM Number: ${port.sim_number}`}>
+                        <Icon name="sim" size={12} class="text-success shrink-0" />
+                        <span class="truncate">{formatSimNumber(port.sim_number)}</span>
+                      </span>
+                    {:else}
+                      <span class="flex items-center gap-1.5 font-mono text-muted-foreground/60 truncate" title="No SIM number detected">
+                        <Icon name="sim" size={12} class="opacity-40 shrink-0" />
+                        <span class="truncate italic text-[11px]">No SIM</span>
+                      </span>
+                    {/if}
                   </div>
                 </div>
                 <Icon
