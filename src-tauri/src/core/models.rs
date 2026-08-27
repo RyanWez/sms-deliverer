@@ -25,7 +25,11 @@ pub struct SmsItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortInfo {
+    /// Mutable `/dev/ttyUSB*` / `COM*` name — used to actually open the device.
     pub name: String,
+    /// Stable identity key (Linux `/dev/serial/by-path` topological id, else the
+    /// name itself). Survives ttyUSB renumbering so SIM assignments stay put.
+    pub path: String,
     pub checked: bool,
     pub sim_number: String,
     pub live_ready: bool,

@@ -54,6 +54,39 @@ pub fn port_num(s: &str) -> u32 {
         .unwrap_or(0)
 }
 
+/// Best-effort stable identity for a serial port.
+///
+/// On Linux we walk `/dev/serial/by-path/<topological-id> -> ../../ttyUSBx`
+/// and return the symlink *name* (e.g. `pci-0000:03:00.3-usb-0:4.1:1.0-port0`)
+/// as the stable key. The name reflects physical USB topology, so ttyUSB
+/// renumbering after a reboot/hotplug can't scramble SIM-number assignments.
+/// When no by-path link matches (other OSes, exotic setups) we fall back to the
+/// mutable name — behaviour identical to before this feature was added.
+pub fn stable_id(name: &str) -> String {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(entries) = std::fs::read_dir("/dev/serial/by-path") {
+            for e in entries.flatten() {
+                let Ok(target) = std::fs::read_link(e.path()) else {
+                    continue;
+                };
+                let matches = target.file_name().map(|f| f == name).unwrap_or(false);
+                if matches {
+                    if let Some(id) = e.file_name().to_str() {
+                        return id.to_string();
+                    }
+                }
+            }
+        }
+        name.to_string()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = name;
+        name.to_string()
+    }
+}
+
 pub fn open_port(name: &str) -> Result<Port, String> {
     match serialport::new(name, BAUD)
         .data_bits(serialport::DataBits::Eight)
@@ -108,11 +141,7 @@ pub fn read_port(port_name: &str) -> ReadResult {
                 }
             }
             msgs.extend(asm.flush_stale(Duration::ZERO));
-            log::info!(
-                "{}: pdu-mode read -> {} msg(s)",
-                port_name,
-                msgs.len()
-            );
+            log::info!("{}: pdu-mode read -> {} msg(s)", port_name, msgs.len());
             let _ = ch.send("AT+CSCS=\"GSM\"", 1000);
             let _ = ch.send("AT+CMGF=1", 1000);
             return ReadResult {

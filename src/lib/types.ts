@@ -1,5 +1,7 @@
 export interface PortInfo {
   name: string;
+  /** Stable identity key (Linux by-path id, else the name). */
+  path: string;
   checked: boolean;
   sim_number: string;
   live_ready: boolean;

@@ -107,4 +107,52 @@ impl Settings {
     pub fn sim_of(&self, port: &str) -> &str {
         self.sim_numbers.get(port).map(|s| s.as_str()).unwrap_or("")
     }
+
+    /// SIM number lookup keyed by stable path, with a legacy fallback to the
+    /// old mutable-name key so existing `sim_numbers.csv` files keep working.
+    pub fn sim_of_stable(&self, stable: &str, legacy: &str) -> String {
+        if let Some(v) = self.sim_numbers.get(stable) {
+            return v.clone();
+        }
+        self.sim_numbers
+            .get(legacy)
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn settings_with(map: HashMap<String, String>) -> Settings {
+        Settings {
+            update_url: String::new(),
+            sound_on: true,
+            auto_copy_otp: true,
+            auto_expire_hours: 48,
+            sim_numbers: map,
+        }
+    }
+
+    #[test]
+    fn stable_key_preferred_over_legacy() {
+        let s = settings_with(HashMap::from([
+            ("pci-usb-0:4.1:1.0-port0".into(), "+951".into()),
+            ("ttyUSB0".into(), "+999".into()),
+        ]));
+        assert_eq!(s.sim_of_stable("pci-usb-0:4.1:1.0-port0", "ttyUSB0"), "+951");
+    }
+
+    #[test]
+    fn falls_back_to_legacy_name_key() {
+        let s = settings_with(HashMap::from([("ttyUSB0".into(), "+777".into())]));
+        assert_eq!(s.sim_of_stable("pci-usb-0:4.1:1.0-port0", "ttyUSB0"), "+777");
+    }
+
+    #[test]
+    fn empty_when_no_match() {
+        let s = settings_with(HashMap::new());
+        assert_eq!(s.sim_of_stable("path-a", "ttyUSB3"), "");
+    }
 }
