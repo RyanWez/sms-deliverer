@@ -1,0 +1,62 @@
+name: test
+
+# Continuous Rust test job — runs independent of releases so regressions are
+# caught on every push / PR instead of only when publishing artifacts.
+#
+# Note: tests are pure logic (no serial hardware required), so they run safely
+# on hosted runners. See Memory/02-release-automation.md for the release flow.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'Memory/**'
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'Memory/**'
+      - 'docs/**'
+  workflow_dispatch:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cargo-test:
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ['ubuntu-22.04', 'windows-latest']
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: install dependencies (ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libudev-dev libxdo-dev
+
+      - name: run tests
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+      # Release builds gate cfg(not(debug_assertions)) code paths (e.g. the
+      # production file logger) that `cargo test` never compiles locally,
+      # so make sure the release profile still builds cleanly.
+      - name: check release profile compiles (linux only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: cargo check --release --locked --manifest-path src-tauri/Cargo.toml
