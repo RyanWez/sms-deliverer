@@ -15,7 +15,6 @@
     { id: 'ERROR', label: 'Error', count: logsStore.counts.error, badgeCls: 'bg-danger/20 text-danger border-danger/40' },
     { id: 'WARN', label: 'Warn', count: logsStore.counts.warn, badgeCls: 'bg-warning/20 text-warning border-warning/40' },
     { id: 'INFO', label: 'Info', count: logsStore.counts.info, badgeCls: 'bg-primary/20 text-primary border-primary/40' },
-    { id: 'DEBUG', label: 'Debug', count: logsStore.counts.debug, badgeCls: 'badge-muted' },
   ]);
 
   function scrollToBottom(force = false) {
@@ -60,7 +59,6 @@
     const l = level.toUpperCase();
     if (l === 'ERROR') return { text: 'ERR', cls: 'bg-danger/20 text-danger border-danger/40' };
     if (l === 'WARN') return { text: 'WARN', cls: 'bg-warning/20 text-warning border-warning/40' };
-    if (l === 'DEBUG' || l === 'TRACE') return { text: 'DBG', cls: 'bg-muted text-muted-foreground border-border' };
     return { text: 'INFO', cls: 'bg-primary/15 text-primary border-primary/30' };
   }
 </script>

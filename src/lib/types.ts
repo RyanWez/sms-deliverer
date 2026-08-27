@@ -101,7 +101,7 @@ export interface SettingsState {
   };
   developer: {
     enabled: boolean;
-    logLevel: 'ALL' | 'ERROR' | 'WARN' | 'INFO' | 'DEBUG';
+    logLevel: 'ALL' | 'ERROR' | 'WARN' | 'INFO';
     autoScroll: boolean;
     maxLogs: number;
   };

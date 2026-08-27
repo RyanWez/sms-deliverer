@@ -74,6 +74,19 @@ gh release create v1.0.1 --target main --title "v1.0.1" --notes-file notes.md
 ```
 (release published event → publish run ချက်ချင်း start — RP မလိုဘဲ baseline ချနဲ့)
 
+### 5️⃣ Platform policy — Windows + Linux only (macOS ဘယ်တော့မှမထုတ်)
+
+- Publish matrix (`tauri-build.yml`) ထဲ runner = `ubuntu-22.04` + `windows-latest` ၂ ခုပဲ —
+  **matrix ဘယ်လောက်ပဲ ပြင်ပြင် `macos-latest` row မထည့်နဲ့** (2026-08-27 cleanup: ကျန်နေခဲ့တဲ့
+  dead macOS cross-compile scaffold `targets: …apple-darwin…` conditional ကို ဖယ်ရှုံးပြီး၊
+  တည်နေရာမှာ policy comment ချထား)။
+- Evidence (v1.0.1 live-check): assets 11 ခုထဲ `.dmg`/`.app` zero · `latest.json` platforms ထဲ
+  darwin key zero → installer chain + updater chain နှစ်ခုစလုံး သန့်။
+- Gotcha: `"targets": "all"` (tauri.conf.json) က *current OS* ရဲ့ bundle format အားလုံးကို ဆိုတာ —
+  linux→AppImage/deb/rpm, windows→NSIS/MSI။ **OS selection control က matrix တည်း**၊ config မဟုတ်။
+- Old GitHub Releases = immutable snapshots — workflow/policy ပြောင်းလဲမှုက future releases
+  ပေါ်မှာပဲ apply ဖြစ် (v1.0.1 assets untouched)။
+
 ## Operational Commands
 
 ```bash

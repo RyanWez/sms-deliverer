@@ -25,20 +25,17 @@ export function createLogsStore() {
     let error = 0;
     let warn = 0;
     let info = 0;
-    let debug = 0;
     for (const item of items) {
       const lvl = item.level.toUpperCase();
       if (lvl === 'ERROR') error++;
       else if (lvl === 'WARN') warn++;
       else if (lvl === 'INFO') info++;
-      else if (lvl === 'DEBUG' || lvl === 'TRACE') debug++;
     }
     return {
       all: items.length,
       error,
       warn,
       info,
-      debug,
     };
   });
 
@@ -54,9 +51,7 @@ export function createLogsStore() {
       // Level filter
       if (filterLevel !== 'ALL') {
         const lvl = item.level.toUpperCase();
-        if (filterLevel === 'DEBUG') {
-          if (lvl !== 'DEBUG' && lvl !== 'TRACE') return false;
-        } else if (lvl !== filterLevel) {
+        if (lvl !== filterLevel) {
           return false;
         }
       }

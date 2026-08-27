@@ -1,9 +1,9 @@
-export type LogLevelFilter = 'ALL' | 'ERROR' | 'WARN' | 'INFO' | 'DEBUG';
+export type LogLevelFilter = 'ALL' | 'ERROR' | 'WARN' | 'INFO';
 
 export interface LogEntry {
   id: number;
   timestamp: string;
-  level: 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' | 'TRACE' | string;
+  level: 'ERROR' | 'WARN' | 'INFO' | string;
   target: string;
   message: string;
 }

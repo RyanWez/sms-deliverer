@@ -25,7 +25,10 @@ pub fn get_log_buffer() -> &'static Arc<Mutex<VecDeque<LogEntry>>> {
     LOG_BUFFER.get_or_init(|| Arc::new(Mutex::new(VecDeque::with_capacity(MAX_RING_BUFFER))))
 }
 
-pub fn capture_entry(level: Level, target: &str, message: &str) -> LogEntry {
+pub fn capture_entry(level: Level, target: &str, message: &str) -> Option<LogEntry> {
+    if level > Level::Info {
+        return None;
+    }
     let id = ID_COUNTER.fetch_add(1, Ordering::Relaxed);
     let now = Local::now().format("%Y-%m-%d %H:%M:%S%.3f").to_string();
     let module = target.split("::").next().unwrap_or(target).to_string();
@@ -45,7 +48,7 @@ pub fn capture_entry(level: Level, target: &str, message: &str) -> LogEntry {
         lock.push_back(entry.clone());
     }
 
-    entry
+    Some(entry)
 }
 
 pub fn get_all_logs(limit: Option<usize>, min_level: Option<String>) -> Vec<LogEntry> {
@@ -55,8 +58,6 @@ pub fn get_all_logs(limit: Option<usize>, min_level: Option<String>) -> Vec<LogE
         "ERROR" => Some(Level::Error),
         "WARN" => Some(Level::Warn),
         "INFO" => Some(Level::Info),
-        "DEBUG" => Some(Level::Debug),
-        "TRACE" => Some(Level::Trace),
         _ => None,
     });
 
@@ -119,7 +120,7 @@ mod imp {
 
     impl log::Log for TerminalLogger {
         fn enabled(&self, metadata: &log::Metadata) -> bool {
-            metadata.level() <= Level::Debug
+            metadata.level() <= Level::Info
         }
 
         fn log(&self, record: &log::Record) {
@@ -211,18 +212,19 @@ mod imp {
 
     impl log::Log for FileLogger {
         fn enabled(&self, metadata: &log::Metadata) -> bool {
-            metadata.level() <= Level::Debug
+            metadata.level() <= Level::Info
         }
 
         fn log(&self, record: &log::Record) {
+            if !self.enabled(record.metadata()) {
+                return;
+            }
             let msg = format!("{}", record.args());
             capture_entry(record.level(), record.target(), &msg);
 
-            if record.level() <= Level::Info {
-                let now = Local::now().format("%Y-%m-%d %H:%M:%S%.3f").to_string();
-                let line = format_line(&now, record.level(), record.target(), record.args());
-                self.write_line(&line);
-            }
+            let now = Local::now().format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+            let line = format_line(&now, record.level(), record.target(), record.args());
+            self.write_line(&line);
         }
 
         fn flush(&self) {
@@ -246,5 +248,5 @@ pub fn init() {
         }
     }
 
-    log::set_max_level(log::LevelFilter::Debug);
+    log::set_max_level(log::LevelFilter::Info);
 }

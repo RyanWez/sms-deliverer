@@ -242,7 +242,7 @@
           type: "select" as const,
           bind: "developer",
           options: [
-            { value: "ALL", label: "All (Debug & Trace)" },
+            { value: "ALL", label: "All (Info, Warn, Error)" },
             { value: "INFO", label: "Info, Warn & Error" },
             { value: "WARN", label: "Warn & Error Only" },
             { value: "ERROR", label: "Error Only" },

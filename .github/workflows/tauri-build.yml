@@ -26,10 +26,11 @@ jobs:
         with:
           node-version: lts/*
 
+      # Platform policy: Windows + Linux artifacts ONLY — the matrix above must
+      # never gain a macOS entry (bundles come out per-OS from "targets": "all").
+      # Rationale/evidence: Memory/02-release-automation.md §5 Platform Policy.
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
