@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.0](https://github.com/RyanWez/sms-deliverer/compare/v1.0.3...v1.1.0) (2026-08-27)
+
+
+### Features
+
+* add configurable confirmation for deletions, optional message table columns, and auto-start functionality for live mode ([e4b71b0](https://github.com/RyanWez/sms-deliverer/commit/e4b71b0d0145f7fdae324be7f51bb18c999613c4))
+* add scan and USSD busy states with UI loading indicators ([e0a2be0](https://github.com/RyanWez/sms-deliverer/commit/e0a2be0cdd397d3dd692cf10e8810e2f716f4ccc))
+* add Tauri runtime detection to enable web browser fallback mode and lazy-load Tauri dependencies. ([85ad849](https://github.com/RyanWez/sms-deliverer/commit/85ad849b9814f3b5de93f25f1af94072f1c0e5ed))
+
 ## 1.0.0 (2026-08-26)
 
 
