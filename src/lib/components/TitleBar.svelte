@@ -1,16 +1,42 @@
 <script lang="ts">
-  import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { isTauri } from '$lib/utils/tauri';
 
-  const appWindow = getCurrentWindow();
   let maximizing = $state(false);
 
   async function toggleMaximize() {
-    if (maximizing) {
-      await appWindow.unmaximize();
-      maximizing = false;
-    } else {
-      await appWindow.maximize();
-      maximizing = true;
+    if (!isTauri()) return;
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      const appWindow = getCurrentWindow();
+      if (maximizing) {
+        await appWindow.unmaximize();
+        maximizing = false;
+      } else {
+        await appWindow.maximize();
+        maximizing = true;
+      }
+    } catch (e) {
+      console.warn('Window maximize unavailable:', e);
+    }
+  }
+
+  async function minimize() {
+    if (!isTauri()) return;
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      await getCurrentWindow().minimize();
+    } catch (e) {
+      console.warn('Window minimize unavailable:', e);
+    }
+  }
+
+  async function closeWindow() {
+    if (!isTauri()) return;
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      await getCurrentWindow().close();
+    } catch (e) {
+      console.warn('Window close unavailable:', e);
     }
   }
 </script>
@@ -31,7 +57,7 @@
   <div class="flex items-center gap-0.5 self-stretch -mr-3 relative z-10">
     <button
       class="w-10 h-full flex items-center justify-center text-muted-foreground hover:bg-elevated hover:text-foreground transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus-visible:ring-inset"
-      onclick={() => appWindow.minimize()}
+      onclick={minimize}
       title="Minimize"
       aria-label="Minimize window"
     >
@@ -55,7 +81,7 @@
     </button>
     <button
       class="w-10 h-full flex items-center justify-center text-muted-foreground hover:bg-danger hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-danger/70 focus-visible:ring-inset"
-      onclick={() => appWindow.close()}
+      onclick={closeWindow}
       title="Close"
       aria-label="Close window"
     >

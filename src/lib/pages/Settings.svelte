@@ -3,8 +3,7 @@
   import type { IconName } from "$lib/icons";
   import { settingsStore } from "$lib/stores/settings.svelte";
   import { api } from "$lib/services/api";
-  import { check } from "@tauri-apps/plugin-updater";
-  import { relaunch } from "@tauri-apps/plugin-process";
+  import { isTauri } from "$lib/utils/tauri";
 
   const settingsGroups = [
     {
@@ -237,13 +236,19 @@
         await api.clearAll();
       }
     } else if (action === "checkUpdates") {
+      if (!isTauri()) {
+        alert("Updater is only available when running in the Tauri desktop application.");
+        return;
+      }
       try {
+        const { check } = await import("@tauri-apps/plugin-updater");
         const update = await check();
         if (update) {
           if (confirm(`Version ${update.version} is available. Do you want to download and install it now?`)) {
             await update.downloadAndInstall();
             alert("Update installed successfully. The application will now restart.");
             try {
+              const { relaunch } = await import("@tauri-apps/plugin-process");
               await relaunch();
             } catch (e) {
               alert("Please restart the app manually to apply the update.");

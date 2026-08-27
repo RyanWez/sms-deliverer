@@ -1,5 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { isTauri } from '$lib/utils/tauri';
 import { portsStore } from '$lib/stores/ports.svelte';
 import { messagesStore } from '$lib/stores/messages.svelte';
 import { liveStore } from '$lib/stores/live.svelte';
@@ -20,7 +19,9 @@ function toast(kind: ToastData['kind'], title: string, body: string, otp?: strin
 }
 
 async function refreshFromBackend() {
+  if (!isTauri()) return;
   try {
+    const { invoke } = await import('@tauri-apps/api/core');
     const msgs = await invoke<SmsItem[]>('get_messages');
     messagesStore.items = msgs;
     const ports = await invoke<PortInfo[]>('get_ports');
@@ -36,68 +37,98 @@ export const api = {
     if (initialized) return;
     initialized = true;
 
+    if (!isTauri()) {
+      console.info('[api] Running in web browser preview mode. Initializing demo synthetic data.');
+      const { injectSyntheticData } = await import('$lib/utils/synthetic');
+      await injectSyntheticData(16, 35);
+      liveStore.statusText = 'Browser Preview Mode';
+      return;
+    }
+
     await refreshFromBackend();
 
-    await listen('messages:reset', () => {
-      messagesStore.items = [];
-      messagesStore.clearSelection();
-    });
+    try {
+      const { listen } = await import('@tauri-apps/api/event');
 
-    await listen<{ items: SmsItem[] }>('messages:added', (event) => {
-      const existing = new Set(messagesStore.items.map((m) => m.id));
-      const incoming = event.payload.items.filter((i) => !existing.has(i.id));
-      if (incoming.length > 0) {
-        messagesStore.items = [...messagesStore.items, ...incoming];
+      await listen('messages:reset', () => {
+        messagesStore.items = [];
+        messagesStore.clearSelection();
+      });
+
+      await listen<{ items: SmsItem[] }>('messages:added', (event) => {
+        const existing = new Set(messagesStore.items.map((m) => m.id));
+        const incoming = event.payload.items.filter((i) => !existing.has(i.id));
+        if (incoming.length > 0) {
+          messagesStore.items = [...messagesStore.items, ...incoming];
+        }
+      });
+
+      await listen<{ ids: number[] }>('messages:removed', (event) => {
+        messagesStore.removeByIds(event.payload.ids);
+      });
+
+      await listen<{ ports: PortInfo[] }>('ports:updated', (event) => {
+        portsStore.set(event.payload.ports);
+      });
+
+      await listen<{ text: string }>('status:update', (event) => {
+        liveStore.statusText = event.payload.text;
+      });
+
+      await listen<SmsItem>('sms:new', (event) => {
+        const item = event.payload as any;
+        const smsItem: SmsItem = {
+          id: item.id,
+          message: item.message ?? item,
+          otp: item.otp ?? null,
+          is_new: true,
+        };
+        if (!messagesStore.items.some(m => m.id === smsItem.id)) {
+          messagesStore.items = [...messagesStore.items, smsItem];
+        }
+        if (smsItem.otp) {
+          toast('Otp', 'New OTP', smsItem.message.text ?? '', smsItem.otp);
+        }
+      });
+
+      await listen<{ port: string }>('sms:ready', (event) => {
+        portsStore.updatePort(event.payload.port, { live_ready: true });
+        liveStore.readyPorts = portsStore.items
+          .filter(p => p.live_ready)
+          .map(p => p.name);
+      });
+
+      if (settingsStore.general.autoStartLive && portsStore.items.some(p => p.checked)) {
+        void api.startLive(true);
       }
-    });
-
-    await listen<{ ids: number[] }>('messages:removed', (event) => {
-      messagesStore.removeByIds(event.payload.ids);
-    });
-
-    await listen<{ ports: PortInfo[] }>('ports:updated', (event) => {
-      portsStore.set(event.payload.ports);
-    });
-
-    await listen<{ text: string }>('status:update', (event) => {
-      liveStore.statusText = event.payload.text;
-    });
-
-    await listen<SmsItem>('sms:new', (event) => {
-      const item = event.payload as any;
-      const smsItem: SmsItem = {
-        id: item.id,
-        message: item.message ?? item,
-        otp: item.otp ?? null,
-        is_new: true,
-      };
-      if (!messagesStore.items.some(m => m.id === smsItem.id)) {
-        messagesStore.items = [...messagesStore.items, smsItem];
-      }
-      if (smsItem.otp) {
-        toast('Otp', 'New OTP', smsItem.message.text ?? '', smsItem.otp);
-      }
-    });
-
-    await listen<{ port: string }>('sms:ready', (event) => {
-      portsStore.updatePort(event.payload.port, { live_ready: true });
-      liveStore.readyPorts = portsStore.items
-        .filter(p => p.live_ready)
-        .map(p => p.name);
-    });
-
-    if (settingsStore.general.autoStartLive && portsStore.items.some(p => p.checked)) {
-      void api.startLive(true);
+    } catch (e) {
+      console.warn('[api] Failed to setup Tauri event listeners:', e);
     }
   },
 
   async refreshPorts() {
-    const ports = await invoke<PortInfo[]>('refresh_ports');
-    portsStore.set(ports);
+    if (!isTauri()) {
+      const { generateSyntheticPorts } = await import('$lib/utils/synthetic');
+      portsStore.set(generateSyntheticPorts(16));
+      toast('Success', 'Refreshed', 'Synthetic ports refreshed.');
+      return;
+    }
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const ports = await invoke<PortInfo[]>('refresh_ports');
+      portsStore.set(ports);
+    } catch (e) {
+      toast('Danger', 'Refresh failed', String(e));
+    }
   },
 
   async startScan() {
+    if (!isTauri()) {
+      toast('Info', 'Scan Simulation', 'Scanning simulated ports...');
+      return;
+    }
     try {
+      const { invoke } = await import('@tauri-apps/api/core');
       await invoke('start_scan');
     } catch (e) {
       toast('Danger', 'Scan failed', String(e));
@@ -105,7 +136,15 @@ export const api = {
   },
 
   async startLive(silent = false) {
+    if (!isTauri()) {
+      liveStore.on = true;
+      liveStore.totalPorts = portsStore.items.filter(p => p.checked).length;
+      liveStore.readyPorts = portsStore.items.filter(p => p.checked).map(p => p.name);
+      if (!silent) toast('Success', 'Live Started', 'Simulated live mode active');
+      return;
+    }
     try {
+      const { invoke } = await import('@tauri-apps/api/core');
       const ports = await invoke<PortInfo[]>('get_ports');
       portsStore.set(ports);
       portsStore.resetLive();
@@ -124,7 +163,14 @@ export const api = {
   },
 
   async stopLive() {
+    if (!isTauri()) {
+      liveStore.on = false;
+      liveStore.totalPorts = 0;
+      liveStore.readyPorts = [];
+      return;
+    }
     try {
+      const { invoke } = await import('@tauri-apps/api/core');
       await invoke('stop_live');
     } finally {
       liveStore.on = false;
@@ -135,7 +181,12 @@ export const api = {
   },
 
   async getSimNumbers() {
+    if (!isTauri()) {
+      toast('Info', 'USSD Simulation', 'Simulating USSD SIM query');
+      return;
+    }
     try {
+      const { invoke } = await import('@tauri-apps/api/core');
       await invoke('get_sim_numbers');
     } catch (e) {
       toast('Warning', 'USSD failed', String(e));
@@ -146,7 +197,12 @@ export const api = {
     if (ids.length === 0) return;
     messagesStore.deleteBusy = true;
     try {
-      await invoke('delete_selected', { ids });
+      if (isTauri()) {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('delete_selected', { ids });
+      } else {
+        messagesStore.removeByIds(ids);
+      }
     } catch (e) {
       toast('Danger', 'Delete failed', String(e));
     } finally {
@@ -156,7 +212,10 @@ export const api = {
 
   async clearAll() {
     try {
-      await invoke('clear_all');
+      if (isTauri()) {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('clear_all');
+      }
     } finally {
       messagesStore.items = [];
       messagesStore.clearSelection();
@@ -164,10 +223,20 @@ export const api = {
   },
 
   async togglePortChecked(port: string, checked: boolean) {
-    await invoke('toggle_port_checked', { port, checked });
+    if (isTauri()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('toggle_port_checked', { port, checked });
+    } else {
+      portsStore.updatePort(port, { checked });
+    }
   },
 
   async setAllPortsChecked(checked: boolean) {
-    await invoke('set_all_ports_checked', { checked });
+    if (isTauri()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('set_all_ports_checked', { checked });
+    } else {
+      portsStore.setCheckedAll(checked);
+    }
   },
 };
