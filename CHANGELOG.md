@@ -13,4 +13,3 @@
 
 * reset all project versions to 1.0.1 and align Node / Tauri / Cargo manifests
 * configure release-please to bump package.json, tauri.conf.json and Cargo.toml together via a shared manifest config
-
