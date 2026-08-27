@@ -111,6 +111,14 @@ export const api = {
         liveStore.ussdBusy = false;
       });
 
+      await listen<{ path: string }>('export:saved', (event) => {
+        toast('Success', 'Export complete', event.payload.path);
+      });
+
+      await listen<{ error: string }>('export:failed', (event) => {
+        toast('Danger', 'Export failed', event.payload.error);
+      });
+
       if (settingsStore.general.autoStartLive && portsStore.items.some(p => p.checked)) {
         void api.startLive(true);
       }
@@ -259,4 +267,65 @@ export const api = {
       portsStore.setCheckedAll(checked);
     }
   },
+
+  /**
+   * Export the currently filtered message list to a user-chosen file.
+   * In Tauri the native save dialog + write run on the Rust side; in browser
+   * preview we fall back to a Blob download.
+   */
+  async exportMessages(format: 'csv' | 'json') {
+    const rows = messagesStore.visible.map((it) => ({
+      time: it.message.received || '',
+      from: it.message.from || '',
+      port: it.message.port || '',
+      sim: messagesStore.prettyPort(it.message.port),
+      text: it.message.text || '',
+      otp: it.otp ?? '',
+      status: it.message.status || '',
+    }));
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const fileName = `sms-export-${stamp}.${format}`;
+
+    let contents: string;
+    if (format === 'json') {
+      contents = JSON.stringify(rows, null, 2);
+    } else {
+      contents = toCsv(rows);
+    }
+
+    if (isTauri()) {
+      toast('Info', 'Export', 'Choose a location to save the file…');
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('export_messages', { contents, suggested: fileName });
+      } catch (e) {
+        toast('Danger', 'Export failed', String(e));
+      }
+      return;
+    }
+
+    // Browser preview — plain download.
+    const url = URL.createObjectURL(new Blob([contents], { type: 'text/plain' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('Success', 'Export complete', fileName);
+  },
 };
+
+/** Serialize smoke-report style rows to CSV with RFC-4180 escaping. */
+function csvCell(v: string): string {
+  if (/[",\n\r]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
+  return v;
+}
+
+function toCsv(rows: Array<Record<string, string>>): string {
+  if (rows.length === 0) return 'time,from,port,sim,text,otp,status\n';
+  const header = Object.keys(rows[0]).join(',');
+  const body = rows
+    .map((r) => Object.values(r).map((v) => csvCell(String(v))).join(','))
+    .join('\n');
+  return `${header}\n${body}\n`;
+}

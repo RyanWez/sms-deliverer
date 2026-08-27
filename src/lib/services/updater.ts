@@ -31,6 +31,8 @@ async function currentAppVersion(): Promise<string | undefined> {
 /** Download the pending update, install it and relaunch the application. */
 async function applyUpdate(update: NonNullable<Awaited<ReturnType<typeof checkForUpdate>>>): Promise<void> {
   const version = update.version;
+  let downloaded = 0;
+  let total = 0;
   try {
     await update.downloadAndInstall((event) => {
       if (event.event === 'Started') {
@@ -39,12 +41,22 @@ async function applyUpdate(update: NonNullable<Awaited<ReturnType<typeof checkFo
             ? `${(event.data.contentLength / 1024 / 1024).toFixed(1)} MB`
             : '';
         toast('Info', 'Downloading update', `Version ${version} ${mb ? `(${mb}) ` : ''}is downloading…`);
+        total = typeof event.data.contentLength === 'number' ? event.data.contentLength : 0;
+        downloaded = 0;
+        liveStore.updateProgress = { version, downloadedBytes: 0, totalBytes: total, phase: 'download' };
+      } else if (event.event === 'Progress') {
+        downloaded += typeof event.data.chunkLength === 'number' ? event.data.chunkLength : 0;
+        liveStore.updateProgress = { version, downloadedBytes: downloaded, totalBytes: total, phase: 'download' };
+      } else if (event.event === 'Finished') {
+        liveStore.updateProgress = { version, downloadedBytes: total, totalBytes: total, phase: 'install' };
       }
     });
+    liveStore.updateProgress = null;
     toast('Success', 'Update installed', `Version ${version} installed. Restarting the app…`);
     const { relaunch } = await import('@tauri-apps/plugin-process');
     await relaunch();
   } catch (error) {
+    liveStore.updateProgress = null;
     console.error('[updater] install failed:', error);
     toast(
       'Danger',

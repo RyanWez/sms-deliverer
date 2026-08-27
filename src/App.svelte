@@ -3,6 +3,7 @@
   import TitleBar from "$lib/components/TitleBar.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ToastContainer from "$lib/components/ToastContainer.svelte";
+  import UpdateProgress from "$lib/components/UpdateProgress.svelte";
   import Inbox from "$lib/pages/Inbox.svelte";
   import Ports from "$lib/pages/Ports.svelte";
   import Settings from "$lib/pages/Settings.svelte";
@@ -39,4 +40,5 @@
     </main>
   </div>
   <ToastContainer />
+  <UpdateProgress />
 </div>

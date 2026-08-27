@@ -4,10 +4,12 @@
   import { liveStore } from '$lib/stores/live.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { api } from '$lib/services/api';
+  import { confirmDialog } from '$lib/services/dialog';
 
   const busy = $derived(
     liveStore.on || messagesStore.deleteBusy || liveStore.scanBusy || liveStore.ussdBusy
   );
+  let exportOpen = $state(false);
 </script>
 
 <header class="page-header">
@@ -74,8 +76,15 @@
     <button
       class="btn-danger"
       disabled={messagesStore.selectedCount === 0 || busy}
-      onclick={() => {
-        if (!settingsStore.general.confirmDelete || confirm(`Delete ${messagesStore.selectedCount} message(s)?`)) {
+      onclick={async () => {
+        if (
+          !settingsStore.general.confirmDelete ||
+          (await confirmDialog(`Delete ${messagesStore.selectedCount} message(s)?`, {
+            title: 'Delete selected',
+            kind: 'warning',
+            okLabel: 'Delete',
+          }))
+        ) {
           api.deleteSelected([...messagesStore.selected]);
         }
       }}
@@ -93,8 +102,15 @@
     <button
       class="btn-danger-quiet"
       disabled={busy}
-      onclick={() => {
-        if (!settingsStore.general.confirmDelete || confirm('Delete ALL messages from checked ports?')) {
+      onclick={async () => {
+        if (
+          !settingsStore.general.confirmDelete ||
+          (await confirmDialog('Delete ALL messages from checked ports?', {
+            title: 'Clear all messages',
+            kind: 'warning',
+            okLabel: 'Clear all',
+          }))
+        ) {
           api.clearAll();
         }
       }}
@@ -102,5 +118,46 @@
     >
       Clear All
     </button>
+
+    <div class="relative">
+      <button
+        class="btn-secondary"
+        disabled={messagesStore.visible.length === 0}
+        onclick={() => (exportOpen = !exportOpen)}
+        title="Export the current filtered messages"
+        aria-haspopup="menu"
+        aria-expanded={exportOpen}
+      >
+        <Icon name="download" size={14} />
+        <span class="hidden sm:inline">Export</span>
+      </button>
+      {#if exportOpen}
+        <div
+          class="absolute right-0 top-full mt-1 z-30 min-w-[9rem] overflow-hidden rounded-lg border border-border bg-popover shadow-xl"
+          role="menu"
+        >
+          <button
+            class="block w-full px-3 py-2 text-left text-xs text-foreground hover:bg-accent"
+            role="menuitem"
+            onclick={() => {
+              exportOpen = false;
+              api.exportMessages('csv');
+            }}
+          >
+            <Icon name="download" size={12} class="mr-2 text-muted-foreground" />CSV (.csv)
+          </button>
+          <button
+            class="block w-full px-3 py-2 text-left text-xs text-foreground hover:bg-accent"
+            role="menuitem"
+            onclick={() => {
+              exportOpen = false;
+              api.exportMessages('json');
+            }}
+          >
+            <Icon name="download" size={12} class="mr-2 text-muted-foreground" />JSON (.json)
+          </button>
+        </div>
+      {/if}
+    </div>
   </div>
 </header>
