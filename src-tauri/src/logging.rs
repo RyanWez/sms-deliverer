@@ -170,7 +170,7 @@ mod imp {
     use log::Level;
     use super::{capture_entry, format_line};
 
-    pub const MAX_BYTES: u64 = 1024 * 1024; // 1 MB
+    pub const MAX_BYTES: u64 = 5 * 1024 * 1024; // 5 MB
 
     pub struct FileLogger {
         path: PathBuf,

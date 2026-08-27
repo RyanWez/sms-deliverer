@@ -303,11 +303,11 @@
               role="button"
               tabindex="0"
               data-port={port.name}
-              class="group card p-4 text-left transition-colors duration-150 cursor-pointer hover:border-muted-foreground/40 animate-msg-enter
+              class="group card p-4 text-left transition-colors duration-150 cursor-pointer hover:border-muted-foreground/40 waterfall-row
                      focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70
                      {activePortName === port.name ? 'border-primary ring-1 ring-primary/40' : ''}
                      {st.key === 'error' ? 'bg-danger/[0.04]' : ''}"
-              style="animation-delay: {Math.min(index * 16, 160)}ms;"
+              style="animation-delay: {Math.min(index * 24, 380)}ms;"
               onclick={(e) => {
                 if ((e.target as HTMLElement).closest('input, label')) return;
                 inspect(port);
