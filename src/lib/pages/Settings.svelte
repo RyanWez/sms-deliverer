@@ -198,6 +198,57 @@
       ],
     },
     {
+      id: "developer",
+      label: "Developer",
+      icon: "terminal" as IconName,
+      description: "Diagnostics, real-time logging, and developer tools",
+      fields: [
+        {
+          key: "enabled",
+          label: "Developer Mode",
+          description: "Enable Developer Mode to view live logs and backend diagnostics in the sidebar",
+          type: "checkbox" as const,
+          bind: "developer",
+        },
+        {
+          key: "logLevel",
+          label: "Capture Log Level",
+          description: "Minimum severity level for capturing system logs",
+          type: "select" as const,
+          bind: "developer",
+          options: [
+            { value: "ALL", label: "All Logs (Debug & Trace)" },
+            { value: "INFO", label: "Info, Warnings & Errors (Default)" },
+            { value: "WARN", label: "Warnings & Errors Only" },
+            { value: "ERROR", label: "Errors Only" },
+          ],
+        },
+        {
+          key: "autoScroll",
+          label: "Auto-scroll Logs by Default",
+          description: "Automatically scroll to bottom when new logs arrive in the console",
+          type: "checkbox" as const,
+          bind: "developer",
+        },
+        {
+          key: "openLogFolder",
+          label: "Open Log Directory",
+          description: "Open the folder containing persistent application log files",
+          type: "button" as const,
+          action: "openLogFolder",
+          variant: "secondary",
+        },
+        {
+          key: "clearLogs",
+          label: "Clear In-Memory Logs",
+          description: "Clear all currently captured logs from memory",
+          type: "button" as const,
+          action: "clearLogs",
+          variant: "secondary",
+        },
+      ],
+    },
+    {
       id: "advanced",
       label: "Advanced",
       icon: "wrench" as IconName,
@@ -271,6 +322,10 @@
       } finally {
         updateChecking = false;
       }
+    } else if (action === "openLogFolder") {
+      await api.openLogFolder();
+    } else if (action === "clearLogs") {
+      await api.clearLogs();
     }
   }
 

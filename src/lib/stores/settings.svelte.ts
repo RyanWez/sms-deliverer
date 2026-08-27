@@ -55,6 +55,7 @@ export function createSettingsStore() {
     get otp() { return settings.otp; },
     get appearance() { return settings.appearance; },
     get updates() { return settings.updates; },
+    get developer() { return settings.developer; },
 
     setGeneral(v: Partial<SettingsState['general']>) {
       settings = { ...settings, general: { ...settings.general, ...v } };
@@ -75,6 +76,10 @@ export function createSettingsStore() {
     },
     setUpdates(v: Partial<SettingsState['updates']>) {
       settings = { ...settings, updates: { ...settings.updates, ...v } };
+      saveSettings(settings);
+    },
+    setDeveloper(v: Partial<SettingsState['developer']>) {
+      settings = { ...settings, developer: { ...settings.developer, ...v } };
       saveSettings(settings);
     },
 

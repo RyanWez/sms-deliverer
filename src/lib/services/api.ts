@@ -3,7 +3,8 @@ import { portsStore } from '$lib/stores/ports.svelte';
 import { messagesStore } from '$lib/stores/messages.svelte';
 import { liveStore } from '$lib/stores/live.svelte';
 import { settingsStore } from '$lib/stores/settings.svelte';
-import type { SmsItem, ToastData, PortInfo } from '$lib/types';
+import { logsStore } from '$lib/stores/logs.svelte';
+import type { SmsItem, ToastData, PortInfo, LogEntry } from '$lib/types';
 
 let nextToastId = 1;
 let initialized = false;
@@ -157,12 +158,12 @@ export const api = {
         liveStore.ussdBusy = false;
       });
 
-      await listen<{ path: string }>('export:saved', (event) => {
-        toast('Success', 'Export complete', event.payload.path);
-      });
-
       await listen<{ error: string }>('export:failed', (event) => {
         toast('Danger', 'Export failed', event.payload.error);
+      });
+
+      await listen<LogEntry>('log:entry', (event) => {
+        logsStore.addEntry(event.payload);
       });
 
       if (settingsStore.general.autoStartLive && portsStore.items.some(p => p.checked)) {
@@ -368,6 +369,58 @@ export const api = {
     a.click();
     URL.revokeObjectURL(url);
     toast('Success', 'Export complete', fileName);
+  },
+
+  async getLogs(limit?: number, minLevel?: string): Promise<LogEntry[]> {
+    if (!isTauri()) {
+      if (logsStore.items.length === 0) {
+        // Populate synthetic logs for web preview
+        const now = new Date().toISOString().replace('T', ' ').slice(0, 23);
+        logsStore.setLogs([
+          { id: 1, timestamp: now, level: 'INFO', target: 'core', message: 'SMS Reader initialized (Browser Simulation Mode)' },
+          { id: 2, timestamp: now, level: 'INFO', target: 'ports', message: 'Discovered 16 simulated COM ports' },
+          { id: 3, timestamp: now, level: 'DEBUG', target: 'modem', message: 'AT+CPMS? -> ("SM",0,50,"SM",0,50)' },
+          { id: 4, timestamp: now, level: 'INFO', target: 'commands', message: 'Live monitoring engine idle and ready' },
+          { id: 5, timestamp: now, level: 'WARN', target: 'ports', message: 'COM16 latency high (simulated warning)' },
+        ]);
+      }
+      return logsStore.items;
+    }
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const logs = await invoke<LogEntry[]>('get_logs', { limit, minLevel });
+      logsStore.setLogs(logs);
+      return logs;
+    } catch (e) {
+      console.warn('Failed to fetch logs:', e);
+      return [];
+    }
+  },
+
+  async clearLogs() {
+    logsStore.clear();
+    if (isTauri()) {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('clear_logs');
+      } catch (e) {
+        console.warn('Failed to clear backend logs:', e);
+      }
+    }
+  },
+
+  async openLogFolder() {
+    if (!isTauri()) {
+      toast('Info', 'Log Directory', 'Log persistence is active in native application.');
+      return;
+    }
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('open_log_folder');
+      toast('Success', 'Log Directory', 'Opened log folder in file explorer.');
+    } catch (e) {
+      toast('Danger', 'Open Folder Failed', String(e));
+    }
   },
 };
 

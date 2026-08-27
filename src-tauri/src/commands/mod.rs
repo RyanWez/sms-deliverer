@@ -728,6 +728,47 @@ pub fn export_messages(app: tauri::AppHandle, contents: String, suggested: Strin
     Ok(())
 }
 
+#[tauri::command]
+pub fn get_logs(limit: Option<usize>, min_level: Option<String>) -> Vec<crate::logging::LogEntry> {
+    crate::logging::get_all_logs(limit, min_level)
+}
+
+#[tauri::command]
+pub fn clear_logs() -> Result<(), String> {
+    crate::logging::clear_log_buffer();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_log_file_path() -> Result<String, String> {
+    crate::logging::get_log_file_path()
+        .map(|p| p.to_string_lossy().to_string())
+        .ok_or_else(|| "Could not determine log file path".into())
+}
+
+#[tauri::command]
+pub fn open_log_folder() -> Result<(), String> {
+    if let Some(path) = crate::logging::get_log_file_path() {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+            #[cfg(target_os = "windows")]
+            {
+                let _ = std::process::Command::new("explorer").arg(parent).spawn();
+            }
+            #[cfg(target_os = "macos")]
+            {
+                let _ = std::process::Command::new("open").arg(parent).spawn();
+            }
+            #[cfg(target_os = "linux")]
+            {
+                let _ = std::process::Command::new("xdg-open").arg(parent).spawn();
+            }
+            return Ok(());
+        }
+    }
+    Err("Could not locate log folder".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

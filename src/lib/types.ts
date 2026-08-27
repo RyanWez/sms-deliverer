@@ -64,7 +64,7 @@ export interface AppState {
   failed_notes: string[];
 }
 
-export type NavSection = 'inbox' | 'ports' | 'settings';
+export type NavSection = 'inbox' | 'ports' | 'settings' | 'logs';
 
 export interface SettingsState {
   general: {
@@ -96,6 +96,12 @@ export interface SettingsState {
   updates: {
     autoCheck: boolean;
     checkInterval: number;
+  };
+  developer: {
+    enabled: boolean;
+    logLevel: 'ALL' | 'ERROR' | 'WARN' | 'INFO' | 'DEBUG';
+    autoScroll: boolean;
+    maxLogs: number;
   };
 }
 
@@ -129,4 +135,12 @@ export const DEFAULT_SETTINGS: SettingsState = {
     autoCheck: true,
     checkInterval: 24,
   },
+  developer: {
+    enabled: false,
+    logLevel: 'ALL',
+    autoScroll: true,
+    maxLogs: 1000,
+  },
 };
+
+export * from './types/logs';

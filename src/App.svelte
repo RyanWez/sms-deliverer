@@ -6,6 +6,7 @@
   import UpdateProgress from "$lib/components/UpdateProgress.svelte";
   import Inbox from "$lib/pages/Inbox.svelte";
   import Ports from "$lib/pages/Ports.svelte";
+  import Logs from "$lib/pages/Logs.svelte";
   import Settings from "$lib/pages/Settings.svelte";
   import { api } from "$lib/services/api";
   import { restartAutoUpdater } from "$lib/services/updater";
@@ -34,6 +35,8 @@
         <Inbox />
       {:else if navigationStore.currentSection === "ports"}
         <Ports />
+      {:else if navigationStore.currentSection === "logs"}
+        <Logs />
       {:else if navigationStore.currentSection === "settings"}
         <Settings />
       {/if}

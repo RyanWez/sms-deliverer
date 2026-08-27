@@ -4,19 +4,25 @@
   import type { IconName } from '$lib/icons';
   import { navigationStore } from '$lib/stores/navigation.svelte';
   import { portsStore } from '$lib/stores/ports.svelte';
+  import { settingsStore } from '$lib/stores/settings.svelte';
+  import type { NavSection } from '$lib/types';
   import { isTauri } from '$lib/utils/tauri';
 
   interface NavItem {
-    id: 'inbox' | 'ports' | 'settings';
+    id: NavSection;
     label: string;
     icon: IconName;
+    badge?: string;
   }
 
-  const navItems: NavItem[] = [
+  const navItems = $derived<NavItem[]>([
     { id: 'inbox', label: 'Inbox', icon: 'inbox' },
     { id: 'ports', label: 'Ports', icon: 'ports' },
+    ...(settingsStore.developer.enabled
+      ? [{ id: 'logs' as NavSection, label: 'Logs', icon: 'terminal' as IconName, badge: 'Dev' }]
+      : []),
     { id: 'settings', label: 'Settings', icon: 'settings' },
-  ];
+  ]);
 
   let appVersion = $state<string>('1.0.1');
 
@@ -90,13 +96,18 @@
               <Icon name={item.icon} size={17} />
             </div>
             <span
-              class="ml-3 truncate whitespace-nowrap text-left transition-opacity duration-150 overflow-hidden"
+              class="ml-3 truncate whitespace-nowrap text-left transition-opacity duration-150 overflow-hidden flex-1"
               class:opacity-100={!navigationStore.sidebarCollapsed}
               class:opacity-0={navigationStore.sidebarCollapsed}
               class:pointer-events-none={navigationStore.sidebarCollapsed}
             >
               {item.label}
             </span>
+            {#if item.badge && !navigationStore.sidebarCollapsed}
+              <span class="text-[9px] font-mono font-bold tracking-wider px-1.5 py-0.5 rounded bg-primary/20 text-primary uppercase select-none shrink-0">
+                {item.badge}
+              </span>
+            {/if}
           </button>
         </li>
       {/each}
