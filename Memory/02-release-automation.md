@@ -1,0 +1,88 @@
+# 02 — Release Automation Pipeline
+
+> `git push` တစ်ခုတည်းနဲ့ version bump → changelog → tag → GitHub Release → signed installers
+> → `latest.json` → in-app updater အထိ အလိုအလျောက်လည်နေတဲ့ system ရဲ့ အပြည့်အစုံ။
+
+## Architecture
+
+```
+git push origin main                      (conventional commits)
+        │
+        ▼
+[release-please workflow]                 (push event)
+  Conventional commits ကို analyze
+  ├─ feat:/fix:/feat!: ရှိရင် ──▶ Release PR auto-open/bump
+  │      "chore(main): release X.Y.Z"
+  │      diff: package.json + CHANGELOG.md + tauri.conf.json + Cargo.toml (+ Cargo.lock manual cargo check)
+  └─ chore:/docs:/ci: ပဲရှိရင်  ▶ PR မဖွင့် (state မပြောင်း)
+        │
+        ▼  Human: PR title/diff review → Merge (squash recommended)
+[autorelease]  ◀── release-please does tagging on merge
+  Tag vX.Y.Z + GitHub Release + notes (commit messages ကနေ)
+        │
+        ▼
+[publish workflow]                        (release published event)
+  matrix: ubuntu-22.04 + windows-latest
+  tauri-action → build → sign (TAURI_SIGNING_PRIVATE_KEY) → upload to Release
+  → *.exe / *.msi / AppImage / deb / rpm + *.sig + latest.json (updater manifest)
+        │
+        ▼
+App ထဲ Update Check
+  GET https://github.com/RyanWez/sms-deliverer/releases/latest/download/latest.json
+  compare version vs runtime → dialog/toast → download → verify signature → relaunch
+```
+
+## Config Inventory (ဘယ် file က ဘာလုပ်လဲ)
+
+| File | Role |
+|---|---|
+| `release-please-config.json` | RP behavior: release-type=node, `include-component-in-tag:false`, extra-files (see below) |
+| `.release-please-manifest.json` | Current released version pin — `{ ".": "1.0.1" }` |
+| `.github/workflows/release-please.yml` | Push event → googleapis/release-please-action@v4 (`config-file`+`manifest-file` args မမေ့နဲ့) |
+| `.github/workflows/tauri-build.yml` | Release published event → tauri-apps/tauri-action@v0 matrix build |
+| `src-tauri/tauri.conf.json` | `"createUpdaterArtifacts": true` (signed .sig output!), `plugins.updater.pubkey`, endpoints |
+
+## Critical Config Details (tdouble-check လုပ်စရာများ)
+
+### 1️⃣ Tag naming — `include-component-in-tag: false`
+Upstream default က **true** (`base.ts:152 → options.includeComponentInTag ?? true`)။ မထည့်ရင် tag က
+`sms-tauri-v1.0.2` ဖြစ်သွားမယ် → baseline `v1.0.1` convention နဲ့ ကွာ → compare links ပျက်၊
+RP က ကိုယ့် tag ကို "မတွေ့" လို့ မှားယွင်းတဲ့ PR ဖွင့်နိုင်တယ် (PR #4/#5 ဖြစ်ခဲ့တဲ့ case)။
+
+### 2️⃣ Multi-file version bump — extra-files
+```json
+"extra-files": [
+  { "type": "json", "path": "src-tauri/tauri.conf.json", "jsonpath": "$.version" },
+  { "type": "toml", "path": "src-tauri/Cargo.toml",     "jsonpath": "$.package.version" }
+]
+```
+node type က package.json ကို ကိုယ်စား bump ပြီးသား — ဒီ extra-files ၂ ခုက tauri side ချိတ်ပေးတာ။
+Release PR diff ထဲမှာ `"version"` lines ၄ ခုလုံး ပြောင်းနေမယ်ဆိုတာ စစ်ထားပါ။
+
+### 3️⃣ Signed updater artifacts chain (မဟုတ်ရင် latest.json upload SKIP ဖြစ်မယ်)
+```
+createUpdaterArtifacts:true (conf) + TAURI_PRIVATE_KEY + PASSWORD (secrets)
+  → bundle output မှာ .sig files ရ
+  → tauri-action မှ မှ latest.json generate/upload လုပ်နိုင်
+missing piece ရှိရင် CI log မှာ exact line: "Signature not found for the updater JSON. Skipping upload..."
+```
+
+### 4️⃣ First/bootstrap release (manual)
+Tag မရှိသေးခင် ကိုယ်တိုင် ထုတ်တာက publish workflow ကို trigger လုပ်တဲ့ official လမ်း:
+```bash
+gh release create v1.0.1 --target main --title "v1.0.1" --notes-file notes.md
+```
+(release published event → publish run ချက်ချင်း start — RP မလိုဘဲ baseline ချနဲ့)
+
+## Operational Commands
+
+```bash
+gh pr list --state open                          # waiting release PR?
+gh pr view <N> --json files -q '.files[].path'   # bump coverage စစ်
+gh pr close <N> --delete-branch                  # stale release PR ရှင်း
+gh run list --limit 5                            # workflow status
+gh run view <id> --json jobs                     # job-level status/conclusion
+gh run view --job <jobId> --log-failed           # ❗run complete ဖြစ်မှ available
+curl -sIL https://github.com/RyanWez/sms-deliverer/releases/latest/download/latest.json | head -1
+                                                 # ↑ 200 = updater healthy · 404 = broken
+```
