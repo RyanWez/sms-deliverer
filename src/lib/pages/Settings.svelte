@@ -193,6 +193,7 @@
           description: "Check if a new version is available for download",
           type: "button" as const,
           action: "checkUpdates",
+          buttonText: "Check",
           variant: "primary",
         },
       ],
@@ -217,10 +218,10 @@
           type: "select" as const,
           bind: "developer",
           options: [
-            { value: "ALL", label: "All Logs (Debug & Trace)" },
-            { value: "INFO", label: "Info, Warnings & Errors (Default)" },
-            { value: "WARN", label: "Warnings & Errors Only" },
-            { value: "ERROR", label: "Errors Only" },
+            { value: "ALL", label: "All (Debug & Trace)" },
+            { value: "INFO", label: "Info, Warn & Error" },
+            { value: "WARN", label: "Warn & Error Only" },
+            { value: "ERROR", label: "Error Only" },
           ],
         },
         {
@@ -236,6 +237,7 @@
           description: "Open the folder containing persistent application log files",
           type: "button" as const,
           action: "openLogFolder",
+          buttonText: "Open Folder",
           variant: "secondary",
         },
         {
@@ -244,6 +246,7 @@
           description: "Clear all currently captured logs from memory",
           type: "button" as const,
           action: "clearLogs",
+          buttonText: "Clear Logs",
           variant: "secondary",
         },
       ],
@@ -260,6 +263,7 @@
           description: "Restore all settings to their default values",
           type: "button" as const,
           action: "reset",
+          buttonText: "Reset",
           variant: "danger",
         },
         {
@@ -268,6 +272,7 @@
           description: "Permanently delete all stored SMS messages",
           type: "button" as const,
           action: "clearMessages",
+          buttonText: "Delete All",
           variant: "danger",
         },
       ],
@@ -509,8 +514,13 @@
                         {field.description}
                       </p>
                     </div>
+                    {@const btnClass = field.variant === "danger"
+                      ? "btn-danger"
+                      : field.variant === "secondary"
+                        ? "btn-secondary"
+                        : "btn-primary"}
                     <button
-                      class="btn-primary shrink-0 inline-flex items-center gap-2 disabled:opacity-60 disabled:pointer-events-none"
+                      class="{btnClass} shrink-0 inline-flex items-center justify-center gap-2 disabled:opacity-60 disabled:pointer-events-none text-xs sm:text-sm px-3.5 py-1.5 min-w-[76px]"
                       disabled={field.action === "checkUpdates" && updateChecking}
                       onclick={() => handleAction(field.action)}
                     >
@@ -520,7 +530,7 @@
                           aria-hidden="true"></span>
                         Checking…
                       {:else}
-                        Check
+                        {field.buttonText ?? 'Execute'}
                       {/if}
                     </button>
                   {:else if field.type === "checkbox" || field.type === "select" || field.type === "number" || field.type === "text"}
@@ -560,7 +570,7 @@
                       {:else if field.type === "select"}
                         <select
                           id={fieldId(selectedGroup, field)}
-                          class="input w-[180px] sm:w-[200px] text-sm shrink-0"
+                          class="input w-[180px] sm:w-[210px] max-w-full text-xs sm:text-sm shrink-0 truncate cursor-pointer pr-7"
                           value={getNestedValue(
                             settingsStore,
                             `${field.bind}.${field.key}`,
@@ -577,7 +587,7 @@
                           }}
                         >
                           {#each field.options as opt (opt.value)}
-                            <option value={opt.value}>{opt.label}</option>
+                            <option value={opt.value} class="truncate">{opt.label}</option>
                           {/each}
                         </select>
                       {:else if field.type === "number"}

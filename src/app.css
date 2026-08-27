@@ -166,7 +166,7 @@ body {
            disabled:opacity-40 disabled:cursor-not-allowed;
   }
   select.input {
-    @apply appearance-none cursor-pointer pr-7;
+    @apply appearance-none cursor-pointer pr-7 text-ellipsis overflow-hidden whitespace-nowrap;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none' stroke='%23888' stroke-width='1.5'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 8px center;
