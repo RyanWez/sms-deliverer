@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import type { IconName } from '$lib/icons';
   import { navigationStore } from '$lib/stores/navigation.svelte';
   import { portsStore } from '$lib/stores/ports.svelte';
+  import { isTauri } from '$lib/utils/tauri';
 
   interface NavItem {
     id: 'inbox' | 'ports' | 'settings';
@@ -15,6 +17,19 @@
     { id: 'ports', label: 'Ports', icon: 'ports' },
     { id: 'settings', label: 'Settings', icon: 'settings' },
   ];
+
+  let appVersion = $state<string>('1.0.1');
+
+  onMount(async () => {
+    if (isTauri()) {
+      try {
+        const { getVersion } = await import('@tauri-apps/api/app');
+        appVersion = await getVersion();
+      } catch {
+        // keep default fallback
+      }
+    }
+  });
 </script>
 
 <aside
@@ -137,6 +152,6 @@
       </div>
       <span>SIM Bank SMS Reader</span>
     </div>
-    <div class="mt-1 pl-7 text-[10px] text-muted-foreground/60">v2.0.0</div>
+    <div class="mt-1 pl-7 text-[10px] text-muted-foreground/60">v{appVersion}</div>
   </div>
 </aside>
