@@ -25,7 +25,7 @@
   });
 </script>
 
-<div class="h-full flex flex-col bg-background" class:sidebar-animating={navigationStore.isAnimating}>
+<div class="h-full flex flex-col bg-background">
   <TitleBar />
   <div class="flex-1 flex overflow-hidden min-h-0 app-shell">
     <Sidebar />
