@@ -19,7 +19,7 @@
   <span class="w-px h-3.5 bg-border" aria-hidden="true"></span>
   <span class="flex items-center gap-1.5 whitespace-nowrap tabular-nums">
     <span
-      class="w-1.5 h-1.5 rounded-full {liveStore.on ? 'bg-success animate-pulse-dot' : 'bg-muted-foreground/50'}"
+      class="w-1.5 h-1.5 rounded-full shrink-0 aspect-square {liveStore.on ? 'bg-success animate-pulse-dot' : 'bg-muted-foreground/50'}"
       aria-hidden="true"
     ></span>
     {liveStore.on ? `LIVE ${liveStore.readyPorts.length}/${liveStore.totalPorts}` : 'live off'}

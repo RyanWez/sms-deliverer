@@ -338,7 +338,7 @@
                     <span class="flex-1"></span>
                     <span class="badge {st.badge}">
                       {#if st.key === 'live' || st.key === 'connecting'}
-                        <span class="w-1.5 h-1.5 rounded-full bg-current {st.key === 'connecting' ? 'animate-pulse-dot' : ''}" aria-hidden="true"></span>
+                        <span class="w-1.5 h-1.5 rounded-full shrink-0 aspect-square bg-current {st.key === 'connecting' ? 'animate-pulse-dot' : ''}" aria-hidden="true"></span>
                       {/if}
                       {st.label}
                     </span>
@@ -415,7 +415,7 @@
       {/if}
       <span class="flex items-center gap-1.5 whitespace-nowrap">
         <span
-          class="w-1.5 h-1.5 rounded-full {liveStore.on ? 'bg-success animate-pulse-dot' : 'bg-muted-foreground/50'}"
+          class="w-1.5 h-1.5 rounded-full shrink-0 aspect-square {liveStore.on ? 'bg-success animate-pulse-dot' : 'bg-muted-foreground/50'}"
           aria-hidden="true"
         ></span>
         {liveStore.on ? `Live: ${liveStore.readyPorts.length} ready` : 'Live mode off'}

@@ -23,9 +23,9 @@
       title={liveStore.on ? 'Live monitoring active' : 'Live monitoring off'}
     >
       <span
-        class="w-1.5 h-1.5 rounded-full {liveStore.on ? 'bg-success animate-pulse-dot' : 'bg-muted-foreground/50'}"
+        class="w-1.5 h-1.5 rounded-full shrink-0 aspect-square {liveStore.on ? 'bg-success animate-pulse-dot' : 'bg-muted-foreground/50'}"
         aria-hidden="true"></span>
-      {liveStore.on ? `Live ${liveStore.readyPorts.length}/${liveStore.totalPorts}` : 'Live off'}
+      <span>{liveStore.on ? `Live ${liveStore.readyPorts.length}/${liveStore.totalPorts}` : 'Live off'}</span>
     </span>
   </div>
 
@@ -45,15 +45,15 @@
     </button>
 
     <button
-      class="{liveStore.on ? 'btn-danger' : 'btn-success'} min-w-[98px] justify-center"
+      class="{liveStore.on ? 'btn-danger' : 'btn-success'} min-w-[104px] justify-center gap-2"
       disabled={messagesStore.deleteBusy || liveStore.scanBusy || liveStore.ussdBusy}
       onclick={() => (liveStore.on ? api.stopLive() : api.startLive())}
       title={liveStore.on ? 'Stop live monitoring' : 'Start live monitoring on checked ports'}
     >
       <span
-        class="w-2 h-2 rounded-full bg-current {liveStore.on ? 'animate-pulse-dot' : ''}"
+        class="w-2 h-2 rounded-full bg-current shrink-0 aspect-square {liveStore.on ? 'animate-pulse-dot' : ''}"
         aria-hidden="true"></span>
-      {liveStore.on ? 'Stop Live' : 'Live Mode'}
+      <span>{liveStore.on ? 'Stop Live' : 'Live Mode'}</span>
     </button>
 
     <button
