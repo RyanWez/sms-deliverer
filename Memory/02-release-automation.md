@@ -87,6 +87,45 @@ gh release create v1.0.1 --target main --title "v1.0.1" --notes-file notes.md
 - Old GitHub Releases = immutable snapshots — workflow/policy ပြောင်းလဲမှုက future releases
   ပေါ်မှာပဲ apply ဖြစ် (v1.0.1 assets untouched)။
 
+## 🚀 Developer Step-by-Step Release Cheatsheet (အနာဂတ် Release လမ်းညွှန်ချက်)
+
+ကုဒ်များ အသစ်ရေးသား/ပြင်ဆင်ပြီးတိုင်း App Version အသစ် ထုတ်ရန်အတွက် အောက်ပါ အဆင့် ၃ ဆင့်ကို လုပ်ဆောင်ရုံသာ ဖြစ်သည်-
+
+### ၁။ Commit & Push ပြုလုပ်ခြင်း
+Conventional Commit ပုံစံဖြင့် commit ရေးသားပြီး `main` သို့ push တင်ပါ-
+```bash
+git add .
+git commit -m "feat: သင်ထည့်သွင်းလိုက်သည့် feature အမည်"   # Minor version bump (ဥပမာ 1.1.0 -> 1.2.0)
+# သို့မဟုတ်
+git commit -m "fix: သင်ပြင်ဆင်လိုက်သည့် bug အမည်"           # Patch version bump (ဥပမာ 1.1.0 -> 1.1.1)
+
+git push origin main
+```
+
+### ၂။ Release-Please PR ကို Merge ပြုလုပ်ခြင်း
+Push တင်လိုက်သည်နှင့် GitHub ပေါ်ရှိ `release-please` bot က Version bump, Changelog generation ပြုလုပ်ပြီး `chore(main): release X.Y.Z` PR ကို ဖွင့်ပေးပါမည်။
+
+Terminal မှဖြစ်စေ၊ GitHub Web UI မှဖြစ်စေ Merge လုပ်ပါ-
+```bash
+gh pr merge --merge
+```
+
+### ၃။ Build အခြေအနေ စစ်ဆေးခြင်း & Local Sync ပြုလုပ်ခြင်း
+PR Merge ပြီးသည်နှင့် `publish` workflow က Windows (`.exe`, `.msi`) နှင့် Linux (`.AppImage`, `.deb`, `.rpm`) installers များကို build လုပ်ပြီး GitHub Release ပေါ်သို့ auto-upload တင်ပေးပါမည်။
+
+```bash
+# Build progress ကြည့်ရန်
+gh run list --limit 3
+
+# Release assets ထွက်ရှိမှု ကြည့်ရန်
+gh release view
+
+# Tag အသစ်နှင့် Changelog ကို local စက်ထဲသို့ sync လုပ်ယူရန်
+git pull origin main --tags
+```
+
+---
+
 ## Operational Commands
 
 ```bash
