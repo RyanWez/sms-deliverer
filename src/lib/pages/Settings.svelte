@@ -221,6 +221,7 @@
   ];
 
   let selectedId = $state<string>("general");
+  let updateChecking = $state(false);
 
   const selectedGroup = $derived(
     settingsGroups.find((g) => g.id === selectedId) ?? settingsGroups[0]
@@ -240,6 +241,8 @@
         alert("Updater is only available when running in the Tauri desktop application.");
         return;
       }
+      if (updateChecking) return;
+      updateChecking = true;
       try {
         const { check } = await import("@tauri-apps/plugin-updater");
         const update = await check();
@@ -259,6 +262,8 @@
         }
       } catch (error) {
         alert("Failed to check for updates: " + error);
+      } finally {
+        updateChecking = false;
       }
     }
   }
@@ -444,10 +449,18 @@
                       </p>
                     </div>
                     <button
-                      class="btn-primary shrink-0"
+                      class="btn-primary shrink-0 inline-flex items-center gap-2 disabled:opacity-60 disabled:pointer-events-none"
+                      disabled={field.action === "checkUpdates" && updateChecking}
                       onclick={() => handleAction(field.action)}
                     >
-                      Check
+                      {#if field.action === "checkUpdates" && updateChecking}
+                        <span
+                          class="inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"
+                          aria-hidden="true"></span>
+                        Checking…
+                      {:else}
+                        Check
+                      {/if}
                     </button>
                   {:else if field.type === "checkbox" || field.type === "select" || field.type === "number" || field.type === "text"}
                     <label
