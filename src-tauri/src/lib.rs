@@ -9,9 +9,7 @@ pub fn run() {
     logging::init();
     log::info!("SIM Bank SMS Reader starting...");
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -40,6 +38,7 @@ pub fn run() {
             commands::get_log_file_path,
             commands::open_log_folder,
             commands::purge_expired_messages,
+            commands::cleanup_sim_storage,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

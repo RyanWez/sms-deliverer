@@ -1,19 +1,25 @@
 use crate::core::at::AtChannel;
 use crate::core::decoder;
-use crate::core::models::SmsMessage;
+use crate::core::models::{self, SmsMessage};
 use crate::core::reassemble::Reassembler;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub enum LiveEvent {
     Ready {
         port: String,
     },
+    Reconnecting {
+        port: String,
+        error: String,
+    },
     Batch {
         port: String,
         items: Vec<SmsMessage>,
+        is_new: bool,
     },
     Sms {
         port: String,
@@ -26,12 +32,28 @@ pub enum LiveEvent {
     },
 }
 
-pub fn run_live<F>(port_name: String, stop: Arc<AtomicBool>, on_event: F)
-where
+/// Backoff between reconnect attempts. Starts at 2 s and doubles, capped at
+/// 30 s — live mode is expected to ride out USB-hub resets and the kind of
+/// mass `serial read failed` storm the SIM bank hits under load, so we keep
+/// retrying for as long as the operator leaves Live on.
+const RECONNECT_MIN: Duration = Duration::from_secs(2);
+const RECONNECT_MAX: Duration = Duration::from_secs(30);
+
+/// How often a live worker deletes expired messages from its SIM. SIM storage
+/// holds only ~20–50 messages; once full the modem silently rejects new SMS,
+/// so an always-on live session has to prune as it goes.
+const SIM_SWEEP_EVERY: Duration = Duration::from_secs(600);
+
+pub fn run_live<F>(
+    port_name: String,
+    stop: Arc<AtomicBool>,
+    retention: Option<Duration>,
+    on_event: F,
+) where
     F: Fn(LiveEvent) + Send + 'static,
 {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        run_live_inner(&port_name, &stop, &on_event);
+        run_live_inner(&port_name, &stop, retention, &on_event);
     }));
     if result.is_err() {
         log::error!("Live worker crashed: {}", port_name);
@@ -42,121 +64,315 @@ where
     }
 }
 
-fn run_live_inner<F>(port_name: &str, stop: &Arc<AtomicBool>, on_event: &F)
-where
+fn run_live_inner<F>(
+    port_name: &str,
+    stop: &Arc<AtomicBool>,
+    retention: Option<Duration>,
+    on_event: &F,
+) where
     F: Fn(LiveEvent) + Send + 'static,
 {
-    let mut ch = match AtChannel::open(port_name) {
-        Ok(ch) => ch,
-        Err(e) => {
-            log::warn!("Live open {} failed: {}", port_name, e);
-            on_event(LiveEvent::Closed {
-                port: port_name.to_string(),
-                error: Some(e),
-            });
-            return;
-        }
-    };
-
-    // PDU mode lets us read the UDH of concatenated (long) SMS so fragments
-    // can be joined into one complete message instead of truncated pieces.
-    let pdu_ok = ch.send("ATE0;+CMGF=0", 4000).contains("OK");
-    ch.send("AT+CNMI=2,1,0,0,0", 3000);
-    let stale = ch.take_notifications();
-    if !stale.is_empty() {
-        log::debug!(
-            "{}: dropped {} stale notification(s)",
-            port_name,
-            stale.len()
-        );
-    }
-
     let mut asm = Reassembler::new();
+    // Fingerprints of every message already surfaced for this port. After a
+    // reconnect we re-read the whole SIM via AT+CMGL — without dedup, messages
+    // that never left the SIM would be emitted again (with fresh ids) and show
+    // up as duplicates. The fingerprint keys on sender + SCTS + full text, so
+    // genuinely new messages are never suppressed.
+    let mut seen: HashSet<u64> = HashSet::new();
+    let mut ever_connected = false;
+    let mut backoff = RECONNECT_MIN;
+    let mut was_down = false;
+    // Set on every (re)connect, just before the monitoring loop reads it.
+    let mut last_sweep;
 
-    // Initial batch of everything stored on the SIM.
-    let initial: Vec<SmsMessage> = if pdu_ok {
-        let r = ch.send("AT+CMGL=4", 15000);
-        collect_parts(&r, port_name, &mut asm)
-    } else {
-        // Text-mode fallback: no UDH available; fragments appear as-is.
-        let r = ch.send("AT+CMGL=\"ALL\"", 15000);
-        if r.contains("+CMGL:") {
-            decoder::parse_text_mode_list(&r, port_name)
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
+
+        let mut ch = match AtChannel::open(port_name) {
+            Ok(ch) => ch,
+            Err(e) => {
+                // Port vanished (USB reset, unplug, permissions). Surface the
+                // transition once so the UI can show "Reconnecting", then back
+                // off silently — no point flooding the log with one warn per
+                // port per retry across a 64-stick bank.
+                if !was_down {
+                    was_down = true;
+                    on_event(LiveEvent::Reconnecting {
+                        port: port_name.to_string(),
+                        error: e,
+                    });
+                }
+                if !sleep_stop_aware(stop, backoff) {
+                    break;
+                }
+                backoff = (backoff * 2).min(RECONNECT_MAX);
+                continue;
+            }
+        };
+
+        // Reconnected: reset backoff. (`was_down` intentionally stays set —
+        // nothing reads it false until the next open failure re-arms it.)
+        backoff = RECONNECT_MIN;
+        if was_down {
+            log::info!("{}: port reopened after outage", port_name);
+        }
+
+        // PDU mode lets us read the UDH of concatenated (long) SMS so fragments
+        // can be joined into one complete message instead of truncated pieces.
+        let pdu_ok = ch.send("ATE0;+CMGF=0", 4000).contains("OK");
+        ch.send("AT+CNMI=2,1,0,0,0", 3000);
+        let stale = ch.take_notifications();
+        if !stale.is_empty() {
+            log::debug!(
+                "{}: dropped {} stale notification(s)",
+                port_name,
+                stale.len()
+            );
+        }
+
+        // Re-read everything on the SIM. On the first connect this is the
+        // initial backfill; after an outage it catches the messages that landed
+        // while nobody was listening (the exact gap that used to silently drop
+        // traffic until the user manually stopped + scanned).
+        let mut initial: Vec<SmsMessage> = if pdu_ok {
+            let r = ch.send("AT+CMGL=4", 15000);
+            collect_parts(&r, port_name, &mut asm)
         } else {
-            Vec::new()
-        }
-    };
-    if !initial.is_empty() {
-        log::info!(
-            "{}: live initial batch {} msg(s) (pdu={})",
-            port_name,
-            initial.len(),
-            pdu_ok
-        );
-        on_event(LiveEvent::Batch {
-            port: port_name.to_string(),
-            items: initial,
-        });
-    }
-    if ch.is_dead() {
-        log::warn!("{}: port lost during startup", port_name);
-        on_event(LiveEvent::Closed {
-            port: port_name.to_string(),
-            error: Some("Port lost".into()),
-        });
-        return;
-    }
-
-    on_event(LiveEvent::Ready {
-        port: port_name.to_string(),
-    });
-
-    let mut queue: VecDeque<i32> = VecDeque::new();
-    while !stop.load(Ordering::Relaxed) {
-        if let Some(idx) = queue.pop_front() {
-            for more in handle_cmgr(&mut ch, idx, port_name, pdu_ok, &mut asm, on_event) {
-                queue.push_back(more);
+            // Text-mode fallback: no UDH available; fragments appear as-is.
+            let r = ch.send("AT+CMGL=\"ALL\"", 15000);
+            if r.contains("+CMGL:") {
+                decoder::parse_text_mode_list(&r, port_name)
+            } else {
+                Vec::new()
             }
-        } else if let Some(note) = ch.wait_notification(500) {
-            if let Some(idx) = decoder::parse_cmti_index(note.trim()) {
-                log::debug!("{}: +CMTI idx {}", port_name, idx);
-                queue.push_back(idx);
+        };
+        // Groups still missing parts are surfaced immediately as partials —
+        // nothing already stored on the SIM is ever hidden while we wait for
+        // the missing parts. The command layer matches later completions (same
+        // sender + receive time) against these partial rows and swaps the text
+        // in place, so the user first sees the fragment, then the full message.
+        initial.extend(asm.peek_partials());
+
+        // Retention applies to SIM storage, not just the inbox list. This
+        // worker holds the port exclusively open, so it is the only thing that
+        // *can* prune the SIM while live mode runs — and an unpruned SIM fills
+        // up and starts silently rejecting new SMS.
+        if let Some(cutoff) = retention.map(models::retention_cutoff_ms) {
+            let doomed = models::expired_indices(&initial, cutoff);
+            if !doomed.is_empty() {
+                let n = delete_indices(&mut ch, &doomed);
+                log::info!("{}: SIM cleanup deleted {} expired message(s)", port_name, n);
+            }
+            initial.retain(|m| !models::is_expired(m, cutoff));
+        }
+        last_sweep = Instant::now();
+
+        let fresh = dedup(&mut seen, initial);
+        if !fresh.is_empty() {
+            log::info!(
+                "{}: {} batch {} msg(s) (pdu={})",
+                port_name,
+                if ever_connected { "reconnect" } else { "initial" },
+                fresh.len(),
+                pdu_ok
+            );
+            if ever_connected {
+                // Arrived while we were blind → flag as new so the inbox
+                // highlights them and OTPs toast.
+                for m in fresh {
+                    on_event(LiveEvent::Sms {
+                        port: port_name.to_string(),
+                        message: m,
+                        is_new: true,
+                    });
+                }
+            } else {
+                on_event(LiveEvent::Batch {
+                    port: port_name.to_string(),
+                    items: fresh,
+                    is_new: false,
+                });
             }
         }
-
-        // Release incomplete concat groups after a grace period.
-        for msg in asm.flush_stale(crate::core::reassemble::STALE_AFTER) {
-            log::info!("{}: flushed incomplete concat SMS", port_name);
-            on_event(LiveEvent::Sms {
-                port: port_name.to_string(),
-                message: msg,
-                is_new: true,
-            });
-        }
+        ever_connected = true;
 
         if ch.is_dead() {
-            log::warn!("{}: port lost", port_name);
+            log::warn!("{}: port lost during startup", port_name);
+            on_event(LiveEvent::Reconnecting {
+                port: port_name.to_string(),
+                error: ch
+                    .death_reason()
+                    .map(|r| format!("Port lost: {r}"))
+                    .unwrap_or_else(|| "Port lost".into()),
+            });
+            was_down = true;
+            if !sleep_stop_aware(stop, backoff) {
+                break;
+            }
+            backoff = (backoff * 2).min(RECONNECT_MAX);
+            continue;
+        }
+
+        on_event(LiveEvent::Ready {
+            port: port_name.to_string(),
+        });
+
+        let mut queue: VecDeque<i32> = VecDeque::new();
+        let mut died = false;
+        while !stop.load(Ordering::Relaxed) {
+            if let Some(idx) = queue.pop_front() {
+                for more in handle_cmgr(&mut ch, idx, port_name, pdu_ok, &mut asm, &mut seen, on_event) {
+                    queue.push_back(more);
+                }
+            } else if let Some(note) = ch.wait_notification(500) {
+                if let Some(idx) = decoder::parse_cmti_index(note.trim()) {
+                    log::debug!("{}: +CMTI idx {}", port_name, idx);
+                    queue.push_back(idx);
+                }
+            }
+
+            // Release incomplete concat groups after a grace period — the
+            // partial was already shown via peek_partials, and a completion
+            // arriving later still swaps it because matching happens on
+            // sender + receive time, not on text equality.
+            for msg in asm.flush_stale(crate::core::reassemble::STALE_AFTER) {
+                if seen.insert(fingerprint(&msg)) {
+                    on_event(LiveEvent::Sms {
+                        port: port_name.to_string(),
+                        message: msg,
+                        is_new: true,
+                    });
+                }
+            }
+
+            if ch.is_dead() {
+                died = true;
+                break;
+            }
+
+            // Periodic SIM pruning so a long-running live session can't fill
+            // the SIM. Cheap: one CMGL every SIM_SWEEP_EVERY, and the delete
+            // only runs when something actually aged out.
+            if let Some(cutoff) = retention.map(models::retention_cutoff_ms) {
+                if last_sweep.elapsed() >= SIM_SWEEP_EVERY {
+                    last_sweep = Instant::now();
+                    let n = sweep_expired(&mut ch, port_name, pdu_ok, cutoff);
+                    if n > 0 {
+                        log::info!("{}: SIM cleanup deleted {} expired message(s)", port_name, n);
+                    }
+                }
+            }
+        }
+
+        // Cleanup path: stop requested → reset the modem and tell the UI we are
+        // gone for good (no reconnect). The Closed(None) handler is a no-op on
+        // the frontend side (stop_live already reset the UI), but emitting it
+        // keeps the join supervisor from waiting forever.
+        ch.send("AT+CNMI=1,0,0,1,0", 1500);
+        ch.send("AT+CSCS=\"GSM\"", 1000);
+        if pdu_ok {
+            ch.send("AT+CMGF=1", 1500);
+        }
+
+        if !died {
+            // Clean stop — exit entirely.
             on_event(LiveEvent::Closed {
                 port: port_name.to_string(),
-                error: Some("Port lost".into()),
+                error: None,
             });
             return;
         }
+
+        // Port died mid-monitoring → reconnect cycle. Surface the OS error so
+        // the operator can tell a real device loss from a transient timeout.
+        let reason = ch
+            .death_reason()
+            .map(|r| format!("Port lost: {r}"))
+            .unwrap_or_else(|| "Port lost".into());
+        on_event(LiveEvent::Reconnecting {
+            port: port_name.to_string(),
+            error: reason,
+        });
+        was_down = true;
+        if !sleep_stop_aware(stop, backoff) {
+            on_event(LiveEvent::Closed {
+                port: port_name.to_string(),
+                error: None,
+            });
+            return;
+        }
+        backoff = (backoff * 2).min(RECONNECT_MAX);
     }
 
-    ch.send("AT+CNMI=1,0,0,1,0", 1500);
-    ch.send("AT+CSCS=\"GSM\"", 1000);
-    if pdu_ok {
-        ch.send("AT+CMGF=1", 1500);
-    }
+    // Loop fell through because stop was requested during a backoff sleep.
     on_event(LiveEvent::Closed {
         port: port_name.to_string(),
         error: None,
     });
 }
 
+/// Delete SIM slots over an already-open channel. Highest index first so a
+/// modem that renumbers on delete can't shift slots we have not visited yet.
+fn delete_indices(ch: &mut AtChannel, indices: &[i32]) -> usize {
+    let mut deleted = 0usize;
+    for idx in indices.iter().rev() {
+        if ch.is_dead() {
+            break;
+        }
+        if ch.send(&format!("AT+CMGD={idx}"), 3000).contains("OK") {
+            deleted += 1;
+        }
+    }
+    deleted
+}
+
+/// Re-read the SIM and delete everything past retention. Used on the live
+/// worker's own channel, where reopening the port is not an option.
+fn sweep_expired(ch: &mut AtChannel, port_name: &str, pdu_mode: bool, cutoff: i64) -> usize {
+    let resp = if pdu_mode {
+        ch.send("AT+CMGL=4", 15000)
+    } else {
+        ch.send("AT+CMGL=\"ALL\"", 15000)
+    };
+    if !resp.contains("+CMGL:") {
+        return 0;
+    }
+    // Per-fragment rows here: PDU list entries carry their own SIM index, so
+    // expired fragments are removed individually without reassembly.
+    let msgs: Vec<SmsMessage> = if pdu_mode {
+        decoder::parse_pdu_list(&resp, port_name)
+            .into_iter()
+            .map(|d| d.message)
+            .collect()
+    } else {
+        decoder::parse_text_mode_list(&resp, port_name)
+    };
+    let doomed = models::expired_indices(&msgs, cutoff);
+    if doomed.is_empty() {
+        return 0;
+    }
+    delete_indices(ch, &doomed)
+}
+
+/// Sleep in small slices so a stop request wakes us immediately instead of
+/// blocking up to `total` before the operator's "Stop Live" is honoured.
+fn sleep_stop_aware(stop: &AtomicBool, total: Duration) -> bool {
+    let deadline = Instant::now() + total;
+    while Instant::now() < deadline {
+        if stop.load(Ordering::Relaxed) {
+            return false;
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        std::thread::sleep(remaining.min(Duration::from_millis(200)));
+    }
+    !stop.load(Ordering::Relaxed)
+}
+
 /// Parse a CMGL response and feed every fragment through the reassembler,
-/// returning assembled standalone messages (plus best-effort leftovers).
+/// returning assembled standalone messages. Incomplete groups are left pending
+/// in the reassembler so later parts can complete them — never force-flushed.
 fn collect_parts(resp: &str, port_name: &str, asm: &mut Reassembler) -> Vec<SmsMessage> {
     let parts = decoder::parse_pdu_list(resp, port_name);
     let mut msgs: Vec<SmsMessage> = Vec::new();
@@ -170,7 +386,6 @@ fn collect_parts(resp: &str, port_name: &str, asm: &mut Reassembler) -> Vec<SmsM
             None => msgs.push(d.message),
         }
     }
-    msgs.extend(asm.flush_stale(Duration::ZERO));
     msgs
 }
 
@@ -180,6 +395,7 @@ fn handle_cmgr<F>(
     port_name: &str,
     pdu_mode: bool,
     asm: &mut Reassembler,
+    seen: &mut HashSet<u64>,
     on_event: &F,
 ) -> Vec<i32>
 where
@@ -220,11 +436,13 @@ where
     };
 
     if let Some(message) = completed {
-        on_event(LiveEvent::Sms {
-            port: port_name.to_string(),
-            message,
-            is_new: true,
-        });
+        if seen.insert(fingerprint(&message)) {
+            on_event(LiveEvent::Sms {
+                port: port_name.to_string(),
+                message,
+                is_new: true,
+            });
+        }
     }
 
     let mut more = Vec::new();
@@ -234,4 +452,93 @@ where
         }
     }
     more
+}
+
+/// Drop messages whose fingerprint is already in `seen`, recording the rest.
+fn dedup(seen: &mut HashSet<u64>, messages: Vec<SmsMessage>) -> Vec<SmsMessage> {
+    messages
+        .into_iter()
+        .filter(|m| seen.insert(fingerprint(m)))
+        .collect()
+}
+
+/// Stable per-message signature so a reconnect re-read of the SIM can't
+/// re-emit something already shown. Sender + SCTS (millis) + full text: two
+/// distinct messages colliding here would need identical sender, identical
+/// receive second, and identical body — astronomically unlikely in practice.
+/// Note: a partial concat message that later grows gets a NEW fingerprint
+/// (text changed), which is exactly what lets the completion through dedup so
+/// the command layer can swap the partial row for the full text.
+fn fingerprint(m: &SmsMessage) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    m.from.hash(&mut h);
+    m.received.timestamp_millis().hash(&mut h);
+    m.text.hash(&mut h);
+    h.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::at::Transport;
+    use std::io;
+    use std::sync::Mutex;
+
+    /// Replies "OK" to everything and records the commands it was sent.
+    struct OkTransport {
+        pending: Vec<u8>,
+        sent: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Transport for OkTransport {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.pending.is_empty() {
+                return Err(io::ErrorKind::TimedOut.into());
+            }
+            let n = self.pending.len().min(buf.len());
+            buf[..n].copy_from_slice(&self.pending[..n]);
+            self.pending.drain(..n);
+            Ok(n)
+        }
+
+        fn write_all(&mut self, data: &[u8]) -> io::Result<()> {
+            let cmd = String::from_utf8_lossy(data).trim().to_string();
+            self.sent.lock().unwrap().push(cmd);
+            self.pending.extend_from_slice(b"\r\nOK\r\n");
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn delete_indices_removes_high_slots_first_and_counts_them() {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let mut ch = AtChannel::with_transport(
+            "ttyUSB0",
+            Box::new(OkTransport {
+                pending: Vec::new(),
+                sent: Arc::clone(&sent),
+            }),
+        );
+        assert_eq!(delete_indices(&mut ch, &[1, 4, 7]), 3);
+        assert_eq!(
+            *sent.lock().unwrap(),
+            vec!["AT+CMGD=7", "AT+CMGD=4", "AT+CMGD=1"]
+        );
+    }
+
+    #[test]
+    fn sweep_is_a_noop_when_the_sim_reports_no_messages() {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let mut ch = AtChannel::with_transport(
+            "ttyUSB0",
+            Box::new(OkTransport {
+                pending: Vec::new(),
+                sent: Arc::clone(&sent),
+            }),
+        );
+        let cutoff = models::retention_cutoff_ms(Duration::from_secs(3600));
+        assert_eq!(sweep_expired(&mut ch, "ttyUSB0", true, cutoff), 0);
+        // Only the list command — nothing was deleted.
+        assert_eq!(*sent.lock().unwrap(), vec!["AT+CMGL=4"]);
+    }
 }

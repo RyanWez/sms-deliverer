@@ -9,6 +9,23 @@
   const busy = $derived(
     liveStore.on || messagesStore.deleteBusy || liveStore.scanBusy || liveStore.ussdBusy
   );
+  // Truthful live state: all ready → green, some lost/reconnecting → amber,
+  // off → muted. Previously the badge stayed green ("Live 64/64") even after
+  // every port had silently died, which is exactly what masked the outage.
+  const liveBadgeClass = $derived(
+    !liveStore.on
+      ? 'badge-muted'
+      : liveStore.readyPorts.length >= liveStore.totalPorts
+        ? 'badge-success'
+        : 'badge-warning'
+  );
+  const liveBadgeLabel = $derived(
+    !liveStore.on
+      ? 'Live off'
+      : liveStore.readyPorts.length >= liveStore.totalPorts
+        ? `Live ${liveStore.readyPorts.length}/${liveStore.totalPorts}`
+        : `Live ${liveStore.readyPorts.length}/${liveStore.totalPorts} · reconnecting`
+  );
   let exportOpen = $state(false);
 </script>
 
@@ -19,13 +36,13 @@
       {messagesStore.items.length} message{messagesStore.items.length !== 1 ? 's' : ''}
     </span>
     <span
-      class="badge {liveStore.on ? 'badge-success' : 'badge-muted'} shrink-0 min-w-[96px] justify-center font-mono tabular-nums"
-      title={liveStore.on ? 'Live monitoring active' : 'Live monitoring off'}
+      class="badge {liveBadgeClass} shrink-0 min-w-[96px] justify-center font-mono tabular-nums"
+      title={liveBadgeLabel}
     >
       <span
-        class="w-1.5 h-1.5 rounded-full shrink-0 aspect-square {liveStore.on ? 'bg-success animate-pulse-dot' : 'bg-muted-foreground/50'}"
+        class="w-1.5 h-1.5 rounded-full shrink-0 aspect-square {liveStore.on ? 'bg-current animate-pulse-dot' : 'bg-muted-foreground/50'}"
         aria-hidden="true"></span>
-      <span>{liveStore.on ? `Live ${liveStore.readyPorts.length}/${liveStore.totalPorts}` : 'Live off'}</span>
+      <span>{liveBadgeLabel}</span>
     </span>
   </div>
 

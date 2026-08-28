@@ -24,11 +24,29 @@ function deepMerge<T extends Record<string, any>>(target: T, source: Partial<T>)
   return result;
 }
 
+/**
+ * Fold legacy shapes into the current one.
+ *
+ * Retention used to be two settings — an `autoDeleteExpired` toggle plus a
+ * `retentionHours` value — which could disagree (off + 2h) and left the backend
+ * with no single number to prune SIM storage by. They are now one value where
+ * `0` means "keep everything", so an existing profile that had auto-delete
+ * switched off has to migrate to 0 instead of silently turning cleanup on.
+ */
+function migrate(parsed: any): any {
+  if (parsed?.general && 'autoDeleteExpired' in parsed.general) {
+    const { autoDeleteExpired, ...general } = parsed.general;
+    if (autoDeleteExpired === false) general.retentionHours = 0;
+    return { ...parsed, general };
+  }
+  return parsed;
+}
+
 function loadSettings(): SettingsState {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
-      const parsed = JSON.parse(stored);
+      const parsed = migrate(JSON.parse(stored));
       return deepMerge(DEFAULT_SETTINGS, parsed);
     }
   } catch {

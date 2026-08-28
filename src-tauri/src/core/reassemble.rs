@@ -15,12 +15,14 @@ use std::time::{Duration, Instant};
 /// How long an incomplete group is kept waiting for missing parts.
 pub const STALE_AFTER: Duration = Duration::from_secs(90);
 
+#[derive(Clone)]
 struct Part {
     seq: u8,
     index: i32,
     text: String,
 }
 
+#[derive(Clone)]
 struct Group {
     port: String,
     total: u8,
@@ -31,9 +33,20 @@ struct Group {
     last_seen: Instant,
 }
 
+/// Identity of a multipart group. Keying on `(from, ref_num, total)` instead of
+/// the reference number alone keeps two different senders that happen to reuse
+/// the same 8/16-bit reference — or a sender reusing a stale ref for a *new*
+/// message of a different size — from silently merging into one corrupt group.
+#[derive(Clone, Hash, PartialEq, Eq)]
+struct GroupKey {
+    from: String,
+    ref_num: u16,
+    total: u8,
+}
+
 #[derive(Default)]
 pub struct Reassembler {
-    groups: HashMap<u16, Group>,
+    groups: HashMap<GroupKey, Group>,
 }
 
 impl Reassembler {
@@ -49,7 +62,12 @@ impl Reassembler {
             return Some(msg.clone());
         }
 
-        let g = self.groups.entry(c.ref_num).or_insert_with(|| Group {
+        let key = GroupKey {
+            from: msg.from.clone(),
+            ref_num: c.ref_num,
+            total: c.total,
+        };
+        let g = self.groups.entry(key.clone()).or_insert_with(|| Group {
             port: msg.port.clone(),
             total: c.total,
             from: msg.from.clone(),
@@ -59,7 +77,7 @@ impl Reassembler {
             last_seen: Instant::now(),
         });
         g.last_seen = Instant::now();
-        if c.seq == 1 && !msg.received.to_rfc3339().starts_with("1970") {
+        if c.seq == 1 && msg.received.timestamp_millis() > 0 {
             g.received = msg.received;
             g.status = msg.status.clone();
         }
@@ -76,7 +94,7 @@ impl Reassembler {
         }
 
         if g.parts.len() >= g.total as usize {
-            let g = self.groups.remove(&c.ref_num)?;
+            let g = self.groups.remove(&key)?;
             return Some(finish(g));
         }
         None
@@ -86,11 +104,11 @@ impl Reassembler {
     /// older than `older_than`. A duration of ZERO flushes everything (used by
     /// one-shot scans).
     pub fn flush_stale(&mut self, older_than: Duration) -> Vec<SmsMessage> {
-        let stale: Vec<u16> = self
+        let stale: Vec<GroupKey> = self
             .groups
             .iter()
             .filter(|(_, g)| g.last_seen.elapsed() >= older_than)
-            .map(|(k, _)| *k)
+            .map(|(k, _)| k.clone())
             .collect();
         stale
             .into_iter()
@@ -109,6 +127,33 @@ impl Reassembler {
     pub fn pending_groups(&self) -> usize {
         self.groups.len()
     }
+
+    /// Best-effort copy of one group's currently collected parts, joined in
+    /// sequence order — without removing the group. Used to surface a partial
+    /// message immediately (so nothing on the SIM ever feels hidden) while the
+    /// reassembler keeps waiting for the remaining parts; when they arrive, the
+    /// complete message replaces the partial one.
+    pub fn peek_partials(&self) -> Vec<SmsMessage> {
+        let mut out: Vec<SmsMessage> = Vec::new();
+        for g in self.groups.values() {
+            let mut parts = g.parts.clone();
+            parts.sort_by_key(|p| p.seq);
+            let text: String = parts.iter().map(|p| p.text.as_str()).collect();
+            let mut indices: Vec<i32> = parts.iter().map(|p| p.index).collect();
+            indices.sort_unstable();
+            indices.dedup();
+            out.push(SmsMessage {
+                port: g.port.clone(),
+                index: indices.first().copied().unwrap_or(0),
+                from: g.from.clone(),
+                received: g.received,
+                status: g.status.clone(),
+                text,
+                part_indices: indices,
+            });
+        }
+        out
+    }
 }
 
 fn finish(g: Group) -> SmsMessage {
@@ -120,15 +165,8 @@ fn finish(g: Group) -> SmsMessage {
     indices.dedup();
 
     let text: String = parts.iter().map(|p| p.text.as_str()).collect();
-    let received_min = parts.iter().map(|_| ()).next(); // silence unused lint helper
-    let _ = received_min;
 
     let index = indices.first().copied().unwrap_or(0);
-    log::info!(
-        "concatenated SMS assembled: {} part(s), {} chars",
-        parts.len(),
-        text.chars().count()
-    );
 
     SmsMessage {
         port: g.port,
@@ -212,6 +250,54 @@ mod tests {
         assert!(r.push(&frag(1, "x"), concat(12, 2, 1)).is_none());
         let out = r.flush_stale(Duration::from_secs(60));
         assert!(out.is_empty());
+        assert_eq!(r.pending_groups(), 1);
+    }
+
+    #[test]
+    fn peek_partials_returns_pending_without_removing() {
+        let mut r = Reassembler::new();
+        assert!(r.push(&frag(1, "hello "), concat(30, 3, 1)).is_none());
+        let partials = r.peek_partials();
+        assert_eq!(partials.len(), 1);
+        assert_eq!(partials[0].text, "hello ");
+        // Group is still pending and can still complete afterwards.
+        assert_eq!(r.pending_groups(), 1);
+        assert!(r.push(&frag(2, "wor"), concat(30, 3, 2)).is_none());
+        let done = r.push(&frag(3, "ld"), concat(30, 3, 3)).unwrap();
+        assert_eq!(done.text, "hello world");
+        assert_eq!(r.pending_groups(), 0);
+        assert!(r.peek_partials().is_empty());
+    }
+
+    fn frag_from(index: i32, from: &str, text: &str) -> SmsMessage {
+        SmsMessage {
+            from: from.into(),
+            ..frag(index, text)
+        }
+    }
+
+    #[test]
+    fn same_ref_different_senders_stay_separate() {
+        let mut r = Reassembler::new();
+        // Two senders that both used ref 42 for a 2-part message.
+        assert!(r.push(&frag_from(1, "MYTEL", "A1"), concat(42, 2, 1)).is_none());
+        assert!(r.push(&frag_from(2, "KBZPay", "B1"), concat(42, 2, 1)).is_none());
+        let done_a = r.push(&frag_from(3, "MYTEL", "A2"), concat(42, 2, 2)).unwrap();
+        let done_b = r.push(&frag_from(4, "KBZPay", "B2"), concat(42, 2, 2)).unwrap();
+        assert_eq!(done_a.text, "A1A2");
+        assert_eq!(done_b.text, "B1B2");
+        assert_eq!(r.pending_groups(), 0);
+    }
+
+    #[test]
+    fn ref_reuse_with_different_total_stays_separate() {
+        let mut r = Reassembler::new();
+        // Sender reuses ref 7: an old 4-part group and a fresh 2-part message.
+        assert!(r.push(&frag_from(1, "MYTEL", "old1"), concat(7, 4, 1)).is_none());
+        assert!(r.push(&frag_from(2, "MYTEL", "new1"), concat(7, 2, 1)).is_none());
+        let done = r.push(&frag_from(3, "MYTEL", "new2"), concat(7, 2, 2)).unwrap();
+        assert_eq!(done.text, "new1new2");
+        // The stale 4-part group is still pending, untouched by the new message.
         assert_eq!(r.pending_groups(), 1);
     }
 }

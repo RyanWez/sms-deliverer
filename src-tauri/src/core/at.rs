@@ -61,6 +61,10 @@ pub struct AtChannel {
     notifications: VecDeque<String>,
     done: bool,
     dead: bool,
+    /// OS-level I/O error text that killed the channel, if any. Surfaced to the
+    /// UI so the operator can tell a real device loss (ENODEV/EIO) from a
+    /// transient timeout instead of staring at a bare "Port lost".
+    dead_reason: Option<String>,
 }
 
 impl AtChannel {
@@ -74,6 +78,7 @@ impl AtChannel {
             notifications: VecDeque::new(),
             done: false,
             dead: false,
+            dead_reason: None,
         })
     }
 
@@ -87,11 +92,18 @@ impl AtChannel {
             notifications: VecDeque::new(),
             done: false,
             dead: false,
+            dead_reason: None,
         }
     }
 
     pub fn is_dead(&self) -> bool {
         self.dead
+    }
+
+    /// Why the channel died, if it did (raw OS error text). `None` while alive
+    /// or after a clean shutdown path that never hit a hard I/O failure.
+    pub fn death_reason(&self) -> Option<&str> {
+        self.dead_reason.as_deref()
     }
 
     /// Sends a command and returns the accumulated response text.
@@ -147,9 +159,10 @@ impl AtChannel {
             Err(e)
                 if e.kind() == io::ErrorKind::TimedOut || e.kind() == io::ErrorKind::WouldBlock => {
             }
-            Err(_) => {
+            Err(e) => {
                 self.dead = true;
-                log::warn!("{}: serial read failed", self.name);
+                self.dead_reason = Some(e.to_string());
+                log::warn!("{}: serial read failed: {}", self.name, e);
             }
         }
     }

@@ -1,5 +1,12 @@
+//! Wire types shared with the frontend, plus the retention policy applied to
+//! both the in-app inbox and SIM storage.
+//!
+//! View state (filters, toasts, pagination) lives entirely in the Svelte
+//! stores; the structs here are only what actually crosses the IPC boundary.
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SmsMessage {
@@ -36,105 +43,77 @@ pub struct PortInfo {
     pub live_error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ScanStatus {
-    pub busy: bool,
-    pub done: usize,
-    pub total: usize,
+/// Wall-clock cutoff (epoch millis) for a retention window: anything received
+/// before this point has outlived its keep period.
+pub fn retention_cutoff_ms(retention: Duration) -> i64 {
+    let secs = i64::try_from(retention.as_secs()).unwrap_or(i64::MAX);
+    (Utc::now() - chrono::Duration::seconds(secs)).timestamp_millis()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct LiveStatus {
-    pub on: bool,
-    pub ready: usize,
-    pub total: usize,
+/// A missing/zero SCTS means the modem gave us no timestamp. Never treat that
+/// as expired, or an undated message would be deleted the moment it is read.
+pub fn is_expired(m: &SmsMessage, cutoff_ms: i64) -> bool {
+    let t = m.received.timestamp_millis();
+    t > 0 && t < cutoff_ms
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct UssdStatus {
-    pub busy: bool,
-    pub done: usize,
-    pub total: usize,
-    pub found: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
-pub enum QuickFilter {
-    #[default]
-    All,
-    Otp,
-    Today,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
-pub enum ViewMode {
-    #[default]
-    Table,
-    Cards,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ToastKind {
-    Info,
-    Success,
-    Warning,
-    Danger,
-    Otp,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToastData {
-    pub id: u64,
-    pub kind: ToastKind,
-    pub title: String,
-    pub body: String,
-    pub otp: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct AppState {
-    pub ports: Vec<PortInfo>,
-    pub messages: Vec<SmsItem>,
-    pub selected: Vec<u64>,
-    pub query: String,
-    pub quick_filter: QuickFilter,
-    pub port_filter: Option<String>,
-    pub view_mode: ViewMode,
-    pub scan: ScanStatus,
-    pub live: LiveStatus,
-    pub ussd: UssdStatus,
-    pub delete_busy: bool,
-    pub live_ports_ready: Vec<String>,
-    pub live_failed: Vec<(String, String)>,
-    pub status_text: String,
-    pub failed_notes: Vec<String>,
-    pub toasts: Vec<ToastData>,
-    pub unread_total: usize,
-}
-
-impl SmsMessage {
-    pub fn empty() -> Self {
-        Self {
-            port: String::new(),
-            index: 0,
-            from: String::new(),
-            received: DateTime::UNIX_EPOCH,
-            status: String::new(),
-            text: String::new(),
-            part_indices: Vec::new(),
+/// Every SIM slot occupied by messages older than `cutoff_ms`, sorted and
+/// deduplicated. A concatenated message contributes all of its fragment slots,
+/// so nothing is left behind half-deleted.
+pub fn expired_indices(msgs: &[SmsMessage], cutoff_ms: i64) -> Vec<i32> {
+    let mut idxs: Vec<i32> = Vec::new();
+    for m in msgs.iter().filter(|m| is_expired(m, cutoff_ms)) {
+        if m.part_indices.len() > 1 {
+            idxs.extend(m.part_indices.iter().copied());
+        } else {
+            idxs.push(m.index);
         }
     }
+    idxs.sort_unstable();
+    idxs.dedup();
+    idxs
 }
 
-pub fn pretty_port(name: &str) -> String {
-    if let Ok(num) = name
-        .trim_start_matches("COM")
-        .trim_start_matches("ttyUSB")
-        .trim_start_matches("ttyACM")
-        .parse::<u32>()
-    {
-        format!("Port {num}")
-    } else {
-        name.to_string()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msg(index: i32, ago_secs: i64, parts: Vec<i32>) -> SmsMessage {
+        SmsMessage {
+            port: "ttyUSB0".into(),
+            index,
+            from: "MYTEL".into(),
+            received: Utc::now() - chrono::Duration::seconds(ago_secs),
+            status: "REC READ".into(),
+            text: "x".into(),
+            part_indices: parts,
+        }
+    }
+
+    #[test]
+    fn undated_messages_are_never_expired() {
+        let mut m = msg(1, 0, vec![]);
+        m.received = DateTime::UNIX_EPOCH;
+        assert!(!is_expired(&m, retention_cutoff_ms(Duration::from_secs(60))));
+    }
+
+    #[test]
+    fn only_messages_past_the_cutoff_are_collected() {
+        let cutoff = retention_cutoff_ms(Duration::from_secs(3600));
+        let msgs = vec![msg(1, 7200, vec![]), msg(2, 60, vec![])];
+        assert_eq!(expired_indices(&msgs, cutoff), vec![1]);
+    }
+
+    #[test]
+    fn concatenated_messages_contribute_every_fragment_slot() {
+        let cutoff = retention_cutoff_ms(Duration::from_secs(3600));
+        let msgs = vec![msg(3, 7200, vec![5, 3, 4]), msg(4, 7200, vec![4])];
+        assert_eq!(expired_indices(&msgs, cutoff), vec![3, 4, 5]);
+    }
+
+    #[test]
+    fn nothing_to_do_when_everything_is_fresh() {
+        let cutoff = retention_cutoff_ms(Duration::from_secs(3600));
+        assert!(expired_indices(&[msg(1, 10, vec![])], cutoff).is_empty());
     }
 }

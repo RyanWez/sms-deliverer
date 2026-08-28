@@ -120,6 +120,25 @@ export const api = {
 
       await listen<{ ports: PortInfo[] }>('ports:updated', (event) => {
         portsStore.set(event.payload.ports);
+        // Ports can drop (serial failures) or come back (reconnects) behind
+        // this snapshot — keep the "Live x/y" badge truthful by deriving the
+        // ready set from the port list itself instead of optimistic local state.
+        if (liveStore.on) {
+          liveStore.readyPorts = event.payload.ports
+            .filter((p) => p.live_ready)
+            .map((p) => p.name);
+        }
+      });
+
+      await listen<{ port: string; error: string }>('live:reconnecting', (event) => {
+        liveStore.readyPorts = portsStore.items.filter((p) => p.live_ready).map((p) => p.name);
+        console.warn(`[api] Port ${event.payload.port} lost, reconnecting: ${event.payload.error}`);
+      });
+
+      await listen('live:stopped', () => {
+        liveStore.on = false;
+        liveStore.totalPorts = 0;
+        liveStore.readyPorts = [];
       });
 
       await listen<{ text: string }>('status:update', (event) => {
@@ -132,13 +151,29 @@ export const api = {
           id: item.id,
           message: item.message ?? item,
           otp: item.otp ?? null,
-          is_new: true,
+          is_new: item.is_new ?? true,
         };
         if (!messagesStore.items.some(m => m.id === smsItem.id)) {
           messagesStore.items = [...messagesStore.items, smsItem];
         }
         if (smsItem.otp) {
           toast('Otp', 'New OTP', smsItem.message.text ?? '', smsItem.otp);
+        }
+      });
+
+      // A concatenated (long) message finished collecting all its parts — the
+      // backend swapped the partial row for the complete text under the same
+      // id, so we refresh that row in place instead of appending a duplicate.
+      await listen<{ item: SmsItem }>('messages:updated', (event) => {
+        const updated = event.payload.item;
+        const idx = messagesStore.items.findIndex((m) => m.id === updated.id);
+        if (idx >= 0) {
+          messagesStore.items = messagesStore.items.map((m, i) =>
+            i === idx ? updated : m
+          );
+          if (updated.otp) {
+            toast('Otp', 'OTP detected', updated.message.text ?? '', updated.otp);
+          }
         }
       });
 
@@ -228,7 +263,9 @@ export const api = {
       liveStore.on = true;
       liveStore.totalPorts = checked.length;
       liveStore.readyPorts = [];
-      await invoke('start_live');
+      // Live workers own their ports exclusively, so they do their own SIM
+      // pruning — they need the retention window up front.
+      await invoke('start_live', { retentionHours: settingsStore.general.retentionHours });
     } catch (e) {
       liveStore.on = false;
       liveStore.totalPorts = 0;
@@ -431,6 +468,24 @@ export const api = {
       }
     }
     return purgedInStore;
+  },
+
+  /**
+   * Prune expired messages out of SIM storage on the selected ports.
+   *
+   * Only meaningful while idle: a live worker holds its port open and prunes on
+   * its own channel, and scan/USSD/delete need exclusive access, so the backend
+   * answers "Busy" in those cases. That is expected for the background sweep,
+   * hence the silent return.
+   */
+  async cleanupSimStorage(retentionHours: number) {
+    if (!isTauri() || !retentionHours || retentionHours <= 0) return;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('cleanup_sim_storage', { retentionHours });
+    } catch (e) {
+      console.debug('[api] SIM cleanup skipped:', e);
+    }
   },
 };
 

@@ -107,10 +107,6 @@ pub fn open_port(name: &str) -> Result<Port, String> {
     }
 }
 
-pub fn probe_port(port_name: &str) -> Option<String> {
-    open_port(port_name).err()
-}
-
 pub fn read_port(port_name: &str) -> ReadResult {
     let mut ch = match at::AtChannel::open(port_name) {
         Ok(ch) => ch,
@@ -251,6 +247,18 @@ pub fn get_sim_number(port_name: &str) -> (Option<String>, Option<String>) {
     ch.send("ATE0", 3000);
     ch.send("AT+CSCS=\"GSM\"", 3000);
 
+    // Network pre-check: USSD fails opaquely (+CME ERROR: 100 or no reply)
+    // when the modem has no service, so ask the modem for its registration
+    // state and signal level first. Skipping hopeless probes also saves the
+    // 2×9 s timeout per port across a 64-stick bank.
+    let creg_stat = parse_creg_stat(&ch.send("AT+CREG?", 4000));
+    let rssi = parse_csq_rssi(&ch.send("AT+CSQ", 4000));
+    if let Some(problem) = network_problem(creg_stat, rssi) {
+        let _ = ch.send("AT+CSCS=\"GSM\"", 1000);
+        log::warn!("{}: USSD skipped — {}", port_name, problem);
+        return (None, Some(problem));
+    }
+
     let mut num = ussd_query(&mut ch, "*88#", 9000);
     if num.is_none() {
         num = ussd_query(&mut ch, "*124#", 9000);
@@ -267,8 +275,49 @@ pub fn get_sim_number(port_name: &str) -> (Option<String>, Option<String>) {
         }
         None => {
             log::warn!("{}: no SIM number returned", port_name);
-            (None, Some("No number returned".into()))
+            // Surface the modem's network state alongside the failure so the
+            // operator can tell "carrier not answering" from "no signal".
+            let detail = match (creg_stat, rssi) {
+                (Some(s), Some(r)) => format!(" (reg stat {}, signal {}/31)", s, r),
+                (Some(s), None) => format!(" (reg stat {})", s),
+                _ => String::new(),
+            };
+            (None, Some(format!("No number returned{}", detail)))
         }
+    }
+}
+
+/// Extract the registration status digit from `+CREG: <n>,<stat>[,...]`.
+/// 0 not-registered, 1 home, 2 searching, 3 denied, 4 unknown, 5 roaming.
+fn parse_creg_stat(resp: &str) -> Option<u32> {
+    let line = resp.lines().find(|l| l.starts_with("+CREG:"))?;
+    line.split(',').nth(1)?.trim().parse().ok()
+}
+
+/// Extract the RSSI from `+CSQ: <rssi>,<ber>` (0–31, 99 = unknown).
+fn parse_csq_rssi(resp: &str) -> Option<u32> {
+    let line = resp.lines().find(|l| l.starts_with("+CSQ:"))?;
+    line.trim_start_matches("+CSQ:")
+        .split(',')
+        .next()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// Map the modem's network state to a human-readable blocker, if any.
+/// Registered-and-covered modems return `None` and USSD is attempted.
+fn network_problem(creg: Option<u32>, rssi: Option<u32>) -> Option<String> {
+    match creg {
+        Some(0) => Some("No network — not registered, not searching".into()),
+        Some(2) => Some("No network — still searching for carrier".into()),
+        Some(3) => Some("No network — registration denied (check SIM/account)".into()),
+        Some(4) => Some("No network — registration state unknown".into()),
+        // 1 = home network, 5 = roaming → registered; check signal next.
+        _ => match rssi {
+            Some(0) => Some("No signal (CSQ 0) — check antenna/coverage".into()),
+            _ => None,
+        },
     }
 }
 
@@ -319,6 +368,11 @@ fn ussd_query(ch: &mut at::AtChannel, code: &str, timeout_ms: u64) -> Option<Str
     }
 }
 
+/// Delete every message on `port_name` received before `cutoff_ms`.
+///
+/// Used for SIM housekeeping while live mode is *off* — it opens the port
+/// itself, so it must never run against a port a live worker owns (live mode
+/// prunes on its own channel instead).
 pub fn expire_old(port_name: &str, cutoff_ms: i64) -> OpResult {
     let r = read_port(port_name);
     if !r.ok {
@@ -329,22 +383,7 @@ pub fn expire_old(port_name: &str, cutoff_ms: i64) -> OpResult {
             indices: vec![],
         };
     }
-    let old: Vec<i32> = {
-        let mut ids: Vec<i32> = Vec::new();
-        for m in r.messages.iter().filter(|m| {
-            let t = m.received.timestamp_millis();
-            t > 0 && t < cutoff_ms
-        }) {
-            if m.part_indices.len() > 1 {
-                ids.extend(m.part_indices.iter().copied());
-            } else {
-                ids.push(m.index);
-            }
-        }
-        ids.sort_unstable();
-        ids.dedup();
-        ids
-    };
+    let old = crate::core::models::expired_indices(&r.messages, cutoff_ms);
     if old.is_empty() {
         return OpResult {
             ok: true,

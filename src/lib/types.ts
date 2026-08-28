@@ -72,7 +72,11 @@ export interface SettingsState {
     minimizeToTray: boolean;
     confirmDelete: boolean;
     portRefreshInterval: number;
-    autoDeleteExpired: boolean;
+    /**
+     * How long a received SMS is kept, in hours. `0` disables automatic
+     * cleanup entirely — this single value drives both the in-app inbox and
+     * SIM-storage pruning, replacing the old separate on/off toggle.
+     */
     retentionHours: number;
   };
   notifications: {
@@ -113,7 +117,6 @@ export const DEFAULT_SETTINGS: SettingsState = {
     minimizeToTray: false,
     confirmDelete: true,
     portRefreshInterval: 30,
-    autoDeleteExpired: true,
     retentionHours: 2,
   },
   notifications: {

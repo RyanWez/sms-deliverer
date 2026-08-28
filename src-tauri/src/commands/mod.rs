@@ -1,13 +1,15 @@
 use crate::core::decoder;
 use crate::core::models::*;
-use crate::core::settings::Settings;
+use crate::core::sim_directory::SimDirectory;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
+use std::time::Duration;
 use tauri::Emitter;
 
 pub struct AppStateInner {
-    pub settings: Settings,
+    pub sim_dir: SimDirectory,
     pub next_id: u64,
     pub ports: Vec<PortInfo>,
     pub messages: Vec<SmsItem>,
@@ -19,6 +21,7 @@ pub struct AppStateInner {
     pub live_stop: Option<Arc<AtomicBool>>,
     pub ussd_busy: bool,
     pub delete_busy: bool,
+    pub cleanup_busy: bool,
     pub status_text: String,
     pub failed_notes: Vec<String>,
 }
@@ -29,17 +32,43 @@ impl AppStateInner {
         self.next_id += 1;
         id
     }
+
+    /// True while any operation owns the serial ports. Every port-touching
+    /// command checks this, so the list must stay in one place.
+    fn port_busy(&self) -> bool {
+        self.scan_busy || self.live_on || self.ussd_busy || self.delete_busy || self.cleanup_busy
+    }
 }
 
 pub type SharedState = Arc<Mutex<AppStateInner>>;
 
+/// Lock the shared state, recovering from poisoning.
+///
+/// A worker that panics while holding this lock would otherwise poison it and
+/// turn every later `lock().unwrap()` into a second panic — the app would look
+/// permanently wedged. The state is a plain snapshot of ports/messages, so
+/// continuing with the last-written value is strictly better than dying.
+pub fn lock_state(state: &Mutex<AppStateInner>) -> MutexGuard<'_, AppStateInner> {
+    state.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn take_port<T>(queue: &Mutex<Vec<T>>) -> Option<T> {
+    queue.lock().unwrap_or_else(|e| e.into_inner()).pop()
+}
+
+/// Cap concurrent port access to protect the USB bridge from contention. With
+/// 60+ sticks, firing 64 simultaneous AT probes backs up the modem hardware and
+/// the OS USB stack; a bounded worker pool preserves the shared-state/progress
+/// accounting while limiting parallelism.
+const MAX_CONCURRENT_PORTS: usize = 16;
+
 pub fn new_shared_state() -> SharedState {
-    let settings = Settings::load();
+    let sim_dir = SimDirectory::load();
     let ports: Vec<PortInfo> = crate::core::modem::get_port_names()
         .into_iter()
         .map(|name| {
             let path = crate::core::modem::stable_id(&name);
-            let sim = settings.sim_of_stable(&path, &name);
+            let sim = sim_dir.number_of(&path, &name);
             PortInfo {
                 name,
                 path,
@@ -51,7 +80,7 @@ pub fn new_shared_state() -> SharedState {
         })
         .collect();
     Arc::new(Mutex::new(AppStateInner {
-        settings,
+        sim_dir,
         next_id: 1,
         ports,
         messages: Vec::new(),
@@ -63,6 +92,7 @@ pub fn new_shared_state() -> SharedState {
         live_stop: None,
         ussd_busy: false,
         delete_busy: false,
+        cleanup_busy: false,
         status_text: String::new(),
         failed_notes: Vec::new(),
     }))
@@ -71,7 +101,7 @@ pub fn new_shared_state() -> SharedState {
 #[tauri::command]
 pub fn refresh_ports(state: tauri::State<'_, SharedState>) -> Vec<PortInfo> {
     let names = crate::core::modem::get_port_names();
-    let mut st = state.lock().unwrap();
+    let mut st = lock_state(&state);
     let old_map: std::collections::HashMap<String, PortInfo> =
         st.ports.drain(..).map(|p| (p.name.clone(), p)).collect();
     let ports: Vec<PortInfo> = names
@@ -79,7 +109,7 @@ pub fn refresh_ports(state: tauri::State<'_, SharedState>) -> Vec<PortInfo> {
         .map(|n| {
             if let Some(mut old) = old_map.get(&n).cloned() {
                 old.path = crate::core::modem::stable_id(&n);
-                old.sim_number = st.settings.sim_of_stable(&old.path, &n);
+                old.sim_number = st.sim_dir.number_of(&old.path, &n);
                 old.live_ready = false;
                 old.live_error = None;
                 old
@@ -89,7 +119,7 @@ pub fn refresh_ports(state: tauri::State<'_, SharedState>) -> Vec<PortInfo> {
                     name: n.clone(),
                     path: path.clone(),
                     checked: true,
-                    sim_number: st.settings.sim_of_stable(&path, &n),
+                    sim_number: st.sim_dir.number_of(&path, &n),
                     live_ready: false,
                     live_error: None,
                 }
@@ -103,7 +133,7 @@ pub fn refresh_ports(state: tauri::State<'_, SharedState>) -> Vec<PortInfo> {
 
 #[tauri::command]
 pub fn checked_ports(state: tauri::State<'_, SharedState>) -> Vec<String> {
-    let st = state.lock().unwrap();
+    let st = lock_state(&state);
     st.ports
         .iter()
         .filter(|p| p.checked)
@@ -113,7 +143,7 @@ pub fn checked_ports(state: tauri::State<'_, SharedState>) -> Vec<String> {
 
 #[tauri::command]
 pub fn toggle_port_checked(state: tauri::State<'_, SharedState>, port: String, checked: bool) {
-    let mut st = state.lock().unwrap();
+    let mut st = lock_state(&state);
     if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
         p.checked = checked;
     }
@@ -121,7 +151,7 @@ pub fn toggle_port_checked(state: tauri::State<'_, SharedState>, port: String, c
 
 #[tauri::command]
 pub fn set_all_ports_checked(state: tauri::State<'_, SharedState>, checked: bool) {
-    let mut st = state.lock().unwrap();
+    let mut st = lock_state(&state);
     for p in &mut st.ports {
         p.checked = checked;
     }
@@ -166,8 +196,8 @@ pub fn start_scan(
     }
     let initial_status;
     {
-        let mut st = state.lock().unwrap();
-        if st.scan_busy || st.live_on || st.ussd_busy || st.delete_busy {
+        let mut st = lock_state(&state);
+        if st.port_busy() {
             return Err("Busy".into());
         }
         st.scan_busy = true;
@@ -186,97 +216,106 @@ pub fn start_scan(
     let total = ports.len();
     log::info!("Scan started on {} port(s)", total);
 
-    // Cap concurrent port reads to protect the USB bridge from contention.
-    // With 60+ sticks, firing 64 simultaneous AT probes backs up the modem
-    // hardware and the OS USB stack; a bounded worker pool fan-out preserves
-    // the shared-state/progress accounting while limiting parallelism.
-    const MAX_CONCURRENT_SCAN: usize = 16;
-    let work = Arc::new(Mutex::new(ports));
-    let workers = total.min(MAX_CONCURRENT_SCAN);
-    let mut handles = Vec::with_capacity(workers);
-    for _ in 0..workers {
-        let work2 = Arc::clone(&work);
-        let state_clone = Arc::clone(&state);
-        let app2 = app.clone();
-        handles.push(thread::spawn(move || loop {
-            let port = match work2.lock().unwrap().pop() {
-                Some(port) => port,
-                None => break,
-            };
-            let result = crate::core::modem::read_port(&port);
-            let crate::core::modem::ReadResult {
-                ok,
-                messages,
-                error,
-            } = result;
-            let count = messages.len();
-
-            let mut new_items: Vec<SmsItem> = Vec::new();
-            let status_text;
-            {
-                let mut st = state_clone.lock().unwrap();
-
-                if !ok {
-                    let err = error.unwrap_or_default();
-                    log::warn!("Scan {}: FAILED ({})", port, err);
-                    st.failed_notes.push(format!("{} ({})", port, err));
-                }
-                for m in messages {
-                    let id = st.take_next_id();
-                    let otp = decoder::extract_otp(&m.text);
-                    new_items.push(SmsItem {
-                        id,
-                        message: m,
-                        otp,
-                        is_new: false,
-                    });
-                }
-                if !new_items.is_empty() {
-                    let _ = app2.emit(
-                        "messages:added",
-                        &serde_json::json!({ "items": &new_items }),
-                    );
-                }
-                st.messages.append(&mut new_items);
-
-                st.scan_done += 1;
-
-                if st.scan_done >= total {
-                    st.scan_busy = false;
-                    let ok_ports = total - st.failed_notes.len();
-                    st.status_text =
-                        scan_done_status(ok_ports, total, st.messages.len(), &st.failed_notes);
-                    log::info!("Scan complete: {}", st.status_text);
-                    let _ = app2.emit("scan:done", &serde_json::json!({}));
-                } else {
-                    st.status_text = scan_progress_status(
-                        st.scan_done,
-                        total,
-                        st.messages.len(),
-                        st.failed_notes.len(),
-                    );
-                    if ok && count > 0 {
-                        log::info!(
-                            "Scan {}/{}: {} -> {} msg(s)",
-                            st.scan_done,
-                            total,
-                            port,
-                            count
-                        );
-                    } else if ok {
-                        log::debug!("Scan {}/{}: {} -> no messages", st.scan_done, total, port);
+    // Spawn-and-return, matching every other long-running command. The scan
+    // used to join its workers inline, so the IPC call blocked for the whole
+    // sweep — minutes on a full bank — and only then answered "Scan started".
+    let state_clone = Arc::clone(&state);
+    let app2 = app.clone();
+    thread::spawn(move || {
+        let work = Arc::new(Mutex::new(ports));
+        let workers = total.min(MAX_CONCURRENT_PORTS);
+        let mut handles = Vec::with_capacity(workers);
+        for _ in 0..workers {
+            let work2 = Arc::clone(&work);
+            let st2 = Arc::clone(&state_clone);
+            let app3 = app2.clone();
+            handles.push(thread::spawn(move || {
+                while let Some(port) = take_port(&work2) {
+                    // Without this guard a single panic (malformed PDU, a bad
+                    // index) killed the worker with its share of the queue
+                    // unread, so scan_done never reached total and scan_busy
+                    // stayed set — the app read "Busy" until restart.
+                    let outcome =
+                        catch_unwind(AssertUnwindSafe(|| scan_one_port(&port, &st2, &app3, total)));
+                    if outcome.is_err() {
+                        log::error!("Scan worker panicked on {} — continuing", port);
+                        let mut st = lock_state(&st2);
+                        st.failed_notes.push(format!("{} (worker panicked)", port));
+                        st.scan_done += 1;
                     }
                 }
-                status_text = st.status_text.clone();
-            }
-            let _ = app2.emit("status:update", &serde_json::json!({ "text": status_text }));
-        }));
-    }
-    for h in handles {
-        let _ = h.join();
-    }
+            }));
+        }
+        for h in handles {
+            let _ = h.join();
+        }
+        // The supervisor owns the exit from "busy", so it happens even when
+        // every worker died mid-flight.
+        let text;
+        {
+            let mut st = lock_state(&state_clone);
+            st.scan_busy = false;
+            let ok_ports = total.saturating_sub(st.failed_notes.len());
+            st.status_text = scan_done_status(ok_ports, total, st.messages.len(), &st.failed_notes);
+            text = st.status_text.clone();
+        }
+        log::info!("Scan complete: {}", text);
+        let _ = app2.emit("status:update", &serde_json::json!({ "text": text }));
+        let _ = app2.emit("scan:done", &serde_json::json!({}));
+    });
 
     Ok("Scan started".into())
+}
+
+/// Read one port and fold the result into shared state and progress events.
+fn scan_one_port(port: &str, state: &SharedState, app: &tauri::AppHandle, total: usize) {
+    let crate::core::modem::ReadResult { ok, messages, error } =
+        crate::core::modem::read_port(port);
+    let count = messages.len();
+
+    let (added, status_text);
+    {
+        let mut st = lock_state(state);
+        if !ok {
+            let err = error.unwrap_or_default();
+            log::warn!("Scan {}: FAILED ({})", port, err);
+            st.failed_notes.push(format!("{} ({})", port, err));
+        }
+        let mut new_items: Vec<SmsItem> = Vec::new();
+        for m in messages {
+            let id = st.take_next_id();
+            let otp = decoder::extract_otp(&m.text);
+            new_items.push(SmsItem {
+                id,
+                message: m,
+                otp,
+                is_new: false,
+            });
+        }
+        added = (!new_items.is_empty()).then(|| serde_json::json!({ "items": &new_items }));
+        st.messages.append(&mut new_items);
+        st.scan_done += 1;
+        st.status_text =
+            scan_progress_status(st.scan_done, total, st.messages.len(), st.failed_notes.len());
+        status_text = st.status_text.clone();
+        if ok && count > 0 {
+            log::info!(
+                "Scan {}/{}: {} -> {} msg(s)",
+                st.scan_done,
+                total,
+                port,
+                count
+            );
+        } else if ok {
+            log::debug!("Scan {}/{}: {} -> no messages", st.scan_done, total, port);
+        }
+    }
+    // Emitting outside the lock: a slow/blocked webview must not hold the state
+    // mutex the other workers are queueing on.
+    if let Some(payload) = added {
+        let _ = app.emit("messages:added", &payload);
+    }
+    let _ = app.emit("status:update", &serde_json::json!({ "text": status_text }));
 }
 
 #[tauri::command]
@@ -289,8 +328,8 @@ pub fn get_sim_numbers(
         return Err("No COM port selected.".into());
     }
     {
-        let mut st = state.lock().unwrap();
-        if st.ussd_busy || st.scan_busy || st.live_on || st.delete_busy {
+        let mut st = lock_state(&state);
+        if st.port_busy() {
             return Err("Busy".into());
         }
         st.ussd_busy = true;
@@ -302,11 +341,8 @@ pub fn get_sim_numbers(
         let total = ports.len();
         let found = Arc::new(AtomicUsize::new(0));
         let done = Arc::new(AtomicUsize::new(0));
-        // Same bounded fan-out as scanning: cap simultaneous USSD probes so a
-        // large bank of sticks doesn't flood the USB bridge with AT requests.
-        const MAX_CONCURRENT_USSD: usize = 16;
         let work = Arc::new(Mutex::new(ports));
-        let workers = total.min(MAX_CONCURRENT_USSD);
+        let workers = total.min(MAX_CONCURRENT_PORTS);
         let mut handles = Vec::with_capacity(workers);
         for _ in 0..workers {
             let work2 = Arc::clone(&work);
@@ -314,56 +350,16 @@ pub fn get_sim_numbers(
             let found2 = Arc::clone(&found);
             let done2 = Arc::clone(&done);
             let app3 = app2.clone();
-            handles.push(thread::spawn(move || loop {
-                let port = match work2.lock().unwrap().pop() {
-                    Some(port) => port,
-                    None => break,
-                };
-                let (num, err) = crate::core::modem::get_sim_number(&port);
-                if let Some(ref n) = num {
-                    found2.fetch_add(1, Ordering::Relaxed);
-                    log::info!("USSD {} -> {}", port, n);
-                    let ports_snapshot;
-                    {
-                        let mut st = st2.lock().unwrap();
-                        // Key the cache by the stable path so ttyUSB renumbering
-                        // doesn't drop/reassign the SIM number later.
-                        let key = st
-                            .ports
-                            .iter()
-                            .find(|p| p.name == *port)
-                            .map(|p| p.path.clone())
-                            .unwrap_or_else(|| port.clone());
-                        st.settings.sim_numbers.insert(key, n.clone());
-                        if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
-                            p.sim_number = n.clone();
-                        }
-                        ports_snapshot = st.ports.clone();
+            handles.push(thread::spawn(move || {
+                while let Some(port) = take_port(&work2) {
+                    let outcome = catch_unwind(AssertUnwindSafe(|| {
+                        ussd_one_port(&port, &st2, &app3, &found2, &done2, total)
+                    }));
+                    if outcome.is_err() {
+                        log::error!("USSD worker panicked on {} — continuing", port);
+                        done2.fetch_add(1, Ordering::Relaxed);
                     }
-                    let _ = app3.emit(
-                        "ports:updated",
-                        &serde_json::json!({ "ports": ports_snapshot }),
-                    );
-                } else {
-                    log::warn!(
-                        "USSD {} -> no number ({})",
-                        port,
-                        err.as_deref().unwrap_or("unknown")
-                    );
                 }
-                let d = done2.fetch_add(1, Ordering::Relaxed) + 1;
-                let text;
-                {
-                    let mut st = st2.lock().unwrap();
-                    st.status_text = format!(
-                        "Requesting SIM numbers {}/{}  |  Found: {}",
-                        d,
-                        total,
-                        found2.load(Ordering::Relaxed)
-                    );
-                    text = st.status_text.clone();
-                }
-                let _ = app3.emit("status:update", &serde_json::json!({ "text": text }));
             }));
         }
         for h in handles {
@@ -372,10 +368,9 @@ pub fn get_sim_numbers(
         let f = found.load(Ordering::Relaxed);
         let text;
         {
-            let mut st = state_clone.lock().unwrap();
+            let mut st = lock_state(&state_clone);
             st.ussd_busy = false;
-            st.settings.save_sim_numbers();
-            st.settings.save();
+            st.sim_dir.save();
             st.status_text = format!("SIM numbers updated. Found: {}/{}   (saved)", f, total);
             log::info!("USSD done: {}", st.status_text);
             text = st.status_text.clone();
@@ -386,29 +381,97 @@ pub fn get_sim_numbers(
     Ok("USSD started".into())
 }
 
+/// Query one port's own number over USSD and record it against its stable path.
+fn ussd_one_port(
+    port: &str,
+    state: &SharedState,
+    app: &tauri::AppHandle,
+    found: &AtomicUsize,
+    done: &AtomicUsize,
+    total: usize,
+) {
+    let (num, err) = crate::core::modem::get_sim_number(port);
+    if let Some(ref n) = num {
+        found.fetch_add(1, Ordering::Relaxed);
+        log::info!("USSD {} -> {}", port, n);
+        let ports_snapshot;
+        {
+            let mut st = lock_state(state);
+            // Key the cache by the stable path so ttyUSB renumbering doesn't
+            // drop or reassign the SIM number later.
+            let key = st
+                .ports
+                .iter()
+                .find(|p| p.name == port)
+                .map(|p| p.path.clone())
+                .unwrap_or_else(|| port.to_string());
+            st.sim_dir.numbers.insert(key, n.clone());
+            if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
+                p.sim_number = n.clone();
+            }
+            ports_snapshot = st.ports.clone();
+        }
+        let _ = app.emit(
+            "ports:updated",
+            &serde_json::json!({ "ports": ports_snapshot }),
+        );
+    } else {
+        log::warn!(
+            "USSD {} -> no number ({})",
+            port,
+            err.as_deref().unwrap_or("unknown")
+        );
+    }
+    let d = done.fetch_add(1, Ordering::Relaxed) + 1;
+    let text;
+    {
+        let mut st = lock_state(state);
+        st.status_text = format!(
+            "Requesting SIM numbers {}/{}  |  Found: {}",
+            d,
+            total,
+            found.load(Ordering::Relaxed)
+        );
+        text = st.status_text.clone();
+    }
+    let _ = app.emit("status:update", &serde_json::json!({ "text": text }));
+}
+
 #[tauri::command]
 pub fn get_messages(state: tauri::State<'_, SharedState>) -> Vec<SmsItem> {
-    state.lock().unwrap().messages.clone()
+    lock_state(&state).messages.clone()
 }
 
 #[tauri::command]
 pub fn get_ports(state: tauri::State<'_, SharedState>) -> Vec<PortInfo> {
-    state.lock().unwrap().ports.clone()
+    lock_state(&state).ports.clone()
 }
 
 #[tauri::command]
 pub fn get_status_text(state: tauri::State<'_, SharedState>) -> String {
-    state.lock().unwrap().status_text.clone()
+    lock_state(&state).status_text.clone()
+}
+
+/// Convert the UI's retention setting into a duration, or `None` when the
+/// operator turned auto-cleanup off (0 or a nonsensical value).
+fn retention_from_hours(hours: Option<f64>) -> Option<Duration> {
+    let h = hours?;
+    if !h.is_finite() || h <= 0.0 {
+        return None;
+    }
+    Some(Duration::from_secs_f64(h * 3600.0))
 }
 
 #[tauri::command]
 pub fn start_live(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
+    retention_hours: Option<f64>,
 ) -> Result<String, String> {
+    let retention = retention_from_hours(retention_hours);
     let ports = {
-        let mut st = state.lock().unwrap();
-        if st.live_on || st.live_stop.is_some() || st.scan_busy || st.ussd_busy || st.delete_busy {
+        let mut st = lock_state(&state);
+        if st.live_stop.is_some() || st.port_busy() {
             return Err("Busy".into());
         }
         for p in &mut st.ports {
@@ -424,16 +487,23 @@ pub fn start_live(
     if ports.is_empty() {
         return Err("No COM port selected.".into());
     }
+    let shared_stop = Arc::new(AtomicBool::new(false));
     {
-        let mut st = state.lock().unwrap();
+        let mut st = lock_state(&state);
         st.live_on = true;
         st.live_ports_ready.clear();
         st.live_failed.clear();
         st.messages.clear();
-        let stop = Arc::new(AtomicBool::new(false));
-        st.live_stop = Some(Arc::clone(&stop));
+        st.live_stop = Some(Arc::clone(&shared_stop));
         st.status_text = format!("Starting live on {} port(s)...", ports.len());
-        log::info!("Live starting on {} port(s)", ports.len());
+        log::info!(
+            "Live starting on {} port(s) (SIM retention: {})",
+            ports.len(),
+            match retention {
+                Some(d) => format!("{}h", d.as_secs() / 3600),
+                None => "off".into(),
+            }
+        );
     }
     let _ = app.emit("messages:reset", &serde_json::json!({}));
     let _ = app.emit(
@@ -442,10 +512,6 @@ pub fn start_live(
     );
     let state_clone = Arc::clone(&state);
     thread::spawn(move || {
-        let shared_stop = {
-            let st = state_clone.lock().unwrap();
-            st.live_stop.as_ref().unwrap().clone()
-        };
         let port_count = ports.len();
         let mut handles = Vec::with_capacity(port_count);
         for port in ports {
@@ -455,24 +521,49 @@ pub fn start_live(
             handles.push(thread::spawn(move || {
                 let sender = move |evt: crate::core::live::LiveEvent| match evt {
                     crate::core::live::LiveEvent::Ready { port } => {
-                        let mut st = st2.lock().unwrap();
+                        let mut st = lock_state(&st2);
                         if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
                             p.live_ready = true;
                             p.live_error = None;
                         }
-                        st.live_ports_ready.push(port.clone());
+                        // Reconnects re-emit Ready for a port already counted —
+                        // keep the ready list deduplicated or the "Live x/y"
+                        // badge overcounts.
+                        if !st.live_ports_ready.contains(&port) {
+                            st.live_ports_ready.push(port.clone());
+                        }
                         st.status_text =
                             format!("Live {} port(s) ready...", st.live_ports_ready.len());
                         drop(st);
                         log::info!("Live ready: {}", port);
                         let _ = app2.emit("sms:ready", &serde_json::json!({ "port": port }));
                     }
-                    crate::core::live::LiveEvent::Batch { port: _port, items } => {
+                    crate::core::live::LiveEvent::Reconnecting { port, error } => {
+                        let (text, ports_snapshot);
+                        {
+                            let mut st = lock_state(&st2);
+                            log::warn!("Live {} reconnecting: {}", port, error);
+                            if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
+                                p.live_ready = false;
+                                p.live_error = Some(format!("Reconnecting: {}", error));
+                            }
+                            st.status_text = format!("{} reconnecting…", port);
+                            text = st.status_text.clone();
+                            ports_snapshot = st.ports.clone();
+                        }
+                        let _ = app2.emit("status:update", &serde_json::json!({ "text": text }));
+                        let _ = app2.emit("ports:updated", &serde_json::json!({ "ports": ports_snapshot }));
+                        let _ = app2.emit(
+                            "live:reconnecting",
+                            &serde_json::json!({ "port": port, "error": error }),
+                        );
+                    }
+                    crate::core::live::LiveEvent::Batch { port: _port, items, is_new } => {
                         let n = items.len();
                         log::info!("{} -> initial batch {} msg(s)", _port, n);
                         let mut new_items: Vec<SmsItem> = Vec::new();
                         {
-                            let mut st = st2.lock().unwrap();
+                            let mut st = lock_state(&st2);
                             for m in items {
                                 let id = st.take_next_id();
                                 let otp = crate::core::decoder::extract_otp(&m.text);
@@ -480,7 +571,7 @@ pub fn start_live(
                                     id,
                                     message: m,
                                     otp,
-                                    is_new: false,
+                                    is_new,
                                 });
                             }
                             if !new_items.is_empty() {
@@ -497,33 +588,68 @@ pub fn start_live(
                         message,
                         is_new,
                     } => {
-                        let mut st = st2.lock().unwrap();
-                        let id = st.take_next_id();
+                        let mut st = lock_state(&st2);
                         let otp = crate::core::decoder::extract_otp(&message.text);
                         log::info!("NEW SMS on {}: from={:?} OTP={:?}", port, message.from, otp);
+
+                        // A completed concatenated message often supersedes a
+                        // partial fragment row already shown from the initial
+                        // backfill (same sender + same receive timestamp, and
+                        // the partial's text is a prefix of the full text).
+                        // Swap that row in place instead of appending a
+                        // duplicate — this is what makes long messages appear
+                        // whole instead of "half + full" pairs.
+                        let existing = st
+                            .messages
+                            .iter()
+                            .position(|it| {
+                                it.message.port == message.port
+                                    && it.message.from == message.from
+                                    && it.message.received == message.received
+                                    && message.text.starts_with(&it.message.text)
+                            })
+                            .map(|idx| st.messages[idx].id);
                         let item = SmsItem {
-                            id,
+                            id: existing.unwrap_or_else(|| st.take_next_id()),
                             message: message.clone(),
                             otp: otp.clone(),
                             is_new,
                         };
-                        st.messages.push(item);
-                        drop(st);
-                        let _ = app2.emit(
-                            "sms:new",
-                            &serde_json::json!({
-                                "id": id,
-                                "message": message,
-                                "otp": otp,
-                                "port": port,
-                                "is_new": is_new,
-                            }),
-                        );
+                        match existing {
+                            Some(_) => {
+                                if let Some(idx) = st
+                                    .messages
+                                    .iter()
+                                    .position(|it| it.id == item.id)
+                                {
+                                    st.messages[idx] = item.clone();
+                                }
+                                drop(st);
+                                let _ = app2.emit(
+                                    "messages:updated",
+                                    &serde_json::json!({ "item": &item }),
+                                );
+                            }
+                            None => {
+                                st.messages.push(item.clone());
+                                drop(st);
+                                let _ = app2.emit(
+                                    "sms:new",
+                                    &serde_json::json!({
+                                        "id": item.id,
+                                        "message": message,
+                                        "otp": otp,
+                                        "port": port,
+                                        "is_new": is_new,
+                                    }),
+                                );
+                            }
+                        }
                     }
                     crate::core::live::LiveEvent::Closed { port, error } => {
                         let (text, ports_snapshot);
                         {
-                            let mut st = st2.lock().unwrap();
+                            let mut st = lock_state(&st2);
                             if let Some(e) = error {
                                 log::warn!("Live {} closed: {}", port, e);
                                 if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
@@ -543,7 +669,7 @@ pub fn start_live(
                         );
                     }
                 };
-                crate::core::live::run_live(port, stop, sender);
+                crate::core::live::run_live(port, stop, retention, sender);
             }));
         }
         for h in handles {
@@ -551,20 +677,24 @@ pub fn start_live(
         }
         let text;
         {
-            let mut st = state_clone.lock().unwrap();
+            let mut st = lock_state(&state_clone);
             st.live_on = false;
             st.live_stop = None;
             st.status_text = format!("Live stopped. Messages: {}", st.messages.len());
             text = st.status_text.clone();
         }
         let _ = app.emit("status:update", &serde_json::json!({ "text": text }));
+        // Explicit end-of-live signal: the frontend's "Live" badge is driven by
+        // its own optimistic state, so it needs this to learn the backend side
+        // actually wound down (all workers exited).
+        let _ = app.emit("live:stopped", &serde_json::json!({}));
     });
     Ok("Live started".into())
 }
 
 #[tauri::command]
 pub fn stop_live(app: tauri::AppHandle, state: tauri::State<'_, SharedState>) {
-    let mut st = state.lock().unwrap();
+    let mut st = lock_state(&state);
     if let Some(ref stop) = st.live_stop {
         stop.store(true, Ordering::Relaxed);
     }
@@ -592,14 +722,14 @@ pub fn delete_selected(
     ids: Vec<u64>,
 ) -> Result<String, String> {
     {
-        let st = state.lock().unwrap();
-        if st.scan_busy || st.live_on || st.ussd_busy || st.delete_busy {
+        let st = lock_state(&state);
+        if st.port_busy() {
             return Err("Busy".into());
         }
     }
     let to_delete: Vec<(String, Vec<i32>)>;
     {
-        let st = state.lock().unwrap();
+        let st = lock_state(&state);
         let mut map: std::collections::HashMap<String, Vec<i32>> = std::collections::HashMap::new();
         for id in &ids {
             if let Some(item) = st.messages.iter().find(|m| m.id == *id) {
@@ -629,7 +759,7 @@ pub fn delete_selected(
     }
     let initial_status;
     {
-        let mut st = state.lock().unwrap();
+        let mut st = lock_state(&state);
         st.delete_busy = true;
         st.status_text = format!("Deleting {} message(s)...", ids.len());
         initial_status = st.status_text.clone();
@@ -643,23 +773,30 @@ pub fn delete_selected(
     thread::spawn(move || {
         let mut ok = 0usize;
         let mut fail = 0usize;
-        for (port, indices) in &to_delete {
-            let r = crate::core::modem::delete_messages(port, Some(indices.as_slice()));
-            if r.ok {
-                ok += 1;
-                log::info!("Deleted {} msg(s) from {}", indices.len(), port);
-            } else {
-                fail += 1;
-                log::warn!(
-                    "Delete failed on {}: {}",
-                    port,
-                    r.error.as_deref().unwrap_or("unknown")
-                );
+        // A panic mid-delete would otherwise leave delete_busy set and the
+        // toolbar spinner stuck; the flag is cleared below either way.
+        let counted = catch_unwind(AssertUnwindSafe(|| {
+            for (port, indices) in &to_delete {
+                let r = crate::core::modem::delete_messages(port, Some(indices.as_slice()));
+                if r.ok {
+                    ok += 1;
+                    log::info!("Deleted {} msg(s) from {}", indices.len(), port);
+                } else {
+                    fail += 1;
+                    log::warn!(
+                        "Delete failed on {}: {}",
+                        port,
+                        r.error.as_deref().unwrap_or("unknown")
+                    );
+                }
             }
+        }));
+        if counted.is_err() {
+            log::error!("Delete worker panicked");
         }
         let text;
         {
-            let mut st = state_clone.lock().unwrap();
+            let mut st = lock_state(&state_clone);
             st.delete_busy = false;
             st.messages.retain(|m| !ids.contains(&m.id));
             st.status_text = format!("Deleted: {} ok, {} fail", ok, fail);
@@ -675,7 +812,7 @@ pub fn delete_selected(
 
 #[tauri::command]
 pub fn clear_all(app: tauri::AppHandle, state: tauri::State<'_, SharedState>) {
-    let mut st = state.lock().unwrap();
+    let mut st = lock_state(&state);
     st.messages.clear();
     st.status_text = "Cleared".into();
     let text = st.status_text.clone();
@@ -684,34 +821,144 @@ pub fn clear_all(app: tauri::AppHandle, state: tauri::State<'_, SharedState>) {
     let _ = app.emit("status:update", &serde_json::json!({ "text": text }));
 }
 
+/// Drop messages from the in-app inbox once they pass the retention period.
+/// Uses the same expiry rule as SIM cleanup, so the list and the SIM agree on
+/// what "expired" means — including never expiring an undated message.
 #[tauri::command]
 pub fn purge_expired_messages(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     max_age_hours: f64,
 ) -> Result<usize, String> {
-    let max_age_seconds = (max_age_hours * 3600.0) as i64;
-    let now = chrono::Utc::now();
-    let mut purged_count = 0;
-    let mut purged_ids = Vec::new();
+    let Some(retention) = retention_from_hours(Some(max_age_hours)) else {
+        return Ok(0);
+    };
+    let cutoff = retention_cutoff_ms(retention);
+    let purged_ids: Vec<u64>;
     {
-        let mut st = state.lock().unwrap();
-        st.messages.retain(|m| {
-            let age_secs = (now - m.message.received).num_seconds();
-            if age_secs > max_age_seconds {
-                purged_count += 1;
-                purged_ids.push(m.id);
-                false
-            } else {
-                true
-            }
-        });
+        let mut st = lock_state(&state);
+        purged_ids = st
+            .messages
+            .iter()
+            .filter(|it| is_expired(&it.message, cutoff))
+            .map(|it| it.id)
+            .collect();
+        if !purged_ids.is_empty() {
+            st.messages.retain(|it| !is_expired(&it.message, cutoff));
+        }
     }
-    if purged_count > 0 {
+    if !purged_ids.is_empty() {
         let _ = app.emit("messages:removed", &serde_json::json!({ "ids": &purged_ids }));
-        log::info!("Auto-purged {} expired message(s) older than {} hour(s)", purged_count, max_age_hours);
+        log::info!(
+            "Auto-purged {} expired message(s) older than {} hour(s)",
+            purged_ids.len(),
+            max_age_hours
+        );
     }
-    Ok(purged_count)
+    Ok(purged_ids.len())
+}
+
+/// Delete expired messages from SIM storage on every selected port.
+///
+/// SIM memory holds only ~20–50 messages and nothing ever pruned it, so a bank
+/// left running eventually filled up and the modems started silently rejecting
+/// new SMS. This is the idle half of the fix: it opens each port itself, so it
+/// refuses to run while scan/live/USSD/delete owns them — live mode prunes on
+/// its own already-open channel instead.
+#[tauri::command]
+pub fn cleanup_sim_storage(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    retention_hours: Option<f64>,
+) -> Result<String, String> {
+    let Some(retention) = retention_from_hours(retention_hours) else {
+        return Err("Retention is off.".into());
+    };
+    let ports = checked_ports(state.clone());
+    if ports.is_empty() {
+        return Err("No COM port selected.".into());
+    }
+    {
+        let mut st = lock_state(&state);
+        if st.port_busy() {
+            return Err("Busy".into());
+        }
+        st.cleanup_busy = true;
+    }
+    let total = ports.len();
+    let cutoff = retention_cutoff_ms(retention);
+    log::info!(
+        "SIM cleanup starting on {} port(s), retention {}h",
+        total,
+        retention.as_secs() / 3600
+    );
+
+    let state_clone = Arc::clone(&state);
+    let app2 = app.clone();
+    thread::spawn(move || {
+        let deleted = Arc::new(AtomicUsize::new(0));
+        let failed = Arc::new(AtomicUsize::new(0));
+        let work = Arc::new(Mutex::new(ports));
+        let workers = total.min(MAX_CONCURRENT_PORTS);
+        let mut handles = Vec::with_capacity(workers);
+        for _ in 0..workers {
+            let work2 = Arc::clone(&work);
+            let deleted2 = Arc::clone(&deleted);
+            let failed2 = Arc::clone(&failed);
+            handles.push(thread::spawn(move || {
+                while let Some(port) = take_port(&work2) {
+                    let outcome = catch_unwind(AssertUnwindSafe(|| {
+                        crate::core::modem::expire_old(&port, cutoff)
+                    }));
+                    match outcome {
+                        Ok(r) if r.ok => {
+                            if r.deleted > 0 {
+                                log::info!("SIM cleanup {}: deleted {} message(s)", port, r.deleted);
+                            }
+                            deleted2.fetch_add(r.deleted, Ordering::Relaxed);
+                        }
+                        Ok(r) => {
+                            failed2.fetch_add(1, Ordering::Relaxed);
+                            log::warn!(
+                                "SIM cleanup {} failed: {}",
+                                port,
+                                r.error.as_deref().unwrap_or("unknown")
+                            );
+                        }
+                        Err(_) => {
+                            failed2.fetch_add(1, Ordering::Relaxed);
+                            log::error!("SIM cleanup worker panicked on {} — continuing", port);
+                        }
+                    }
+                }
+            }));
+        }
+        for h in handles {
+            let _ = h.join();
+        }
+        let d = deleted.load(Ordering::Relaxed);
+        let f = failed.load(Ordering::Relaxed);
+        let text;
+        {
+            // Supervisor clears the flag first, so a failure anywhere above
+            // still leaves the app usable.
+            let mut st = lock_state(&state_clone);
+            st.cleanup_busy = false;
+            st.status_text = if f == 0 {
+                format!("SIM cleanup done. Deleted {} expired message(s)", d)
+            } else {
+                format!("SIM cleanup done. Deleted {}  |  FAILED: {}/{}", d, f, total)
+            };
+            text = st.status_text.clone();
+        }
+        log::info!("{}", text);
+        let _ = app2.emit("status:update", &serde_json::json!({ "text": text }));
+        let _ = app2.emit(
+            "sim_cleanup:done",
+            &serde_json::json!({ "deleted": d, "failed": f }),
+        );
+    });
+    Ok("SIM cleanup started".into())
 }
 
 /// Write exported SMS content to a user-chosen location.
@@ -834,5 +1081,61 @@ mod tests {
             scan_done_status(8, 8, 0, &[],),
             "Done. Modems OK: 8/8  |  Total messages: 0"
         );
+    }
+
+    #[test]
+    fn retention_of_zero_or_less_means_cleanup_is_off() {
+        assert!(retention_from_hours(None).is_none());
+        assert!(retention_from_hours(Some(0.0)).is_none());
+        assert!(retention_from_hours(Some(-4.0)).is_none());
+        assert!(retention_from_hours(Some(f64::NAN)).is_none());
+        assert!(retention_from_hours(Some(f64::INFINITY)).is_none());
+    }
+
+    #[test]
+    fn retention_hours_convert_to_a_duration() {
+        assert_eq!(
+            retention_from_hours(Some(2.0)),
+            Some(Duration::from_secs(7200))
+        );
+        assert_eq!(
+            retention_from_hours(Some(0.5)),
+            Some(Duration::from_secs(1800))
+        );
+    }
+
+    #[test]
+    fn port_busy_covers_every_operation_that_owns_a_port() {
+        let idle = || AppStateInner {
+            sim_dir: SimDirectory::default(),
+            next_id: 1,
+            ports: Vec::new(),
+            messages: Vec::new(),
+            scan_busy: false,
+            scan_done: 0,
+            live_on: false,
+            live_ports_ready: Vec::new(),
+            live_failed: Vec::new(),
+            live_stop: None,
+            ussd_busy: false,
+            delete_busy: false,
+            cleanup_busy: false,
+            status_text: String::new(),
+            failed_notes: Vec::new(),
+        };
+        assert!(!idle().port_busy());
+
+        let setters: [fn(&mut AppStateInner); 5] = [
+            |st| st.scan_busy = true,
+            |st| st.live_on = true,
+            |st| st.ussd_busy = true,
+            |st| st.delete_busy = true,
+            |st| st.cleanup_busy = true,
+        ];
+        for set in setters {
+            let mut st = idle();
+            set(&mut st);
+            assert!(st.port_busy());
+        }
     }
 }

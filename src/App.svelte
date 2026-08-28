@@ -12,18 +12,46 @@
   import { restartAutoUpdater } from "$lib/services/updater";
   import { settingsStore } from "$lib/stores/settings.svelte";
   import { navigationStore } from "$lib/stores/navigation.svelte";
+  import { liveStore } from "$lib/stores/live.svelte";
+  import { messagesStore } from "$lib/stores/messages.svelte";
+
+  const SIM_CLEANUP_EVERY = 10 * 60_000;
+
+  /** True while some operation owns the serial ports. */
+  function portsBusy() {
+    return (
+      liveStore.on ||
+      liveStore.scanBusy ||
+      liveStore.ussdBusy ||
+      messagesStore.deleteBusy
+    );
+  }
 
   onMount(() => {
     api.init();
 
-    // Periodic sweep: Purge expired messages every 60s if enabled
-    const timer = setInterval(() => {
-      if (settingsStore.general.autoDeleteExpired) {
-        void api.purgeExpiredMessages(settingsStore.general.retentionHours);
-      }
+    // Inbox sweep: retentionHours of 0 means "keep everything", which
+    // purgeExpiredMessages treats as a no-op.
+    const purgeTimer = setInterval(() => {
+      void api.purgeExpiredMessages(settingsStore.general.retentionHours);
     }, 60_000);
 
-    return () => clearInterval(timer);
+    // SIM sweep: SIM memory holds only a few dozen messages and starts
+    // rejecting new SMS once full. Live workers prune the ports they own, so
+    // this covers the idle case only.
+    const firstSweep = setTimeout(() => {
+      if (!portsBusy()) void api.cleanupSimStorage(settingsStore.general.retentionHours);
+    }, 30_000);
+    const simTimer = setInterval(() => {
+      if (portsBusy()) return;
+      void api.cleanupSimStorage(settingsStore.general.retentionHours);
+    }, SIM_CLEANUP_EVERY);
+
+    return () => {
+      clearInterval(purgeTimer);
+      clearInterval(simTimer);
+      clearTimeout(firstSweep);
+    };
   });
 
   // Schedule background update checks on launch and re-schedule them whenever

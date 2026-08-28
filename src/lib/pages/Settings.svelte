@@ -48,21 +48,14 @@
           step: 5,
         },
         {
-          key: "autoDeleteExpired",
-          label: "Auto-Delete Expired Messages",
-          description:
-            "Automatically remove messages older than the retention period in the background",
-          type: "checkbox" as const,
-          bind: "general",
-        },
-        {
           key: "retentionHours",
           label: "Message Retention Period",
           description:
-            "How long to keep received SMS before automatic background deletion",
+            "How long to keep received SMS before they are deleted from the inbox and from SIM storage",
           type: "select" as const,
           bind: "general",
           options: [
+            { value: 0, label: "Off (keep everything)" },
             { value: 1, label: "1 Hour" },
             { value: 2, label: "2 Hours (Default)" },
             { value: 4, label: "4 Hours" },

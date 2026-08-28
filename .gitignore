@@ -8,5 +8,6 @@ src-tauri/target
 .env.*
 .DS_Store
 Thumbs.db
+.mimosa/
 /src-tauri/updater.key
 /src-tauri/updater.key.pub

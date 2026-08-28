@@ -4,4 +4,4 @@ pub mod live;
 pub mod models;
 pub mod modem;
 pub mod reassemble;
-pub mod settings;
+pub mod sim_directory;
