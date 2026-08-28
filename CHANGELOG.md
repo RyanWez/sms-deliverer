@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/RyanWez/sms-deliverer/compare/v1.1.0...v1.2.0) (2026-08-28)
+
+
+### Features
+
+* auto-reconnect live ports, SIM retention cleanup, and truthful live status ([6930da1](https://github.com/RyanWez/sms-deliverer/commit/6930da166906947a7a6be4948e1acaf850ff7c06))
+
 ## [1.1.0](https://github.com/RyanWez/sms-deliverer/compare/v1.0.1...v1.1.0) (2026-08-27)
 
 
