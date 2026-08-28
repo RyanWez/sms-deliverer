@@ -1,4 +1,4 @@
-# 03 — Troubleshooting Casebook (တကယ်ဖြစ်ခဲ့တဲ့ ၇ ခု)
+# 03 — Troubleshooting Casebook (တကယ်ဖြစ်ခဲ့တဲ့ ၈ ခု)
 
 > Format: Symptom → Root Cause → Fix → Preventive Rule. Debug ခင် ဒီထဲ အရင်ရှာပါ။
 
@@ -55,6 +55,19 @@
 - **Diagnose:** `gh run list` + `gh run cancel <id>` (completed ဖြစ်နေရင် cancel error ပေးတယ် — harm none);
   Releases/tags ဘယ်ဟာတွေကျန်လဲ: `gh api repos/<o>/<r>/releases` , `git ls-remote --tags origin`
 - **Rule:** Full purge (delete releases → delete tags w/ branch cleanup) လုပ်ပြီး run history stale ဖြစ်နိုင် — panic မလုပ်၊ API/state machine verify ဦး။
+
+## 8️⃣ Release PR tests fail: `cargo test --locked` — Cargo.lock out of sync
+
+- **Symptom:** PR #7 (release 1.2.0) မှာ ubuntu + windows cargo-test jobs နှစ်ခုလုံး fail —
+  `error: cannot update the lock file … because --locked was passed`
+- **Root Cause:** release-please က `Cargo.toml` ရဲ့ `version` ကို bump ပေးပေမယ့် `Cargo.lock` ထဲက
+  `sms-tauri` package version ကို ထိတ်လုပ်မပေးဘူး (doc 02 §2 မှာ extra-files က lock မပါ)။
+  CI က `--locked` နဲ့ run လို့ lock mismatch ကို error ပြတယ်။
+- **Fix:** release branch checkout → `cargo check` (lock regenerate) →
+  `chore: sync Cargo.lock with version X.Y.Z` commit → PR branch push → CI auto re-run → green → merge
+- **Rule:** Release PR ဖွင့်တာနဲ့ test jobs က fail ရင် log ကို အရင်ကြည့် —
+  `--locked` error ဖြစ်နေရင် lock sync commit နဲ့ fix လုပ်လို့ရတယ်၊ PR ကို close/reopen မလုပ်နဲ့။
+  (v1.2.0, 2026-08-28 မှာ verified)
 
 ## Bonus UX Notes
 
