@@ -1027,14 +1027,19 @@ pub fn delete_selected(
             let mut st = lock_state(&state_clone);
             st.delete_busy = false;
             st.messages.retain(|m| !ids.contains(&m.id));
-            // Count SIM slots, not ports. A port can confirm some of its indices
-            // and refuse the rest, and "1 ok" would hide that the messages are
-            // still occupying SIM storage.
-            st.status_text = if fail == 0 && gone == wanted {
-                format!("Deleted {} message(s) from SIM", gone)
+            // Count SIM slots, not ports. One port can free some of its indices
+            // and leave others behind, and a "1 ok" per port would hide it. The
+            // slot count can exceed the message count: a concatenated SMS
+            // occupies one slot per part.
+            st.status_text = if fail == 0 && gone >= wanted {
+                format!(
+                    "Deleted {} message(s) ({} SIM slot(s) freed)",
+                    ids.len(),
+                    gone
+                )
             } else {
                 format!(
-                    "Deleted {}/{} from SIM  |  FAILED: {} port(s)",
+                    "Deleted {}/{} SIM slot(s)  |  FAILED: {} port(s)",
                     gone, wanted, fail
                 )
             };

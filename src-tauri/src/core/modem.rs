@@ -272,6 +272,80 @@ fn delete_each(ch: &mut at::AtChannel, indices: &[i32]) -> Vec<i32> {
     order
 }
 
+/// Which of `wanted` are still occupied, re-read from the SIM.
+///
+/// The per-command reply is not enough on its own: some modems drop every
+/// fragment of a concatenated message when handed the index of any one of them,
+/// so the follow-up `AT+CMGD` for its siblings answers `+CMS ERROR: 321` — a
+/// refusal that means "already gone", not "still there". Absence from the list
+/// is the only evidence that distinguishes the two. `None` means the list itself
+/// was unusable, leaving the caller on its per-command count.
+fn slots_still_present(ch: &mut at::AtChannel, wanted: &[i32]) -> Option<Vec<i32>> {
+    let lst = ch.send("AT+CMGL=\"ALL\"", 15000);
+    if !lst.lines().any(|l| l.trim() == "OK") {
+        return None;
+    }
+    let present = decoder::parse_indices(&lst);
+    Some(
+        wanted
+            .iter()
+            .copied()
+            .filter(|i| present.contains(i))
+            .collect(),
+    )
+}
+
+/// Turn a delete attempt into a result, preferring the SIM's own account of
+/// which slots survived over the per-command replies.
+fn confirm_delete(
+    ch: &mut at::AtChannel,
+    port_name: &str,
+    wanted: &[i32],
+    confirmed: Vec<i32>,
+) -> OpResult {
+    let Some(left) = slots_still_present(ch, wanted) else {
+        log::warn!(
+            "{}: deleted {} msg(s) — could not re-read the SIM to confirm",
+            port_name,
+            confirmed.len()
+        );
+        return OpResult {
+            ok: !confirmed.is_empty(),
+            error: None,
+            deleted: confirmed.len(),
+            indices: confirmed,
+        };
+    };
+
+    let gone: Vec<i32> = wanted
+        .iter()
+        .copied()
+        .filter(|i| !left.contains(i))
+        .collect();
+    if left.is_empty() {
+        log::info!("{}: deleted {} msg(s)", port_name, gone.len());
+        return OpResult {
+            ok: true,
+            error: None,
+            deleted: gone.len(),
+            indices: gone,
+        };
+    }
+    log::warn!(
+        "{}: deleted {}/{} msg(s) — still on SIM: {:?}",
+        port_name,
+        gone.len(),
+        wanted.len(),
+        left
+    );
+    OpResult {
+        ok: !gone.is_empty(),
+        error: Some(format!("Deleted {}/{} from SIM", gone.len(), wanted.len())),
+        deleted: gone.len(),
+        indices: gone,
+    }
+}
+
 pub fn delete_messages(port_name: &str, indices: Option<&[i32]>) -> OpResult {
     let mut ch = match at::AtChannel::open(port_name) {
         Ok(ch) => ch,
@@ -313,53 +387,21 @@ pub fn delete_messages(port_name: &str, indices: Option<&[i32]>) -> OpResult {
             ch.send("AT+CSCS=\"UCS2\"", 2000);
             let lst = ch.send("AT+CMGL=\"ALL\"", 15000);
             let found = decoder::parse_indices(&lst);
-            let gone = delete_each(&mut ch, &found);
-            if gone.len() < found.len() {
-                log::warn!(
-                    "{}: deleted {}/{} msg(s) one-by-one — the SIM refused the rest",
-                    port_name,
-                    gone.len(),
-                    found.len()
-                );
-            } else {
-                log::info!("{}: deleted {} msg(s) (one-by-one)", port_name, gone.len());
+            if found.is_empty() {
+                log::info!("{}: nothing left to delete", port_name);
+                return OpResult {
+                    ok: true,
+                    error: None,
+                    deleted: 0,
+                    indices: vec![],
+                };
             }
-            OpResult {
-                ok: !gone.is_empty() || found.is_empty(),
-                error: if gone.len() < found.len() {
-                    Some(format!("Deleted {}/{} from SIM", gone.len(), found.len()))
-                } else {
-                    None
-                },
-                deleted: gone.len(),
-                indices: gone,
-            }
+            let confirmed = delete_each(&mut ch, &found);
+            confirm_delete(&mut ch, port_name, &found, confirmed)
         }
         Some(idxs) => {
-            let gone = delete_each(&mut ch, idxs);
-            if gone.len() < idxs.len() {
-                // Not fatal: the app's own copy is still dropped, but say so
-                // rather than letting the SIM quietly fill up behind a green
-                // status line.
-                log::warn!(
-                    "{}: deleted {}/{} msg(s) — SIM did not confirm the rest",
-                    port_name,
-                    gone.len(),
-                    idxs.len()
-                );
-            } else {
-                log::info!("{}: deleted {} msg(s)", port_name, gone.len());
-            }
-            OpResult {
-                ok: !gone.is_empty(),
-                error: if gone.len() < idxs.len() {
-                    Some(format!("Deleted {}/{} from SIM", gone.len(), idxs.len()))
-                } else {
-                    None
-                },
-                deleted: gone.len(),
-                indices: gone,
-            }
+            let confirmed = delete_each(&mut ch, idxs);
+            confirm_delete(&mut ch, port_name, idxs, confirmed)
         }
     }
 }
@@ -558,16 +600,50 @@ mod tests {
         AtChannel::with_transport("ttyUSBtest", Box::new(FakeTransport::new(script, 1024)))
     }
 
-    /// Answers `OK` to everything except the listed `AT+CMGD=<idx>` slots, which
-    /// get `+CMS ERROR: 321` (invalid memory index) — the reply a real modem
-    /// sends for a slot that is already empty.
-    struct DeleteTransport {
-        refuse: Vec<i32>,
+    /// A SIM with a known set of occupied slots.
+    ///
+    /// `group` models the modem behaviour that made the field logs read
+    /// `deleted 3/6`: deleting any member of a concatenated message removes all
+    /// of them, so the siblings then answer `+CMS ERROR: 321`. `AT+CMGL="ALL"`
+    /// reports whatever is left, which is what `confirm_delete` goes on.
+    struct SimTransport {
+        slots: Vec<i32>,
+        group: Vec<i32>,
         pending: Vec<u8>,
         sent: Arc<Mutex<Vec<String>>>,
     }
 
-    impl Transport for DeleteTransport {
+    impl SimTransport {
+        fn reply_to(&mut self, cmd: &str) -> Vec<u8> {
+            if cmd == "AT+CMGL=\"ALL\"" {
+                let mut out = String::new();
+                for idx in &self.slots {
+                    out.push_str(&format!(
+                        "\r\n+CMGL: {idx},\"REC READ\",\"966\",,\"26/08/29,11:00:00+00\"\r\ntext\r\n"
+                    ));
+                }
+                out.push_str("\r\nOK\r\n");
+                return out.into_bytes();
+            }
+            let Some(idx) = cmd
+                .strip_prefix("AT+CMGD=")
+                .and_then(|n| n.parse::<i32>().ok())
+            else {
+                return b"\r\nOK\r\n".to_vec();
+            };
+            if !self.slots.contains(&idx) {
+                return b"\r\n+CMS ERROR: 321\r\n".to_vec();
+            }
+            if self.group.contains(&idx) {
+                self.slots.retain(|s| !self.group.contains(s));
+            } else {
+                self.slots.retain(|s| *s != idx);
+            }
+            b"\r\nOK\r\n".to_vec()
+        }
+    }
+
+    impl Transport for SimTransport {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
             if self.pending.is_empty() {
                 return Err(io::ErrorKind::TimedOut.into());
@@ -580,26 +656,20 @@ mod tests {
 
         fn write_all(&mut self, data: &[u8]) -> io::Result<()> {
             let cmd = String::from_utf8_lossy(data).trim().to_string();
-            let refused = cmd
-                .strip_prefix("AT+CMGD=")
-                .and_then(|n| n.parse::<i32>().ok())
-                .is_some_and(|n| self.refuse.contains(&n));
-            self.sent.lock().unwrap().push(cmd);
-            self.pending.extend_from_slice(if refused {
-                b"\r\n+CMS ERROR: 321\r\n"
-            } else {
-                b"\r\nOK\r\n"
-            });
+            self.sent.lock().unwrap().push(cmd.clone());
+            let reply = self.reply_to(&cmd);
+            self.pending.extend_from_slice(&reply);
             Ok(())
         }
     }
 
-    fn delete_channel(refuse: &[i32]) -> (AtChannel, Arc<Mutex<Vec<String>>>) {
+    fn sim_channel(slots: &[i32], group: &[i32]) -> (AtChannel, Arc<Mutex<Vec<String>>>) {
         let sent = Arc::new(Mutex::new(Vec::new()));
         let ch = AtChannel::with_transport(
             "ttyUSBtest",
-            Box::new(DeleteTransport {
-                refuse: refuse.to_vec(),
+            Box::new(SimTransport {
+                slots: slots.to_vec(),
+                group: group.to_vec(),
                 pending: Vec::new(),
                 sent: Arc::clone(&sent),
             }),
@@ -611,7 +681,7 @@ mod tests {
 
     #[test]
     fn delete_each_reports_only_the_slots_the_modem_confirmed() {
-        let (mut ch, _) = delete_channel(&[4]);
+        let (mut ch, _) = sim_channel(&[1, 7], &[]);
         assert_eq!(delete_each(&mut ch, &[1, 4, 7]), vec![7, 1]);
     }
 
@@ -619,7 +689,7 @@ mod tests {
     fn delete_each_walks_the_highest_slot_first() {
         // A modem that compacts its index space after a delete would otherwise
         // shift a slot we have not visited yet onto a number we already passed.
-        let (mut ch, sent) = delete_channel(&[]);
+        let (mut ch, sent) = sim_channel(&[1, 4, 7], &[]);
         delete_each(&mut ch, &[1, 4, 7]);
         assert_eq!(
             *sent.lock().unwrap(),
@@ -629,8 +699,36 @@ mod tests {
 
     #[test]
     fn delete_each_reports_nothing_when_the_sim_refuses_everything() {
-        let (mut ch, _) = delete_channel(&[1, 2]);
+        let (mut ch, _) = sim_channel(&[], &[]);
         assert!(delete_each(&mut ch, &[1, 2]).is_empty());
+    }
+
+    #[test]
+    fn confirm_delete_trusts_the_sim_over_the_refusals() {
+        // The field case: slots 3-6 are one concatenated message, so deleting 6
+        // takes 5, 4 and 3 with it and those three answer +CMS ERROR. Counting
+        // replies reported 3/6; counting what is left on the SIM reports 6.
+        let (mut ch, _) = sim_channel(&[1, 2, 3, 4, 5, 6], &[3, 4, 5, 6]);
+        let wanted = [1, 2, 3, 4, 5, 6];
+        let confirmed = delete_each(&mut ch, &wanted);
+        assert_eq!(confirmed.len(), 3);
+        let r = confirm_delete(&mut ch, "ttyUSBtest", &wanted, confirmed);
+        assert!(r.ok);
+        assert_eq!(r.deleted, 6);
+        assert!(r.error.is_none());
+    }
+
+    #[test]
+    fn confirm_delete_reports_slots_that_really_survived() {
+        // Slot 9 was asked for but never went away — the case the warning exists
+        // for, and the one a "some replies were errors" count cannot tell apart
+        // from the group delete above.
+        let (mut ch, _) = sim_channel(&[1, 2, 9], &[]);
+        let confirmed = delete_each(&mut ch, &[1, 2]);
+        let r = confirm_delete(&mut ch, "ttyUSBtest", &[1, 2, 9], confirmed);
+        assert!(r.ok);
+        assert_eq!(r.deleted, 2);
+        assert_eq!(r.error.as_deref(), Some("Deleted 2/3 from SIM"));
     }
 
     // ── Liveness probe ──
