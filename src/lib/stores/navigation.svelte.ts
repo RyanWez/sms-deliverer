@@ -3,6 +3,13 @@ import type { NavSection } from '$lib/types';
 export function createNavigationStore() {
   let currentSection = $state<NavSection>('inbox');
   let sidebarCollapsed = $state(false);
+  /**
+   * Settings category to land on, consumed once by the Settings page.
+   *
+   * Set by callers that mean a specific panel — the update card's "What's new"
+   * link, for instance — rather than the General tab the page opens on.
+   */
+  let pendingSettingsGroup = $state<string | null>(null);
 
   return {
     get currentSection() { return currentSection; },
@@ -14,6 +21,16 @@ export function createNavigationStore() {
       sidebarCollapsed = !sidebarCollapsed;
     },
     navigate(section: NavSection) { currentSection = section; },
+    openSettings(group: string) {
+      pendingSettingsGroup = group;
+      currentSection = 'settings';
+    },
+    /** Read and clear the requested category. */
+    takeSettingsGroup(): string | null {
+      const g = pendingSettingsGroup;
+      pendingSettingsGroup = null;
+      return g;
+    },
   };
 }
 

@@ -11,6 +11,11 @@
   **silently swallow** ဖြစ်တယ် (error မှ မထ)
 - **Fix:** `src/lib/services/updater.ts` → toast system (`liveStore.addToast`) + `@tauri-apps/plugin-dialog` native confirm နဲ့ အစားထိုး
 - **Rule:** Tauri frontend မှာ browser dialog API သုံးမနေနဲ့ — plugin-dialog/dialog wrapper ပဲ။
+- **v1.3.0 update:** native confirm ကိုပါ ဖြုတ်လိုက်ပြီ။ Update ရှိတာကို Settings → Updates ရဲ့
+  in-app card (release notes + Update Now + Restart Now) နဲ့ ပြတယ် — dialog ထဲမှာ release notes
+  ရှည်ကို မဖတ်နိုင်၊ platform တစ်ခုစီ ပုံစံ လုံးဝ မတူဘူး။ State machine က
+  `src/lib/stores/updater.svelte.ts`၊ rate limit + byte/percent format က
+  `src/lib/utils/update-policy.ts` (pure, tested)။
 
 ## 2️⃣ Plugin call တွေ အလုပ်မလုပ် (updater/process/dialog)
 

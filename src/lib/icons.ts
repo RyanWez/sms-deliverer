@@ -63,6 +63,14 @@ export const icons = {
     '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>',
   folder:
     '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  sparkles:
+    '<path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z"/>',
+  power:
+    '<path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/>',
+  clock:
+    '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>',
+  rocket:
+    '<path d="M5 13c-1.5 1.5-2 5-2 5s3.5-.5 5-2"/><path d="M14.5 4.5C17 2 21 3 21 3s1 4-1.5 6.5L13 16l-4-4z"/><path d="M9 12l-3.5-1 2-2 3 .5"/><path d="M12 15l1 3.5 2-2-.5-3"/>',
 } as const;
 
 export type IconName = keyof typeof icons;

@@ -29,8 +29,17 @@ git push origin main                      (conventional commits)
         ▼
 App ထဲ Update Check
   GET https://github.com/RyanWez/sms-deliverer/releases/latest/download/latest.json
-  compare version vs runtime → dialog/toast → download → verify signature → relaunch
+  compare version vs runtime → Settings → Updates ရဲ့ release-notes card
+  → "Update Now" = download only (signature verify) → "Restart Now" = install + relaunch
 ```
+
+> **v1.3.0 ကနေစပြီး** download နဲ့ install က သီးသန့် step နှစ်ခု
+> (`update.download()` → `update.install()`)။ `downloadAndInstall()` မသုံးတော့ဘူး —
+> user က release notes ဖတ်ပြီး restart timing ကို ကိုယ်တိုင် ရွေးနိုင်ရမယ် (live ports
+> အလုပ်လုပ်နေချိန် app ကို ကိုယ်တိုင် restart မလုပ်ဖို့)။ Windows မှာ `install()` က
+> installer ကို လွှတ်ပြီး process ကို ကိုယ်တိုင် ပိတ်တာမို့ `relaunch()` က Linux path မှာသာ ရောက်တယ်။
+> Manual check ကို `MANUAL_COOLDOWN_MS = 60s` cooldown နဲ့ ကန့်သတ်ထားတယ်၊
+> background timer က `BACKGROUND_MIN_GAP_MS = 15min` (`src/lib/utils/update-policy.ts`)။
 
 ## Config Inventory (ဘယ် file က ဘာလုပ်လဲ)
 

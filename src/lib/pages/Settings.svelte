@@ -1,9 +1,10 @@
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
+  import UpdateCard from "$lib/components/UpdateCard.svelte";
   import type { IconName } from "$lib/icons";
   import { settingsStore } from "$lib/stores/settings.svelte";
+  import { navigationStore } from "$lib/stores/navigation.svelte";
   import { api } from "$lib/services/api";
-  import { runUpdateCheck } from "$lib/services/updater";
   import { confirm as nativeConfirm } from "@tauri-apps/plugin-dialog";
   import { getVersion } from "@tauri-apps/api/app";
   import { onMount } from "svelte";
@@ -204,15 +205,6 @@
           max: 168,
           step: 1,
         },
-        {
-          key: "checkNow",
-          label: "Check for Updates Now",
-          description: "Check if a new version is available for download",
-          type: "button" as const,
-          action: "checkUpdates",
-          buttonText: "Check",
-          variant: "primary",
-        },
       ],
     },
     {
@@ -296,8 +288,11 @@
     },
   ];
 
-  let selectedId = $state<string>("general");
-  let updateChecking = $state(false);
+  // A caller may ask for a specific category (the update card links here).
+  const requested = navigationStore.takeSettingsGroup();
+  let selectedId = $state<string>(
+    settingsGroups.some((g) => g.id === requested) ? requested! : "general",
+  );
   let appVersion = $state<string | null>(null);
 
   onMount(async () => {
@@ -335,14 +330,6 @@
         }))
       ) {
         await api.clearAll();
-      }
-    } else if (action === "checkUpdates") {
-      if (updateChecking) return;
-      updateChecking = true;
-      try {
-        await runUpdateCheck(true);
-      } finally {
-        updateChecking = false;
       }
     } else if (action === "openLogFolder") {
       await api.openLogFolder();
@@ -538,17 +525,9 @@
                         : "btn-primary"}
                     <button
                       class="{btnClass} shrink-0 inline-flex items-center justify-center gap-2 disabled:opacity-60 disabled:pointer-events-none text-xs sm:text-sm px-3.5 py-1.5 min-w-[76px]"
-                      disabled={field.action === "checkUpdates" && updateChecking}
                       onclick={() => handleAction(field.action)}
                     >
-                      {#if field.action === "checkUpdates" && updateChecking}
-                        <span
-                          class="inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"
-                          aria-hidden="true"></span>
-                        Checking…
-                      {:else}
-                        {field.buttonText ?? 'Execute'}
-                      {/if}
+                      {field.buttonText ?? 'Execute'}
                     </button>
                   {:else if field.type === "checkbox" || field.type === "select" || field.type === "number" || field.type === "text"}
                     <label
@@ -665,6 +644,12 @@
                 </div>
               {/each}
             </div>
+            {#if selectedGroup.id === "updates"}
+              <!-- The check button, release notes and install flow live together
+                   in one component so the panel can hide the check row while a
+                   version is waiting to be installed. -->
+              <UpdateCard />
+            {/if}
           {/if}
         </section>
 

@@ -1,14 +1,5 @@
 import type { ToastData } from '$lib/types';
 
-export interface UpdateDownloadProgress {
-  version: string;
-  /** Cumulative downloaded bytes. */
-  downloadedBytes: number;
-  /** Total bytes when known, else 0 (unknown). */
-  totalBytes: number;
-  phase: 'download' | 'install';
-}
-
 export function createLiveStore() {
   let on = $state(false);
   let scanBusy = $state(false);
@@ -18,7 +9,6 @@ export function createLiveStore() {
   let totalPorts = $state(0);
   let statusText = $state('');
   let toasts = $state<ToastData[]>([]);
-  let updateProgress = $state<UpdateDownloadProgress | null>(null);
 
   function addToast(t: ToastData) {
     toasts = [...toasts, t];
@@ -49,8 +39,6 @@ export function createLiveStore() {
     get toasts() { return toasts; },
     addToast,
     removeToast,
-    get updateProgress() { return updateProgress; },
-    set updateProgress(v: UpdateDownloadProgress | null) { updateProgress = v; },
   };
 }
 

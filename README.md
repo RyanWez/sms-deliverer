@@ -71,8 +71,8 @@ By leveraging **Tauri v2** and **Rust** on the backend paired with **Svelte 5** 
   - Filter by port, sender, date range, or OTP-only messages.
   - Table and card view modes with customizable pagination.
   - Batch message deletion directly from SIM storage (`AT+CMGD`).
-- **Cryptographically Secured Auto-Updater**: Native Tauri auto-updater integration with minisign cryptographic signature verification.
-- **Synthetic Browser Preview**: Built-in mock data provider allowing full frontend development and UI inspection inside standard web browsers without needing physical hardware connected.
+- **Cryptographically Secured Auto-Updater**: Native Tauri auto-updater integration with minisign cryptographic signature verification. Settings → Updates presents the release notes for a found version before anything is downloaded, and keeps the download and the install as separate steps so the restart happens when the operator chooses it rather than mid-shift. Manual checks are rate limited to one request per minute.
+- **Synthetic Browser Preview**: Built-in mock data provider allowing full frontend development and UI inspection inside standard web browsers without needing physical hardware connected. The updater joins in: a dev-only preview release exercises the notes box, the download progress and the restart prompt without cutting a real release.
 
 ---
 
