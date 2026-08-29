@@ -35,6 +35,13 @@
     return p?.sim_number || '-';
   }
 
+  // Only offer the toggle where the collapsed view can actually hide something:
+  // multi-part SMS carry newlines, and long single-part texts overflow one line
+  // at every practical column width.
+  function needsExpand(text: string): boolean {
+    return text.includes('\n') || text.length > 60;
+  }
+
   let containerEl: HTMLElement | undefined = $state();
   let theadEl: HTMLElement | undefined = $state();
   let ro: ResizeObserver | null = null;
@@ -210,11 +217,30 @@
                 <span class="text-xs text-muted-foreground">-</span>
               {/if}
             </td>
-            <td class="text-xs text-muted-foreground" class:truncate={!messagesStore.isExpanded(item.id)} title={item.message.text}>
-              {#if item.is_new}
-                <span class="w-1.5 h-1.5 rounded-full bg-primary inline-block mr-1.5 animate-pulse-dot shrink-0" title="Unread"></span>
-              {/if}
-              <span class="break-words">{item.message.text.replace(/\n/g, ' ')}</span>
+            <td class="text-xs text-muted-foreground align-top">
+              <div class="flex items-start gap-1.5">
+                {#if item.is_new}
+                  <span class="w-1.5 h-1.5 mt-[0.4rem] rounded-full bg-primary inline-block shrink-0 animate-pulse-dot" title="Unread"></span>
+                {/if}
+                <span
+                  class="min-w-0 flex-1 break-words"
+                  class:truncate={!messagesStore.isExpanded(item.id)}
+                  class:whitespace-pre-wrap={messagesStore.isExpanded(item.id)}
+                  title={messagesStore.isExpanded(item.id) ? undefined : item.message.text}
+                >{messagesStore.isExpanded(item.id) ? item.message.text : item.message.text.replace(/\n/g, ' ')}</span>
+                {#if needsExpand(item.message.text)}
+                  <button
+                    class="msg-expand-btn"
+                    aria-expanded={messagesStore.isExpanded(item.id)}
+                    aria-label={messagesStore.isExpanded(item.id) ? 'Collapse message text' : 'Show full message text'}
+                    title={messagesStore.isExpanded(item.id) ? 'Collapse' : 'Show full message'}
+                    onclick={(e) => { e.stopPropagation(); messagesStore.toggleExpanded(item.id); }}
+                    onkeydown={(e) => e.stopPropagation()}
+                  >
+                    <Icon name="chevron-down" size={13} class={messagesStore.isExpanded(item.id) ? 'rotate-180 transition-transform' : 'transition-transform'} />
+                  </button>
+                {/if}
+              </div>
             </td>
           </tr>
         {/each}
@@ -284,9 +310,23 @@
                 {item.otp}
               </span>
             {/if}
-            <div class="text-xs text-muted-foreground leading-relaxed line-clamp-2">
-              {item.message.text.replace(/\n/g, ' ')}
+            <div
+              class="text-xs text-muted-foreground leading-relaxed break-words"
+              class:line-clamp-2={!messagesStore.isExpanded(item.id)}
+              class:whitespace-pre-wrap={messagesStore.isExpanded(item.id)}
+            >
+              {messagesStore.isExpanded(item.id) ? item.message.text : item.message.text.replace(/\n/g, ' ')}
             </div>
+            {#if needsExpand(item.message.text)}
+              <button
+                class="msg-expand-link"
+                aria-expanded={messagesStore.isExpanded(item.id)}
+                onclick={(e) => { e.stopPropagation(); messagesStore.toggleExpanded(item.id); }}
+                onkeydown={(e) => e.stopPropagation()}
+              >
+                {messagesStore.isExpanded(item.id) ? 'Show less' : 'Show full message'}
+              </button>
+            {/if}
           </div>
         {/each}
       </div>
