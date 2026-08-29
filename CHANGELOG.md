@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/RyanWez/sms-deliverer/compare/v1.3.0...v1.3.1) (2026-08-29)
+
+
+### Bug Fixes
+
+* **ci:** pass the release body into latest.json so the update panel has notes ([0b82eb5](https://github.com/RyanWez/sms-deliverer/commit/0b82eb543c43cd4b7faf52192491d05ecbfafc6b))
+
 ## [1.3.0](https://github.com/RyanWez/sms-deliverer/compare/v1.2.0...v1.3.0) (2026-08-29)
 
 
