@@ -49,5 +49,12 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseId: ${{ github.event.release.id }}
+          # The `notes` field of the generated latest.json is taken verbatim from
+          # this input (tauri-action passes it straight to uploadVersionJSON), and
+          # the in-app updater panel renders those notes. Without it the panel
+          # offers an update with nothing to read. It does not rewrite the GitHub
+          # release body: with releaseId set, tauri-action only uses the body for
+          # the updater manifest.
+          releaseBody: ${{ github.event.release.body }}
           args: ${{ matrix.args }}
           updaterJsonPreferNsis: true
