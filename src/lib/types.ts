@@ -5,6 +5,12 @@ export interface PortInfo {
   checked: boolean;
   sim_number: string;
   /**
+   * ICCID of the card in this slot, once a probe has read it. The phone number is
+   * filed against this rather than against the port, because tty numbering is
+   * reassigned on every hotplug.
+   */
+  iccid?: string | null;
+  /**
    * Result of the last liveness probe: `true` a modem answered, `false` the
    * device node exists but nothing replied (empty SIM slot), `null` never
    * probed. A SIM bank publishes a port per channel whether or not a SIM is

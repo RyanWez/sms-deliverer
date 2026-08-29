@@ -39,6 +39,11 @@ pub struct PortInfo {
     pub path: String,
     pub checked: bool,
     pub sim_number: String,
+    /// ICCID of the card in this slot, once a probe has read it. Phone numbers
+    /// are filed against this rather than against the port, because tty
+    /// numbering is reassigned on every hotplug.
+    #[serde(default)]
+    pub iccid: Option<String>,
     /// Result of the last liveness probe: `Some(true)` a modem answered,
     /// `Some(false)` the node exists but nothing replied (empty SIM slot),
     /// `None` never probed. A SIM bank creates a tty per channel whether or not

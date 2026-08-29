@@ -1,4 +1,4 @@
-# 03 — Troubleshooting Casebook (တကယ်ဖြစ်ခဲ့တဲ့ ၁၁ ခု)
+# 03 — Troubleshooting Casebook (တကယ်ဖြစ်ခဲ့တဲ့ ၁၂ ခု)
 
 > Format: Symptom → Root Cause → Fix → Preventive Rule. Debug ခင် ဒီထဲ အရင်ရှာပါ။
 
@@ -134,6 +134,30 @@
   cache ထဲ အရင်ရခဲ့တဲ့ number တွေ အတိအကျ ကျန်နေတယ် (`ussd_one_port` ရဲ့ `else` branch က log ပဲ ရေးတယ်)။
   ဒါပေမဲ့ **slot တစ်ခုထဲမှာ SIM လဲထည့်လိုက်ရင်** အရင် number က stable path key ပေါ်မှာ ကျန်နေမယ် —
   ဒါက cache ရဲ့ တစ်ခုတည်းသော အန္တရာယ်
+
+## 1️⃣2️⃣ Port တစ်ခုက SIM နံပါတ် နှစ်ခု၊ With SIM 34 ဆိုပေမဲ့ modem 32 ပဲ ရှိတာ
+
+- **Symptom:** ttyUSB39 (READY) နဲ့ ttyUSB43 (NO MODEM) နှစ်ခုလုံး `09651995803` ပြ။
+  ttyUSB27/28 က `09652187632` တူ၊ ttyUSB30/31 က `09675797146` တူ (နှစ်ခုလုံး READY)။
+  Badge မှာ `With SIM 34` ဒါပေမဲ့ `32 modems` / `Selected 32`
+- **Root Cause:** `stable_id()` က **တစ်ခါမှ match မဖြစ်ခဲ့ဘူး**။ `serialport` က
+  `/dev/ttyUSB7` ပြန်ပေးတယ်၊ `/dev/serial/by-path/...` symlink က `../../ttyUSB7` ကို ချိတ်တယ် —
+  code မှာ `target.file_name() == name` လို့ တိုက်ကြည့်တာ ဆိုတော့ `"ttyUSB7" == "/dev/ttyUSB7"` →
+  **အမြဲ false**။ ဒါကြောင့် `p.path` က port name ပဲ ဖြစ်နေတယ်၊ cache key က မတည်ငြိမ်တဲ့ tty name။
+  ဒီအပေါ် `number_of(stable, legacy)` က legacy **name** key ကို fallback လုပ်တာ ထပ်ဆင့် ဆိုးတယ် —
+  hotplug ပြီး နံပါတ် ရွှေ့သွားရင် အရင် SIM ရဲ့ number က အခု အဲ့ name ရတဲ့ တခြား stick ပေါ် ပေါ်လာတယ်။
+  CSV ထဲ `/dev/ttyUSB64..67` row တွေ ရှိတာ (ttyUSB48..51 နဲ့ number တူ) က renumbering ဖြစ်ခဲ့တဲ့ သက်သေ
+- **Fix (architecture ပြောင်း):** number ကို port ပေါ် မဖိုင်ဘူး၊ **ICCID** ပေါ် ဖိုင်တယ်။
+  `probe_port` က `AT+CCID`/`AT+ICCID`/`AT^ICCID` နဲ့ card ကို ခွဲသိတယ်။ CSV format v2 =
+  `sim,<iccid>,<number>` (durable) + `slot,<stable_path>,<iccid>` (hint ပဲ)။
+  Modem မတွေ့တဲ့ slot က hint ပြုတ်တယ် (number က ICCID အောက်မှာ ကျန်နေတယ်)၊
+  SIM ကို slot တခြားကို ရွှေ့ရင် number လိုက်လာတယ်။ v1 (port-keyed) file က migrate မလုပ်ဘူး —
+  `sim_numbers.csv.v1-port-keyed` အဖြစ် ဘေးဖယ်ထားပြီး စွန့်ပစ်တယ် (key တွေ ယုံလို့ မရတော့ဘူး)။
+  Frontend `hasValidSim()` က `alive === false` port ကို With SIM အဖြစ် မရေတွက်တော့ဘူး
+- **Rule:** "stable id" လို့ နာမည်ပေးထားရုံနဲ့ stable မဖြစ်ဘူး — resolve ဖြစ်/မဖြစ် **test ရေးပါ**
+  (`stable_id_resolves_a_by_path_symlink` က tmpdir symlink နဲ့ စစ်တယ်)။ Cache key ရွေးတဲ့အခါ
+  **hardware ကိုယ်တိုင် ပြောပြတဲ့ identity** ကို ရွေး (ICCID)၊ OS က ပေးတဲ့ နာမည် မဟုတ်။
+  Legacy fallback key ဆိုတာ silent data corruption ရဲ့ လမ်း — migrate မရရင် ဖယ်ပစ်တာ ပိုကောင်း။
 
 ## Bonus UX Notes
 

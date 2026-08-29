@@ -6,7 +6,7 @@
   import { messagesStore } from '$lib/stores/messages.svelte';
   import { liveStore } from '$lib/stores/live.svelte';
   import { api } from '$lib/services/api';
-  import { portLabel, portStatus } from '$lib/utils/port';
+  import { portLabel, portStatus, hasValidSim as portHasValidSim } from '$lib/utils/port';
   import type { PortInfo } from '$lib/types';
 
   let refreshing = $state(false);
@@ -16,12 +16,7 @@
   let statusFilter = $state<'all' | 'with_sim' | 'no_sim' | 'selected' | 'no_modem' | 'errors'>('all');
 
   function hasValidSim(p: PortInfo): boolean {
-    return Boolean(
-      p.sim_number &&
-      p.sim_number !== '-' &&
-      p.sim_number.trim() !== '' &&
-      p.sim_number !== 'Unknown'
-    );
+    return portHasValidSim(p);
   }
 
   /** Probed and silent — an empty SIM slot rather than a fault. */

@@ -40,6 +40,7 @@ static CUSD_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"\+CUSD:\s*(\d+),"([^"]*)"(?:,(\d+))?"#).unwrap());
 static NUMBER_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:959|09)\d{8,10}").unwrap());
 static CNUM_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\+CNUM:\s*(.+)$").unwrap());
+static ICCID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\d{18,20}[Ff]?").unwrap());
 static DATE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(\d{2,4})/(\d{1,2})/(\d{1,2})[ ,](\d{1,2}):(\d{1,2}):(\d{1,2})(?:\s*([+-])(\d{1,2}))?",
@@ -244,6 +245,32 @@ pub fn extract_number_from_cnum(resp: &str) -> Option<String> {
                 .find_map(|f| NUMBER_RE.find(f).map(|m| m.as_str().to_string()))
         })
         .next()
+}
+
+/// Pull the ICCID out of a `+CCID:` / `+ICCID:` / `^ICCID:` reply.
+///
+/// Vendors disagree on the prefix and some answer with the bare digits, so the
+/// digit run is what we key on: 19 or 20 characters, occasionally padded with a
+/// trailing `F` when the last nibble is unused. The padding is dropped so the
+/// same card always produces the same key regardless of which command answered.
+pub fn extract_iccid(resp: &str) -> Option<String> {
+    for line in resp.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("AT") || is_result_code(line) {
+            continue;
+        }
+        if let Some(m) = ICCID_RE.find(line) {
+            let id = m.as_str().trim_end_matches(['F', 'f']).to_string();
+            if id.len() >= 18 {
+                return Some(id);
+            }
+        }
+    }
+    None
+}
+
+fn is_result_code(line: &str) -> bool {
+    matches!(line, "OK" | "ERROR") || line.starts_with("+CME ERROR") || line.starts_with("+CMS ERROR")
 }
 
 // ── CMTI helpers ──
@@ -940,6 +967,38 @@ mod tests {
     fn extract_number_hex_ussd() {
         let r = "+CUSD: 2,\"09780001122\",15";
         assert_eq!(extract_number_from_ussd(r), Some("09780001122".into()));
+    }
+
+    // ── ICCID ──
+
+    #[test]
+    fn iccid_from_ccid_reply() {
+        let r = "+CCID: 8995010912345678901\r\n\r\nOK";
+        assert_eq!(
+            extract_iccid(r),
+            Some("8995010912345678901".into()),
+            "19-digit ICCID behind the +CCID prefix"
+        );
+    }
+
+    #[test]
+    fn iccid_strips_filler_nibble() {
+        let r = "+ICCID: 8995010912345678901F\r\nOK";
+        assert_eq!(extract_iccid(r), Some("8995010912345678901".into()));
+    }
+
+    #[test]
+    fn iccid_from_bare_digits() {
+        let r = "AT+CCID\r\n89950109123456789012\r\nOK";
+        assert_eq!(extract_iccid(r), Some("89950109123456789012".into()));
+    }
+
+    #[test]
+    fn iccid_absent_on_error() {
+        assert_eq!(extract_iccid("+CME ERROR: 10\r\n"), None);
+        assert_eq!(extract_iccid("OK"), None);
+        // A phone number is far too short to be mistaken for a card serial.
+        assert_eq!(extract_iccid("+CNUM: \"\",\"09780001122\",129"), None);
     }
 
     // ── AT+CNUM ──

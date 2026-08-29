@@ -66,7 +66,7 @@ By leveraging **Tauri v2** and **Rust** on the backend paired with **Svelte 5** 
 - **Intelligent OTP / Verification Code Detection**:
   - Built-in heuristic and regex engine identifying 4–8 digit verification codes and multilingual patterns.
   - Instant one-click or auto-copy to clipboard.
-- **USSD / SIM Phone Number Discovery**: SIM phone numbers are mapped to their hardware ports in three escalating steps, cheapest first. `AT+CNUM` reads EF_MSISDN straight off the SIM — no network, no dialogue, answers in milliseconds — and many banks are fully resolved by this alone. When the operator left that field blank, the app falls back to the carrier's own-number USSD codes (`*88#`, then the `*124#` balance dialogue, whose reply text usually echoes the MSISDN). Any USSD session left open by an earlier run is cancelled first, because firmware that still believes a dialogue is active rejects the next request with an instant `+CME ERROR: 100`, and a rejected code is retried once without the data-coding-scheme argument for firmware that will not accept it.
+- **USSD / SIM Phone Number Discovery**: Phone numbers are filed against the SIM's **ICCID**, not against the serial port. `/dev/ttyUSB*` numbering is handed out in enumeration order, so a reboot or a hotplug reshuffles it — keying on the port meant a number learned while a card was `ttyUSB43` reappeared on whatever unrelated stick was called `ttyUSB43` next time, which showed up as one number on two ports and as numbers on ports with no modem at all. Every probe reads `AT+CCID`, so the card identifies itself and its number follows it even if it is moved to another slot. Discovery itself escalates cheapest-first: `AT+CNUM` reads EF_MSISDN straight off the SIM (no network, answers in milliseconds), then the carrier's own-number USSD codes (`*88#`, then the `*124#` balance dialogue, whose reply usually echoes the MSISDN). Any USSD session left open by an earlier run is cancelled first, because firmware that still believes a dialogue is active rejects the next request with an instant `+CME ERROR: 100`, and a rejected code is retried once without the data-coding-scheme argument for firmware that will not accept it.
 - **Message Management & Filtering**:
   - Filter by port, sender, date range, or OTP-only messages.
   - Table and card view modes with customizable pagination.
@@ -288,12 +288,17 @@ device node existing says nothing about a modem being present:
      state is still worth talking to. No answer after both attempts and the port
      is reported `Modem not responding` immediately, in about a second, instead
      of running the sequences below against silence.
+   - `AT+CCID` (then `AT+ICCID`, `AT^ICCID` for vendors that spell it their own
+     way): identifies the card while the port is already open. A slot that stays
+     silent is recorded as holding no card, so its previous tenant's number stops
+     being displayed there.
 
 1. **Initialization**:
    - `ATE0`: Disable command echo.
    - `AT+CMEE=1`: Enable numeric extended error reporting.
 2. **SIM & Registration Status**:
    - `AT+CPIN?`: Verify SIM card is ready (`+CPIN: READY`).
+   - `AT+CCID`: Card serial, the key every phone number is filed against.
    - `AT+CUSD=2` then `AT+CNUM`: Cancel a stale USSD session, then read the
      subscriber number off the SIM before any network query is attempted.
    - `AT+CREG?`: Registration state. No result code here means a wedged modem

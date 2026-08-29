@@ -21,6 +21,20 @@ export function portLabel(name: string): string {
 
 export type PortStatusKey = 'error' | 'live' | 'connecting' | 'ready' | 'no-modem' | 'disabled';
 
+/**
+ * Does this port have a phone number worth acting on?
+ *
+ * A slot that was probed and stayed silent has no modem in it, so a number left
+ * over from whatever card used to be there is not something to select, filter on
+ * or count. Counting those is what made the With SIM badge read 34 on a bank
+ * holding 32 modems.
+ */
+export function hasValidSim(p: PortInfo): boolean {
+  if (p.alive === false) return false;
+  const n = p.sim_number?.trim();
+  return Boolean(n && n !== '-' && n !== 'Unknown');
+}
+
 export interface PortStatus {
   key: PortStatusKey;
   label: string;

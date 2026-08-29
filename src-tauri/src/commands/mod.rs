@@ -84,12 +84,17 @@ pub fn new_shared_state() -> SharedState {
         .into_iter()
         .map(|name| {
             let path = crate::core::modem::stable_id(&name);
-            let sim = sim_dir.number_of(&path, &name);
+            // Nothing has been probed yet, so the number shown is the one filed
+            // against whichever card was last seen in this slot. Detect Modems
+            // confirms or clears it.
+            let iccid = sim_dir.iccid_of(&path);
+            let sim = sim_dir.number_of(&path, iccid.as_deref());
             PortInfo {
                 name,
                 path,
                 checked: true,
                 sim_number: sim,
+                iccid,
                 alive: None,
                 live_ready: false,
                 live_error: None,
@@ -121,28 +126,28 @@ pub fn new_shared_state() -> SharedState {
 pub fn refresh_ports(state: tauri::State<'_, SharedState>) -> Vec<PortInfo> {
     let names = crate::core::modem::get_port_names();
     let mut st = lock_state(&state);
+    // Carry state over by stable path, never by tty name: the name is precisely
+    // what a replug reshuffles, so matching on it moves one stick's liveness and
+    // card onto a different stick.
     let old_map: std::collections::HashMap<String, PortInfo> =
-        st.ports.drain(..).map(|p| (p.name.clone(), p)).collect();
+        st.ports.drain(..).map(|p| (p.path.clone(), p)).collect();
     let ports: Vec<PortInfo> = names
         .into_iter()
         .map(|n| {
-            if let Some(mut old) = old_map.get(&n).cloned() {
-                old.path = crate::core::modem::stable_id(&n);
-                old.sim_number = st.sim_dir.number_of(&old.path, &n);
-                old.live_ready = false;
-                old.live_error = None;
-                old
-            } else {
-                let path = crate::core::modem::stable_id(&n);
-                PortInfo {
-                    name: n.clone(),
-                    path: path.clone(),
-                    checked: true,
-                    sim_number: st.sim_dir.number_of(&path, &n),
-                    alive: None,
-                    live_ready: false,
-                    live_error: None,
-                }
+            let path = crate::core::modem::stable_id(&n);
+            let old = old_map.get(&path);
+            let iccid = old
+                .and_then(|p| p.iccid.clone())
+                .or_else(|| st.sim_dir.iccid_of(&path));
+            PortInfo {
+                name: n,
+                sim_number: st.sim_dir.number_of(&path, iccid.as_deref()),
+                checked: old.map(|p| p.checked).unwrap_or(true),
+                alive: old.and_then(|p| p.alive),
+                iccid,
+                path,
+                live_ready: false,
+                live_error: None,
             }
         })
         .collect();
@@ -232,7 +237,10 @@ pub fn detect_ports(
                     }));
                     // An unopenable port is not the same as a silent one, but
                     // either way there is nothing to talk to right now.
-                    let alive = matches!(probed, Ok(Ok(true)));
+                    let (alive, iccid) = match probed {
+                        Ok(Ok(r)) => (r.alive, r.iccid),
+                        _ => (false, None),
+                    };
                     if alive {
                         alive2.fetch_add(1, Ordering::Relaxed);
                     }
@@ -240,6 +248,27 @@ pub fn detect_ports(
                     let text;
                     {
                         let mut st = lock_state(&st2);
+                        // Which card is in which slot is settled here, while the
+                        // port is open and has just identified itself. Nothing
+                        // downstream has to guess from tty numbering again.
+                        let path = st
+                            .ports
+                            .iter()
+                            .find(|p| p.name == port)
+                            .map(|p| p.path.clone());
+                        if let Some(path) = path {
+                            match iccid.as_deref() {
+                                Some(id) => st.sim_dir.set_slot(&path, id),
+                                // Nothing answered, so nothing is in this slot.
+                                // The card's number stays on file under its own
+                                // ICCID for whenever it shows up again.
+                                None if !alive => st.sim_dir.clear_slot(&path),
+                                // Answered but would not give up its ICCID —
+                                // a transient refusal shouldn't erase what we
+                                // already know about the slot.
+                                None => {}
+                            }
+                        }
                         if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
                             p.alive = Some(alive);
                             // Leaving dead ports selected is what made every
@@ -248,6 +277,21 @@ pub fn detect_ports(
                             p.checked = alive;
                             p.live_error = None;
                             p.live_ready = false;
+                            if iccid.is_some() {
+                                p.iccid = iccid.clone();
+                            } else if !alive {
+                                p.iccid = None;
+                            }
+                        }
+                        let resolved = st
+                            .ports
+                            .iter()
+                            .find(|p| p.name == port)
+                            .map(|p| st.sim_dir.number_of(&p.path, p.iccid.as_deref()));
+                        if let (Some(num), Some(p)) =
+                            (resolved, st.ports.iter_mut().find(|p| p.name == port))
+                        {
+                            p.sim_number = num;
                         }
                         st.status_text = format!(
                             "Detecting {}/{}  |  Modems found: {}",
@@ -269,6 +313,9 @@ pub fn detect_ports(
         {
             let mut st = lock_state(&state_clone);
             st.detect_busy = false;
+            // The slot→card map changed, so persist it: the next launch can then
+            // show numbers before anything has been probed.
+            st.sim_dir.save();
             st.status_text = format!(
                 "Detect done. Modems found: {}/{}  |  {} port(s) with no modem deselected",
                 found,
@@ -561,7 +608,8 @@ fn ussd_one_port(
     done: &AtomicUsize,
     total: usize,
 ) {
-    let (num, err) = crate::core::modem::get_sim_number(port);
+    let found_id = crate::core::modem::get_sim_number(port);
+    let (num, err, iccid) = (found_id.number, found_id.error, found_id.iccid);
     // Same liveness bookkeeping as the scan: only the probe's own verdict marks
     // a port dead, so a registered modem that simply had no USSD answer keeps
     // its "alive" status.
@@ -572,10 +620,28 @@ fn ussd_one_port(
     } else {
         None
     };
-    if let Some(alive) = observed_alive {
+    {
         let mut st = lock_state(state);
+        // Record the card even when the number lookup failed: knowing which SIM
+        // sits in the slot is what keeps a previously-learned number attached to
+        // the right port.
+        if let Some(ref id) = iccid {
+            let path = st
+                .ports
+                .iter()
+                .find(|p| p.name == port)
+                .map(|p| p.path.clone());
+            if let Some(path) = path {
+                st.sim_dir.set_slot(&path, id);
+            }
+        }
         if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
-            p.alive = Some(alive);
+            if let Some(alive) = observed_alive {
+                p.alive = Some(alive);
+            }
+            if iccid.is_some() {
+                p.iccid = iccid.clone();
+            }
         }
     }
     if let Some(ref n) = num {
@@ -584,15 +650,19 @@ fn ussd_one_port(
         let ports_snapshot;
         {
             let mut st = lock_state(state);
-            // Key the cache by the stable path so ttyUSB renumbering doesn't
-            // drop or reassign the SIM number later.
-            let key = st
-                .ports
-                .iter()
-                .find(|p| p.name == port)
-                .map(|p| p.path.clone())
-                .unwrap_or_else(|| port.to_string());
-            st.sim_dir.numbers.insert(key, n.clone());
+            match iccid.as_deref() {
+                // Filed against the card, so it survives renumbering and follows
+                // the SIM into another slot.
+                Some(id) => st.sim_dir.set_number(id, n),
+                // No ICCID means no durable key. Show the number for this
+                // session but do not write a guess to disk — that is how one
+                // number ended up on two ports.
+                None => log::warn!(
+                    "{}: number {} not saved — the modem would not report its ICCID",
+                    port,
+                    n
+                ),
+            }
             if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
                 p.sim_number = n.clone();
             }

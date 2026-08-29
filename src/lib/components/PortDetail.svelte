@@ -19,16 +19,18 @@
     return messagesStore.getOtpCountForPort(port.name);
   });
 
-  let copiedField = $state<'name' | 'sim' | null>(null);
+  type CopyField = 'name' | 'sim' | 'iccid';
+
+  let copiedField = $state<CopyField | null>(null);
   let resetTimer: ReturnType<typeof setTimeout> | undefined;
 
-  function flashCopied(field: 'name' | 'sim') {
+  function flashCopied(field: CopyField) {
     copiedField = field;
     clearTimeout(resetTimer);
     resetTimer = setTimeout(() => (copiedField = null), 1500);
   }
 
-  function copyValue(field: 'name' | 'sim', value: string) {
+  function copyValue(field: CopyField, value: string) {
     navigator.clipboard.writeText(value);
     flashCopied(field);
   }
@@ -82,6 +84,23 @@
           >
             <Icon name={copiedField === 'sim' ? 'check' : 'copy'} size={12} strokeWidth={2} />
           </button>
+        {/if}
+      </dd>
+
+      <dt class="meta-label">SIM card (ICCID)</dt>
+      <dd class="meta-value flex items-center justify-end gap-1 min-w-0">
+        {#if port.iccid}
+          <span class="font-mono truncate" title={port.iccid}>{port.iccid}</span>
+          <button
+            class="btn-icon w-6 h-6"
+            onclick={() => copyValue('iccid', port.iccid ?? '')}
+            title="Copy ICCID"
+            aria-label="Copy ICCID"
+          >
+            <Icon name={copiedField === 'iccid' ? 'check' : 'copy'} size={12} strokeWidth={2} />
+          </button>
+        {:else}
+          <span class="text-muted-foreground/60 italic">Not read yet</span>
         {/if}
       </dd>
 

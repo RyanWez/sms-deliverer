@@ -71,6 +71,16 @@ pub fn port_num(s: &str) -> u32 {
         .unwrap_or(0)
 }
 
+/// Device-node basename: `/dev/ttyUSB7` → `ttyUSB7`, `COM3` → `COM3`.
+///
+/// `serialport` hands us full device paths on Linux while `/dev/serial/by-path`
+/// symlinks point at `../../ttyUSB7`, so the two must be compared on the
+/// basename. Comparing the raw strings never matched, which silently reduced
+/// every "stable" id below to the mutable tty name.
+pub fn device_basename(name: &str) -> &str {
+    name.rsplit('/').next().unwrap_or(name)
+}
+
 /// Best-effort stable identity for a serial port.
 ///
 /// On Linux we walk `/dev/serial/by-path/<topological-id> -> ../../ttyUSBx`
@@ -78,30 +88,33 @@ pub fn port_num(s: &str) -> u32 {
 /// as the stable key. The name reflects physical USB topology, so ttyUSB
 /// renumbering after a reboot/hotplug can't scramble SIM-number assignments.
 /// When no by-path link matches (other OSes, exotic setups) we fall back to the
-/// mutable name — behaviour identical to before this feature was added.
+/// mutable name.
 pub fn stable_id(name: &str) -> String {
     #[cfg(target_os = "linux")]
     {
-        if let Ok(entries) = std::fs::read_dir("/dev/serial/by-path") {
-            for e in entries.flatten() {
-                let Ok(target) = std::fs::read_link(e.path()) else {
-                    continue;
-                };
-                let matches = target.file_name().map(|f| f == name).unwrap_or(false);
-                if matches {
-                    if let Some(id) = e.file_name().to_str() {
-                        return id.to_string();
-                    }
-                }
-            }
-        }
-        name.to_string()
+        stable_id_in(std::path::Path::new("/dev/serial/by-path"), name)
+            .unwrap_or_else(|| name.to_string())
     }
     #[cfg(not(target_os = "linux"))]
     {
         let _ = name;
         name.to_string()
     }
+}
+
+/// The by-path lookup, with the directory injected so it can be tested.
+#[cfg(target_os = "linux")]
+fn stable_id_in(dir: &std::path::Path, name: &str) -> Option<String> {
+    let want = device_basename(name);
+    for e in std::fs::read_dir(dir).ok()?.flatten() {
+        let Ok(target) = std::fs::read_link(e.path()) else {
+            continue;
+        };
+        if target.file_name().map(|f| f == want).unwrap_or(false) {
+            return e.file_name().to_str().map(|s| s.to_string());
+        }
+    }
+    None
 }
 
 pub fn open_port(name: &str) -> Result<Port, String> {
@@ -156,11 +169,39 @@ fn probe_channel_with(ch: &mut at::AtChannel, timeout_ms: u64, attempts: usize) 
 /// `Ok(false)` means the node exists but nothing replied (empty slot, unpowered
 /// stick); `Err` means the device could not be opened at all (unplugged,
 /// permissions, already held by another process).
-pub fn probe_port(port_name: &str) -> Result<bool, String> {
+/// What a single probe learned about a port.
+pub struct ProbeResult {
+    pub alive: bool,
+    /// The SIM's own serial number, when the modem would give it up. This is the
+    /// only identity that survives both ttyUSB renumbering and a SIM being moved
+    /// to another slot, so it — not the port — is what a phone number is filed
+    /// against.
+    pub iccid: Option<String>,
+}
+
+pub fn probe_port(port_name: &str) -> Result<ProbeResult, String> {
     let mut ch = at::AtChannel::open(port_name)?;
     let alive = probe_channel(&mut ch);
-    log::debug!("{}: probe -> {}", port_name, if alive { "alive" } else { "silent" });
-    Ok(alive)
+    log::debug!(
+        "{}: probe -> {}",
+        port_name,
+        if alive { "alive" } else { "silent" }
+    );
+    let iccid = if alive { read_iccid(&mut ch) } else { None };
+    Ok(ProbeResult { alive, iccid })
+}
+
+/// Read the SIM's ICCID. Cheap (a file on the card, no network) but not
+/// universally spelled the same, so try the three common forms and stop at the
+/// first that yields digits.
+fn read_iccid(ch: &mut at::AtChannel) -> Option<String> {
+    for cmd in ["AT+CCID", "AT+ICCID", "AT^ICCID"] {
+        let resp = ch.send(cmd, 1500);
+        if let Some(id) = decoder::extract_iccid(&resp) {
+            return Some(id);
+        }
+    }
+    None
 }
 
 pub fn read_port(port_name: &str) -> ReadResult {
@@ -406,10 +447,29 @@ pub fn delete_messages(port_name: &str, indices: Option<&[i32]>) -> OpResult {
     }
 }
 
-pub fn get_sim_number(port_name: &str) -> (Option<String>, Option<String>) {
+/// What one "Get SIM Numbers" pass learned about a port.
+pub struct SimIdentity {
+    pub number: Option<String>,
+    /// Read whenever the modem answered at all, so the number can be filed
+    /// against the card rather than against the tty name.
+    pub iccid: Option<String>,
+    pub error: Option<String>,
+}
+
+impl SimIdentity {
+    fn failed(iccid: Option<String>, error: impl Into<String>) -> Self {
+        Self {
+            number: None,
+            iccid,
+            error: Some(error.into()),
+        }
+    }
+}
+
+pub fn get_sim_number(port_name: &str) -> SimIdentity {
     let mut ch = match at::AtChannel::open(port_name) {
         Ok(ch) => ch,
-        Err(e) => return (None, Some(e)),
+        Err(e) => return SimIdentity::failed(None, e),
     };
 
     // Probe before anything else: `ATE0` and `AT+CSCS` are 3 s each, so running
@@ -417,11 +477,16 @@ pub fn get_sim_number(port_name: &str) -> (Option<String>, Option<String>) {
     // there is nothing there.
     if !probe_channel(&mut ch) {
         log::warn!("{}: {} (no reply to AT)", port_name, NOT_RESPONDING);
-        return (None, Some(NOT_RESPONDING.into()));
+        return SimIdentity::failed(None, NOT_RESPONDING);
     }
 
     ch.send("ATE0", 3000);
     ch.send("AT+CSCS=\"GSM\"", 3000);
+
+    // Identify the card before asking anything about the number. Whatever is
+    // learned below belongs to this ICCID, not to whichever tty name the stick
+    // happens to have today.
+    let iccid = read_iccid(&mut ch);
 
     // Cancel any USSD session left open by an earlier run, or by a crash in the
     // middle of a dialogue. Firmware that still believes a session is active
@@ -436,7 +501,11 @@ pub fn get_sim_number(port_name: &str) -> (Option<String>, Option<String>) {
     if let Some(n) = decoder::extract_number_from_cnum(&cnum_resp) {
         let normalized = decoder::normalize_number(&n);
         log::info!("{}: SIM number {} (AT+CNUM)", port_name, normalized);
-        return (Some(normalized), None);
+        return SimIdentity {
+            number: Some(normalized),
+            iccid,
+            error: None,
+        };
     }
 
     // Network pre-check: USSD fails opaquely (+CME ERROR: 100 or no reply)
@@ -453,13 +522,13 @@ pub fn get_sim_number(port_name: &str) -> (Option<String>, Option<String>) {
     if !creg_resp.lines().any(|l| at::is_final(l.trim())) {
         let _ = ch.send("AT+CSCS=\"GSM\"", 1000);
         log::warn!("{}: USSD skipped — no reply to AT+CREG?", port_name);
-        return (None, Some("Modem not answering network queries".into()));
+        return SimIdentity::failed(iccid, "Modem not answering network queries");
     }
     let creg_stat = parse_creg_stat(&creg_resp);
     if let Some(problem) = network_problem(creg_stat, rssi) {
         let _ = ch.send("AT+CSCS=\"GSM\"", 1000);
         log::warn!("{}: USSD skipped — {}", port_name, problem);
-        return (None, Some(problem));
+        return SimIdentity::failed(iccid, problem);
     }
 
     let mut num = None;
@@ -477,7 +546,11 @@ pub fn get_sim_number(port_name: &str) -> (Option<String>, Option<String>) {
         Some(n) => {
             let normalized = decoder::normalize_number(&n);
             log::info!("{}: SIM number {}", port_name, normalized);
-            (Some(normalized), None)
+            SimIdentity {
+                number: Some(normalized),
+                iccid,
+                error: None,
+            }
         }
         None => {
             log::warn!("{}: no SIM number returned", port_name);
@@ -488,7 +561,7 @@ pub fn get_sim_number(port_name: &str) -> (Option<String>, Option<String>) {
                 (Some(s), None) => format!(" (reg stat {})", s),
                 _ => String::new(),
             };
-            (None, Some(format!("No number returned{}", detail)))
+            SimIdentity::failed(iccid, format!("No number returned{}", detail))
         }
     }
 }
@@ -886,5 +959,87 @@ mod tests {
         assert_eq!(port_num("COM7"), 7);
         assert_eq!(port_num("/dev/ttyACM0"), 0);
         assert_eq!(port_num("no-digits"), 0);
+    }
+
+    #[test]
+    fn device_basename_strips_the_directory() {
+        assert_eq!(device_basename("/dev/ttyUSB20"), "ttyUSB20");
+        assert_eq!(device_basename("COM7"), "COM7");
+        assert_eq!(device_basename("ttyUSB3"), "ttyUSB3");
+    }
+
+    /// The bug this guards: `serialport` reports `/dev/ttyUSB7` while by-path
+    /// symlinks point at `../../ttyUSB7`. Comparing those two strings never
+    /// matched, so every port fell back to its mutable tty name as its "stable"
+    /// key — and a number learned on one stick reappeared on whichever stick
+    /// inherited that name after a hotplug.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stable_id_resolves_a_by_path_symlink() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!("sms-bypath-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        symlink("../../ttyUSB7", dir.join("pci-0000:03:00.3-usb-0:4.1:1.0-port0")).unwrap();
+        symlink("../../ttyUSB8", dir.join("pci-0000:03:00.3-usb-0:4.1:1.2-port0")).unwrap();
+
+        assert_eq!(
+            stable_id_in(&dir, "/dev/ttyUSB7").as_deref(),
+            Some("pci-0000:03:00.3-usb-0:4.1:1.0-port0")
+        );
+        assert_eq!(
+            stable_id_in(&dir, "/dev/ttyUSB8").as_deref(),
+            Some("pci-0000:03:00.3-usb-0:4.1:1.2-port0")
+        );
+        assert_eq!(stable_id_in(&dir, "/dev/ttyUSB9"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── ICCID ──
+
+    /// Answers `AT+CCID` with an error and `AT+ICCID` with the card serial, which
+    /// is how a good part of the cheap-modem population behaves.
+    struct IccidTransport {
+        pending: Vec<u8>,
+    }
+
+    impl Transport for IccidTransport {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.pending.is_empty() {
+                return Err(io::ErrorKind::TimedOut.into());
+            }
+            let n = self.pending.len().min(buf.len());
+            buf[..n].copy_from_slice(&self.pending[..n]);
+            self.pending.drain(..n);
+            Ok(n)
+        }
+
+        fn write_all(&mut self, data: &[u8]) -> io::Result<()> {
+            let cmd = String::from_utf8_lossy(data).trim().to_string();
+            let reply: &[u8] = match cmd.as_str() {
+                "AT+CCID" => b"\r\n+CME ERROR: 4\r\n",
+                "AT+ICCID" => b"\r\n+ICCID: 8995010912345678901F\r\n\r\nOK\r\n",
+                _ => b"\r\nOK\r\n",
+            };
+            self.pending.extend_from_slice(reply);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn read_iccid_falls_through_to_the_vendor_spelling() {
+        let mut ch = AtChannel::with_transport(
+            "ttyUSBtest",
+            Box::new(IccidTransport {
+                pending: Vec::new(),
+            }),
+        );
+        assert_eq!(read_iccid(&mut ch).as_deref(), Some("8995010912345678901"));
+    }
+
+    #[test]
+    fn read_iccid_gives_up_quietly_when_nothing_answers() {
+        let mut ch = channel("\r\nOK\r\n");
+        assert_eq!(read_iccid(&mut ch), None);
     }
 }

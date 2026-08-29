@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { portLabel, portNum, portStatus } from './port.ts';
+import { hasValidSim, portLabel, portNum, portStatus } from './port.ts';
 import type { PortInfo } from '../types.ts';
 
 function port(over: Partial<PortInfo> = {}): PortInfo {
@@ -77,4 +77,25 @@ test('never-probed ports keep the old behaviour', () => {
   // alive === null must not be mistaken for "no modem", or a fresh launch would
   // paint the whole bank grey before anything has been probed.
   assert.equal(portStatus(port({ alive: null, checked: true }), false).key, 'ready');
+});
+
+test('a slot with no modem is not counted as having a SIM', () => {
+  // The reported symptom: With SIM read 34 on a bank with 32 modems, because two
+  // silent slots were still showing a number left over from an earlier
+  // enumeration. Selecting those is also what reintroduces their timeouts.
+  assert.equal(hasValidSim(port({ alive: false, sim_number: '09651995803' })), false);
+  assert.equal(hasValidSim(port({ alive: true, sim_number: '09651995803' })), true);
+});
+
+test('placeholder SIM numbers do not count', () => {
+  assert.equal(hasValidSim(port({ sim_number: '' })), false);
+  assert.equal(hasValidSim(port({ sim_number: '   ' })), false);
+  assert.equal(hasValidSim(port({ sim_number: '-' })), false);
+  assert.equal(hasValidSim(port({ sim_number: 'Unknown' })), false);
+});
+
+test('an unprobed port with a remembered number still counts', () => {
+  // Straight after launch nothing has been probed, and the number filed against
+  // the card last seen in this slot is the best information available.
+  assert.equal(hasValidSim(port({ alive: null, sim_number: '09651995803' })), true);
 });
