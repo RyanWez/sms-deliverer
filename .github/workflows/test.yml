@@ -60,3 +60,28 @@ jobs:
       - name: check release profile compiles (linux only)
         if: matrix.platform == 'ubuntu-22.04'
         run: cargo check --release --locked --manifest-path src-tauri/Cargo.toml
+
+  frontend:
+    permissions:
+      contents: read
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node 22 is required: the frontend tests use the built-in test runner
+      # plus --experimental-strip-types instead of a separate test framework.
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: install frontend dependencies
+        run: npm ci
+
+      - name: type-check
+        run: npm run check
+
+      - name: run frontend tests
+        run: npm test

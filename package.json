@@ -6,6 +6,8 @@
     "dev": "vite --port 1420",
     "build": "vite build",
     "preview": "vite preview",
+    "check": "svelte-check --threshold warning",
+    "test": "node --experimental-strip-types --test \"src/**/*.test.ts\"",
     "tauri": "tauri"
   },
   "dependencies": {
