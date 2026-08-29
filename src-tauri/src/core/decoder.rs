@@ -624,6 +624,12 @@ fn decode_deliver(pdu_hex: &str, port: &str) -> Option<DeliverInfo> {
         SmsAlphabet::Gsm7 => {
             let mut septets = udl;
             let mut skip = 0;
+            // GSM-7 septets are counted from the start of the UDH, not from the
+            // first payload byte: the header occupies whole septets plus fill
+            // bits. `skip` walks over both, so the bit cursor must start at the
+            // UDHL byte even though `i` moves past the header for the UCS-2
+            // recovery probe below.
+            let ud_start = i;
             if has_udh && i < bytes.len() {
                 let udhl = bytes[i] as usize;
                 if udhl > 0 && i + 1 + udhl <= bytes.len() {
@@ -633,7 +639,7 @@ fn decode_deliver(pdu_hex: &str, port: &str) -> Option<DeliverInfo> {
                 skip = ((udhl + 1) * 8).div_ceil(7);
                 septets = udl.saturating_sub(skip);
             }
-            let decoded = decode_gsm7(&bytes, i, septets, skip);
+            let decoded = decode_gsm7(&bytes, ud_start, septets, skip);
             // Automatic recovery: If GSM-7 output contains corrupt symbols and raw payload is valid UTF-16BE
             let raw_len = bytes.len().saturating_sub(i);
             if raw_len >= 2 && decoded.chars().any(|c| "¿ΩÉÑ¡ΔΦΓΛΠΨΣΘΞÞßῪῤò".contains(c)) {
@@ -1114,6 +1120,122 @@ mod tests {
             "ဝိုး! ဒေတာ 1.5GB ကို ၉၉၉ ကျပ်နဲ့ 15 ရက်စာ အသုံးပြုနိုင်ပါသည်"
         );
         assert_eq!(out[0].part_indices, vec![11, 12]);
+    }
+
+    /// Build a deliver PDU carrying GSM-7 user data behind a UDH. GSM-7 septets
+    /// must start on the septet boundary that follows the UDH, so the payload is
+    /// packed with leading fill bits and UDL counts septets, not bytes.
+    fn build_deliver_pdu_udh_gsm7(sender: &str, udh: &[u8], text: &str) -> String {
+        let header_bits = (udh.len() + 1) * 8;
+        let skip = header_bits.div_ceil(7);
+        let fill = skip * 7 - header_bits;
+
+        let mut payload = Vec::new();
+        let mut carry: u32 = 0;
+        let mut bits: u32 = fill as u32;
+        for s in text.chars().map(gsm_index) {
+            carry |= (s as u32) << bits;
+            bits += 7;
+            while bits >= 8 {
+                payload.push((carry & 0xFF) as u8);
+                carry >>= 8;
+                bits -= 8;
+            }
+        }
+        if bits > 0 {
+            payload.push((carry & 0xFF) as u8);
+        }
+
+        let mut b = vec![0x00u8, 0x44]; // SCA length, MTI=deliver + UDHI
+        b.push(sender.len() as u8);
+        b.push(0x91);
+        for i in (0..sender.len()).step_by(2) {
+            let lo = sender.as_bytes()[i] - b'0';
+            let hi = if i + 1 < sender.len() {
+                sender.as_bytes()[i + 1] - b'0'
+            } else {
+                0x0F
+            };
+            b.push((hi << 4) | lo);
+        }
+        b.push(0x00); // PID
+        b.push(0x00); // DCS: GSM-7
+        b.extend_from_slice(&[0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x00]); // SCTS
+        b.push((skip + text.chars().count()) as u8); // UDL in septets
+        b.push(udh.len() as u8); // UDHL
+        b.extend_from_slice(udh);
+        b.extend_from_slice(&payload);
+        b.iter().map(|x| format!("{:02x}", x)).collect()
+    }
+
+    #[test]
+    fn pdu_concat_gsm7_two_parts() {
+        // 8-bit reference concat header: UDHL=5, so the septet stream starts one
+        // fill bit after the header — the case that garbles OTP texts when the
+        // decoder skips the header twice.
+        let udh8 = |r: u8, total: u8, seq: u8| -> Vec<u8> { vec![0x00, 3, r, total, seq] };
+        let pdu1 = build_deliver_pdu_udh_gsm7(
+            "959123456789",
+            &udh8(0x42, 2, 1),
+            "719815 is your OTP code to login MYID. ",
+        );
+        let pdu2 = build_deliver_pdu_udh_gsm7(
+            "959123456789",
+            &udh8(0x42, 2, 2),
+            "If you didn't request it, please call 966.",
+        );
+        let resp = format!(
+            "+CMGL: 3,\"REC UNREAD\",\"\",26/08/29,08:54:06+26\n{}\n+CMGL: 4,\"REC UNREAD\",\"\",26/08/29,08:54:08+26\n{}\nOK\n",
+            pdu1, pdu2
+        );
+        let infos = parse_pdu_list(&resp, "/dev/ttyUSB20");
+        assert_eq!(infos.len(), 2);
+        assert_eq!(
+            infos[0].concat.map(|c| (c.ref_num, c.total, c.seq)),
+            Some((0x42, 2, 1))
+        );
+
+        use crate::core::reassemble::Reassembler;
+        let mut asm = Reassembler::new();
+        let mut out: Vec<SmsMessage> = Vec::new();
+        for d in infos {
+            match d.concat {
+                Some(c) => {
+                    if let Some(done) = asm.push(&d.message, c) {
+                        out.push(done);
+                    }
+                }
+                None => out.push(d.message),
+            }
+        }
+        assert_eq!(out.len(), 1);
+        assert_eq!(
+            out[0].text,
+            "719815 is your OTP code to login MYID. If you didn't request it, please call 966."
+        );
+        assert_eq!(extract_otp(&out[0].text).as_deref(), Some("719815"));
+    }
+
+    #[test]
+    fn pdu_concat_gsm7_16bit_ref_no_fill_bits() {
+        // UDHL=6 makes the header land exactly on a septet boundary (zero fill
+        // bits) — the sibling of the UDHL=5 case, and the one that would silently
+        // pass if the skip were applied to the wrong base offset by chance.
+        let udh16 = vec![0x08u8, 4, 0x12, 0x34, 2, 1];
+        let pdu = build_deliver_pdu_udh_gsm7("966", &udh16, "Balance low. Top up now.");
+        let d = decode_deliver(&pdu, "COM5").unwrap();
+        assert_eq!(d.message.text, "Balance low. Top up now.");
+        assert_eq!(
+            d.concat.map(|c| (c.ref_num, c.total, c.seq)),
+            Some((0x1234, 2, 1))
+        );
+    }
+
+    #[test]
+    fn pdu_single_gsm7_no_udh_unaffected() {
+        let pdu = build_deliver_pdu("966", 0x00, &pack_gsm7("Your OTP is 483920"), Some(18));
+        let d = decode_deliver(&pdu, "COM1").unwrap();
+        assert_eq!(d.message.text, "Your OTP is 483920");
     }
 
     #[test]
