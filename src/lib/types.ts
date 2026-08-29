@@ -4,6 +4,13 @@ export interface PortInfo {
   path: string;
   checked: boolean;
   sim_number: string;
+  /**
+   * Result of the last liveness probe: `true` a modem answered, `false` the
+   * device node exists but nothing replied (empty SIM slot), `null` never
+   * probed. A SIM bank publishes a port per channel whether or not a SIM is
+   * inserted, so port count alone says nothing about reachable modems.
+   */
+  alive: boolean | null;
   live_ready: boolean;
   live_error: string | null;
 }

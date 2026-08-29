@@ -13,6 +13,7 @@ export function createLiveStore() {
   let on = $state(false);
   let scanBusy = $state(false);
   let ussdBusy = $state(false);
+  let detectBusy = $state(false);
   let readyPorts = $state<string[]>([]);
   let totalPorts = $state(0);
   let statusText = $state('');
@@ -37,6 +38,8 @@ export function createLiveStore() {
     set scanBusy(v: boolean) { scanBusy = v; },
     get ussdBusy() { return ussdBusy; },
     set ussdBusy(v: boolean) { ussdBusy = v; },
+    get detectBusy() { return detectBusy; },
+    set detectBusy(v: boolean) { detectBusy = v; },
     get readyPorts() { return readyPorts; },
     set readyPorts(v: string[]) { readyPorts = v; },
     get totalPorts() { return totalPorts; },

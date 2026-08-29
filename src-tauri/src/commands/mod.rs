@@ -18,10 +18,15 @@ pub struct AppStateInner {
     pub live_on: bool,
     pub live_ports_ready: Vec<String>,
     pub live_failed: Vec<(String, String)>,
+    /// Ports live mode is holding open but where no modem answers. Tracked so
+    /// the status line can say "7/64 ready | 57 no modem" instead of implying
+    /// the whole bank is monitored.
+    pub live_offline: Vec<String>,
     pub live_stop: Option<Arc<AtomicBool>>,
     pub ussd_busy: bool,
     pub delete_busy: bool,
     pub cleanup_busy: bool,
+    pub detect_busy: bool,
     pub status_text: String,
     pub failed_notes: Vec<String>,
 }
@@ -36,7 +41,12 @@ impl AppStateInner {
     /// True while any operation owns the serial ports. Every port-touching
     /// command checks this, so the list must stay in one place.
     fn port_busy(&self) -> bool {
-        self.scan_busy || self.live_on || self.ussd_busy || self.delete_busy || self.cleanup_busy
+        self.scan_busy
+            || self.live_on
+            || self.ussd_busy
+            || self.delete_busy
+            || self.cleanup_busy
+            || self.detect_busy
     }
 }
 
@@ -62,6 +72,12 @@ fn take_port<T>(queue: &Mutex<Vec<T>>) -> Option<T> {
 /// accounting while limiting parallelism.
 const MAX_CONCURRENT_PORTS: usize = 16;
 
+/// Worker count for the liveness sweep. Higher than `MAX_CONCURRENT_PORTS`
+/// because a probe is a single `AT` with a short timeout rather than a full
+/// SMS conversation: it moves almost no bytes, so the USB bridge tolerates more
+/// of them at once and the whole bank resolves in one pass instead of four.
+const MAX_CONCURRENT_PROBES: usize = 32;
+
 pub fn new_shared_state() -> SharedState {
     let sim_dir = SimDirectory::load();
     let ports: Vec<PortInfo> = crate::core::modem::get_port_names()
@@ -74,6 +90,7 @@ pub fn new_shared_state() -> SharedState {
                 path,
                 checked: true,
                 sim_number: sim,
+                alive: None,
                 live_ready: false,
                 live_error: None,
             }
@@ -89,10 +106,12 @@ pub fn new_shared_state() -> SharedState {
         live_on: false,
         live_ports_ready: Vec::new(),
         live_failed: Vec::new(),
+        live_offline: Vec::new(),
         live_stop: None,
         ussd_busy: false,
         delete_busy: false,
         cleanup_busy: false,
+        detect_busy: false,
         status_text: String::new(),
         failed_notes: Vec::new(),
     }))
@@ -120,6 +139,7 @@ pub fn refresh_ports(state: tauri::State<'_, SharedState>) -> Vec<PortInfo> {
                     path: path.clone(),
                     checked: true,
                     sim_number: st.sim_dir.number_of(&path, &n),
+                    alive: None,
                     live_ready: false,
                     live_error: None,
                 }
@@ -155,6 +175,136 @@ pub fn set_all_ports_checked(state: tauri::State<'_, SharedState>, checked: bool
     for p in &mut st.ports {
         p.checked = checked;
     }
+}
+
+/// Probe every port once and record which ones actually have a modem behind
+/// them, then leave only those selected.
+///
+/// This exists because a SIM bank publishes one tty per channel regardless of
+/// whether a SIM is inserted, so port *count* says nothing about how many
+/// modems are reachable. Running this first turns every later operation from
+/// "64 ports × full timeout chain" into "7 ports that answer instantly".
+#[tauri::command]
+pub fn detect_ports(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<String, String> {
+    let names: Vec<String> = {
+        let st = lock_state(&state);
+        if st.port_busy() {
+            return Err("Busy".into());
+        }
+        st.ports.iter().map(|p| p.name.clone()).collect()
+    };
+    if names.is_empty() {
+        return Err("No serial ports found.".into());
+    }
+    let total = names.len();
+    {
+        let mut st = lock_state(&state);
+        st.detect_busy = true;
+        st.status_text = format!("Detecting modems on {} port(s)...", total);
+    }
+    let _ = app.emit(
+        "status:update",
+        &serde_json::json!({ "text": format!("Detecting modems on {} port(s)...", total) }),
+    );
+    log::info!("Detect started on {} port(s)", total);
+
+    let state_clone = Arc::clone(&state);
+    let app2 = app.clone();
+    thread::spawn(move || {
+        let work = Arc::new(Mutex::new(names));
+        let done = Arc::new(AtomicUsize::new(0));
+        let alive_count = Arc::new(AtomicUsize::new(0));
+        let workers = total.min(MAX_CONCURRENT_PROBES);
+        let mut handles = Vec::with_capacity(workers);
+        for _ in 0..workers {
+            let work2 = Arc::clone(&work);
+            let st2 = Arc::clone(&state_clone);
+            let app3 = app2.clone();
+            let done2 = Arc::clone(&done);
+            let alive2 = Arc::clone(&alive_count);
+            handles.push(thread::spawn(move || {
+                while let Some(port) = take_port(&work2) {
+                    let probed = catch_unwind(AssertUnwindSafe(|| {
+                        crate::core::modem::probe_port(&port)
+                    }));
+                    // An unopenable port is not the same as a silent one, but
+                    // either way there is nothing to talk to right now.
+                    let alive = matches!(probed, Ok(Ok(true)));
+                    if alive {
+                        alive2.fetch_add(1, Ordering::Relaxed);
+                    }
+                    let n = done2.fetch_add(1, Ordering::Relaxed) + 1;
+                    let text;
+                    {
+                        let mut st = lock_state(&st2);
+                        if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
+                            p.alive = Some(alive);
+                            // Leaving dead ports selected is what made every
+                            // later action pay their timeouts, so the sweep
+                            // owns the selection: alive ports on, others off.
+                            p.checked = alive;
+                            p.live_error = None;
+                            p.live_ready = false;
+                        }
+                        st.status_text = format!(
+                            "Detecting {}/{}  |  Modems found: {}",
+                            n,
+                            total,
+                            alive2.load(Ordering::Relaxed)
+                        );
+                        text = st.status_text.clone();
+                    }
+                    let _ = app3.emit("status:update", &serde_json::json!({ "text": text }));
+                }
+            }));
+        }
+        for h in handles {
+            let _ = h.join();
+        }
+        let found = alive_count.load(Ordering::Relaxed);
+        let (text, ports_snapshot);
+        {
+            let mut st = lock_state(&state_clone);
+            st.detect_busy = false;
+            st.status_text = format!(
+                "Detect done. Modems found: {}/{}  |  {} port(s) with no modem deselected",
+                found,
+                total,
+                total - found
+            );
+            text = st.status_text.clone();
+            ports_snapshot = st.ports.clone();
+        }
+        log::info!("{}", text);
+        let _ = app2.emit("status:update", &serde_json::json!({ "text": text }));
+        let _ = app2.emit("ports:updated", &serde_json::json!({ "ports": ports_snapshot }));
+        let _ = app2.emit(
+            "detect:done",
+            &serde_json::json!({ "found": found, "total": total }),
+        );
+    });
+
+    Ok("Detect started".into())
+}
+
+/// Status line for live mode. Reports ready, offline and still-connecting
+/// counts separately so a bank of mostly-empty slots reads honestly instead of
+/// looking like every port is being monitored.
+fn live_status(st: &AppStateInner, total: usize) -> String {
+    let ready = st.live_ports_ready.len();
+    let offline = st.live_offline.len();
+    let mut s = format!("Live {}/{} ready", ready, total);
+    if offline > 0 {
+        s.push_str(&format!("  |  {} no modem", offline));
+    }
+    let pending = total.saturating_sub(ready + offline);
+    if pending > 0 {
+        s.push_str(&format!("  |  {} connecting…", pending));
+    }
+    s
 }
 
 fn scan_progress_status(done: usize, total: usize, msgs: usize, failed: usize) -> String {
@@ -251,16 +401,20 @@ pub fn start_scan(
         }
         // The supervisor owns the exit from "busy", so it happens even when
         // every worker died mid-flight.
-        let text;
+        let (text, ports_snapshot);
         {
             let mut st = lock_state(&state_clone);
             st.scan_busy = false;
             let ok_ports = total.saturating_sub(st.failed_notes.len());
             st.status_text = scan_done_status(ok_ports, total, st.messages.len(), &st.failed_notes);
             text = st.status_text.clone();
+            ports_snapshot = st.ports.clone();
         }
         log::info!("Scan complete: {}", text);
         let _ = app2.emit("status:update", &serde_json::json!({ "text": text }));
+        // Push the liveness verdicts the sweep collected so the Ports page
+        // reflects which slots are populated.
+        let _ = app2.emit("ports:updated", &serde_json::json!({ "ports": ports_snapshot }));
         let _ = app2.emit("scan:done", &serde_json::json!({}));
     });
 
@@ -272,10 +426,27 @@ fn scan_one_port(port: &str, state: &SharedState, app: &tauri::AppHandle, total:
     let crate::core::modem::ReadResult { ok, messages, error } =
         crate::core::modem::read_port(port);
     let count = messages.len();
+    // A scan is itself a liveness observation, so record it — the port list
+    // learns which slots are populated without a separate Detect pass. Only the
+    // probe's own verdict marks a port dead: a modem that answered `AT` and then
+    // failed mid-read is present but wedged, which is a different problem and
+    // must not be labelled "no modem".
+    let observed_alive = if ok {
+        Some(true)
+    } else if error.as_deref() == Some(crate::core::modem::NOT_RESPONDING) {
+        Some(false)
+    } else {
+        None
+    };
 
     let (added, status_text);
     {
         let mut st = lock_state(state);
+        if let Some(alive) = observed_alive {
+            if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
+                p.alive = Some(alive);
+            }
+        }
         if !ok {
             let err = error.unwrap_or_default();
             log::warn!("Scan {}: FAILED ({})", port, err);
@@ -391,6 +562,22 @@ fn ussd_one_port(
     total: usize,
 ) {
     let (num, err) = crate::core::modem::get_sim_number(port);
+    // Same liveness bookkeeping as the scan: only the probe's own verdict marks
+    // a port dead, so a registered modem that simply had no USSD answer keeps
+    // its "alive" status.
+    let observed_alive = if num.is_some() {
+        Some(true)
+    } else if err.as_deref() == Some(crate::core::modem::NOT_RESPONDING) {
+        Some(false)
+    } else {
+        None
+    };
+    if let Some(alive) = observed_alive {
+        let mut st = lock_state(state);
+        if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
+            p.alive = Some(alive);
+        }
+    }
     if let Some(ref n) = num {
         found.fetch_add(1, Ordering::Relaxed);
         log::info!("USSD {} -> {}", port, n);
@@ -423,7 +610,7 @@ fn ussd_one_port(
         );
     }
     let d = done.fetch_add(1, Ordering::Relaxed) + 1;
-    let text;
+    let (text, ports_snapshot);
     {
         let mut st = lock_state(state);
         st.status_text = format!(
@@ -433,8 +620,13 @@ fn ussd_one_port(
             found.load(Ordering::Relaxed)
         );
         text = st.status_text.clone();
+        ports_snapshot = st.ports.clone();
     }
     let _ = app.emit("status:update", &serde_json::json!({ "text": text }));
+    let _ = app.emit(
+        "ports:updated",
+        &serde_json::json!({ "ports": ports_snapshot }),
+    );
 }
 
 #[tauri::command]
@@ -493,6 +685,7 @@ pub fn start_live(
         st.live_on = true;
         st.live_ports_ready.clear();
         st.live_failed.clear();
+        st.live_offline.clear();
         st.messages.clear();
         st.live_stop = Some(Arc::clone(&shared_stop));
         st.status_text = format!("Starting live on {} port(s)...", ports.len());
@@ -521,22 +714,55 @@ pub fn start_live(
             handles.push(thread::spawn(move || {
                 let sender = move |evt: crate::core::live::LiveEvent| match evt {
                     crate::core::live::LiveEvent::Ready { port } => {
-                        let mut st = lock_state(&st2);
-                        if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
-                            p.live_ready = true;
-                            p.live_error = None;
+                        let (text, ports_snapshot);
+                        {
+                            let mut st = lock_state(&st2);
+                            if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
+                                p.alive = Some(true);
+                                p.live_ready = true;
+                                p.live_error = None;
+                            }
+                            // Reconnects re-emit Ready for a port already counted —
+                            // keep the ready list deduplicated or the "Live x/y"
+                            // badge overcounts.
+                            if !st.live_ports_ready.contains(&port) {
+                                st.live_ports_ready.push(port.clone());
+                            }
+                            st.live_offline.retain(|p| p != &port);
+                            st.status_text = live_status(&st, port_count);
+                            text = st.status_text.clone();
+                            ports_snapshot = st.ports.clone();
                         }
-                        // Reconnects re-emit Ready for a port already counted —
-                        // keep the ready list deduplicated or the "Live x/y"
-                        // badge overcounts.
-                        if !st.live_ports_ready.contains(&port) {
-                            st.live_ports_ready.push(port.clone());
-                        }
-                        st.status_text =
-                            format!("Live {} port(s) ready...", st.live_ports_ready.len());
-                        drop(st);
                         log::info!("Live ready: {}", port);
+                        let _ = app2.emit("status:update", &serde_json::json!({ "text": text }));
+                        let _ = app2
+                            .emit("ports:updated", &serde_json::json!({ "ports": ports_snapshot }));
                         let _ = app2.emit("sms:ready", &serde_json::json!({ "port": port }));
+                    }
+                    crate::core::live::LiveEvent::Offline { port, error } => {
+                        let (text, ports_snapshot);
+                        {
+                            let mut st = lock_state(&st2);
+                            if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
+                                p.alive = Some(false);
+                                p.live_ready = false;
+                                p.live_error = Some(error.clone());
+                            }
+                            st.live_ports_ready.retain(|p| p != &port);
+                            if !st.live_offline.contains(&port) {
+                                st.live_offline.push(port.clone());
+                            }
+                            st.status_text = live_status(&st, port_count);
+                            text = st.status_text.clone();
+                            ports_snapshot = st.ports.clone();
+                        }
+                        let _ = app2.emit("status:update", &serde_json::json!({ "text": text }));
+                        let _ = app2
+                            .emit("ports:updated", &serde_json::json!({ "ports": ports_snapshot }));
+                        let _ = app2.emit(
+                            "live:offline",
+                            &serde_json::json!({ "port": port, "error": error }),
+                        );
                     }
                     crate::core::live::LiveEvent::Reconnecting { port, error } => {
                         let (text, ports_snapshot);
@@ -1116,26 +1342,75 @@ mod tests {
             live_on: false,
             live_ports_ready: Vec::new(),
             live_failed: Vec::new(),
+            live_offline: Vec::new(),
             live_stop: None,
             ussd_busy: false,
             delete_busy: false,
             cleanup_busy: false,
+            detect_busy: false,
             status_text: String::new(),
             failed_notes: Vec::new(),
         };
         assert!(!idle().port_busy());
 
-        let setters: [fn(&mut AppStateInner); 5] = [
+        let setters: [fn(&mut AppStateInner); 6] = [
             |st| st.scan_busy = true,
             |st| st.live_on = true,
             |st| st.ussd_busy = true,
             |st| st.delete_busy = true,
             |st| st.cleanup_busy = true,
+            |st| st.detect_busy = true,
         ];
         for set in setters {
             let mut st = idle();
             set(&mut st);
             assert!(st.port_busy());
         }
+    }
+
+    fn live_state(ready: usize, offline: usize) -> AppStateInner {
+        let names = |prefix: &str, n: usize| (0..n).map(|i| format!("{prefix}{i}")).collect();
+        AppStateInner {
+            sim_dir: SimDirectory::default(),
+            next_id: 1,
+            ports: Vec::new(),
+            messages: Vec::new(),
+            scan_busy: false,
+            scan_done: 0,
+            live_on: true,
+            live_ports_ready: names("ready", ready),
+            live_failed: Vec::new(),
+            live_offline: names("dead", offline),
+            live_stop: None,
+            ussd_busy: false,
+            delete_busy: false,
+            cleanup_busy: false,
+            detect_busy: false,
+            status_text: String::new(),
+            failed_notes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn live_status_separates_ready_from_ports_with_no_modem() {
+        // The shape that used to read "Live 64 port(s) ready..." on a bank
+        // holding 7 SIMs.
+        assert_eq!(
+            live_status(&live_state(7, 57), 64),
+            "Live 7/64 ready  |  57 no modem"
+        );
+    }
+
+    #[test]
+    fn live_status_counts_ports_still_connecting() {
+        assert_eq!(
+            live_status(&live_state(2, 1), 8),
+            "Live 2/8 ready  |  1 no modem  |  5 connecting…"
+        );
+    }
+
+    #[test]
+    fn live_status_is_clean_when_every_port_is_ready() {
+        assert_eq!(live_status(&live_state(3, 0), 3), "Live 3/3 ready");
     }
 }

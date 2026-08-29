@@ -135,6 +135,28 @@ export const api = {
         console.warn(`[api] Port ${event.payload.port} lost, reconnecting: ${event.payload.error}`);
       });
 
+      // A port live mode is holding open where no modem answers — an empty SIM
+      // slot. Drop it from the ready set so the "Live x/y" badge counts only
+      // ports that can actually deliver a message.
+      await listen<{ port: string; error: string }>('live:offline', (event) => {
+        liveStore.readyPorts = portsStore.items.filter((p) => p.live_ready).map((p) => p.name);
+        console.info(`[api] Port ${event.payload.port} has no modem: ${event.payload.error}`);
+      });
+
+      await listen<{ found: number; total: number }>('detect:done', (event) => {
+        liveStore.detectBusy = false;
+        const { found, total } = event.payload;
+        if (found === 0) {
+          toast('Warning', 'No modems found', `Probed ${total} port(s); none answered.`);
+        } else {
+          toast(
+            'Success',
+            'Detect complete',
+            `${found} of ${total} port(s) have a modem. The rest were deselected.`
+          );
+        }
+      });
+
       await listen('live:stopped', () => {
         liveStore.on = false;
         liveStore.totalPorts = 0;
@@ -218,6 +240,36 @@ export const api = {
       portsStore.set(ports);
     } catch (e) {
       toast('Danger', 'Refresh failed', String(e));
+    }
+  },
+
+  /**
+   * Probe every port once and keep only the ones with a modem selected.
+   *
+   * Worth running before anything else on a partly-populated bank: an empty SIM
+   * slot still exposes a serial device, and every other operation would
+   * otherwise spend its full timeout chain (24 s for a scan, 35 s for a USSD
+   * lookup) discovering that nothing is there.
+   */
+  async detectPorts() {
+    if (!isTauri()) {
+      liveStore.detectBusy = true;
+      setTimeout(() => {
+        portsStore.set(
+          portsStore.items.map((p, i) => ({ ...p, alive: i % 3 === 0, checked: i % 3 === 0 }))
+        );
+        liveStore.detectBusy = false;
+        toast('Success', 'Detect complete', 'Simulated probe finished.');
+      }, 600);
+      return;
+    }
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      liveStore.detectBusy = true;
+      await invoke('detect_ports');
+    } catch (e) {
+      liveStore.detectBusy = false;
+      toast('Danger', 'Detect failed', String(e));
     }
   },
 

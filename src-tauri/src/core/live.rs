@@ -12,6 +12,13 @@ pub enum LiveEvent {
     Ready {
         port: String,
     },
+    /// The port opened but no modem answered `AT` on it — an empty SIM slot or
+    /// an unpowered stick. Distinct from `Reconnecting`, which means a port we
+    /// had been talking to went away.
+    Offline {
+        port: String,
+        error: String,
+    },
     Reconnecting {
         port: String,
         error: String,
@@ -38,6 +45,12 @@ pub enum LiveEvent {
 /// retrying for as long as the operator leaves Live on.
 const RECONNECT_MIN: Duration = Duration::from_secs(2);
 const RECONNECT_MAX: Duration = Duration::from_secs(30);
+
+/// Re-probe cadence for a port where nothing answers. An empty slot is a stable
+/// condition rather than a transient glitch, so this is deliberately slower than
+/// the reconnect backoff — but a stick inserted mid-session is still picked up
+/// without restarting live mode.
+const OFFLINE_RETRY: Duration = Duration::from_secs(60);
 
 /// How often a live worker deletes expired messages from its SIM. SIM storage
 /// holds only ~20–50 messages; once full the modem silently rejects new SMS,
@@ -82,6 +95,10 @@ fn run_live_inner<F>(
     let mut ever_connected = false;
     let mut backoff = RECONNECT_MIN;
     let mut was_down = false;
+    // Whether the "nothing answers here" state has already been reported. Kept
+    // separate from `was_down` so an empty slot logs and paints once instead of
+    // once per re-probe.
+    let mut offline_reported = false;
     // Set on every (re)connect, just before the monitoring loop reads it.
     let mut last_sweep;
 
@@ -117,6 +134,33 @@ fn run_live_inner<F>(
         backoff = RECONNECT_MIN;
         if was_down {
             log::info!("{}: port reopened after outage", port_name);
+        }
+
+        // Liveness gate. An empty SIM slot still exposes a tty node that opens
+        // cleanly, so without this the worker ran the whole SMS setup against
+        // silence (~22 s of timeouts) and then announced `Ready` for a port that
+        // can never deliver a message — which is how a bank with 7 SIMs came up
+        // showing 64 green "LIVE" badges.
+        if !crate::core::modem::probe_channel(&mut ch) {
+            if !offline_reported {
+                offline_reported = true;
+                log::warn!(
+                    "{}: no modem answering — live monitoring idle for this port",
+                    port_name
+                );
+                on_event(LiveEvent::Offline {
+                    port: port_name.to_string(),
+                    error: crate::core::modem::NOT_RESPONDING.into(),
+                });
+            }
+            if !sleep_stop_aware(stop, OFFLINE_RETRY) {
+                break;
+            }
+            continue;
+        }
+        if offline_reported {
+            log::info!("{}: modem started answering", port_name);
+            offline_reported = false;
         }
 
         // PDU mode lets us read the UDH of concatenated (long) SMS so fragments

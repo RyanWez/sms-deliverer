@@ -85,6 +85,17 @@
         {/if}
       </dd>
 
+      <dt class="meta-label">Modem</dt>
+      <dd class="meta-value">
+        {#if port.alive === true}
+          <span class="text-success">Answering</span>
+        {:else if port.alive === false}
+          <span class="text-muted-foreground">No modem (empty slot)</span>
+        {:else}
+          <span class="text-muted-foreground/60 italic">Not probed yet</span>
+        {/if}
+      </dd>
+
       <dt class="meta-label">Messages</dt>
       <dd class="meta-value font-mono tabular-nums">{msgCount}</dd>
 
@@ -92,7 +103,17 @@
       <dd class="meta-value font-mono tabular-nums">{otpCount}</dd>
     </dl>
 
-    {#if port.live_error}
+    {#if port.alive === false}
+      <div class="mx-4 mt-3 p-2.5 rounded-md bg-elevated border border-border text-xs text-muted-foreground animate-fade-in">
+        <div class="flex items-center gap-1.5 font-medium">
+          <Icon name="info" size={13} strokeWidth={2} />
+          No modem on this port
+        </div>
+        <div class="mt-1 ml-[22px] text-[10px] opacity-80">
+          Nothing answered the AT probe. Scan and live mode skip it, so it costs no time.
+        </div>
+      </div>
+    {:else if port.live_error}
       <div class="mx-4 mt-3 p-2.5 rounded-md bg-danger/10 border border-danger/25 text-xs text-danger animate-fade-in">
         <div class="flex items-center gap-1.5 font-medium">
           <Icon name="alert-circle" size={13} strokeWidth={2} />

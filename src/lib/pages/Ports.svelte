@@ -13,7 +13,7 @@
   let activePortName = $state<string | null>(null);
   let rawQuery = $state('');
   let debouncedQuery = $state('');
-  let statusFilter = $state<'all' | 'with_sim' | 'no_sim' | 'selected' | 'errors'>('all');
+  let statusFilter = $state<'all' | 'with_sim' | 'no_sim' | 'selected' | 'no_modem' | 'errors'>('all');
 
   function hasValidSim(p: PortInfo): boolean {
     return Boolean(
@@ -22,6 +22,11 @@
       p.sim_number.trim() !== '' &&
       p.sim_number !== 'Unknown'
     );
+  }
+
+  /** Probed and silent — an empty SIM slot rather than a fault. */
+  function isNoModem(p: PortInfo): boolean {
+    return p.alive === false;
   }
 
   // debounce port search 150ms — trivial cost for 64 ports but avoids reactive churn
@@ -53,18 +58,29 @@
     let errors = 0;
     let withSim = 0;
     let noSim = 0;
+    let alive = 0;
+    let noModem = 0;
+    let probed = 0;
     for (const p of portsStore.items) {
       if (p.checked) checked++;
-      if (p.live_error) errors++;
+      // A silent port is expected on a partly-filled bank, so it must not be
+      // counted as an error or the error badge reads 57 on a healthy setup.
+      if (p.live_error && !isNoModem(p)) errors++;
       if (hasValidSim(p)) withSim++;
       else noSim++;
+      if (p.alive !== null) probed++;
+      if (p.alive === true) alive++;
+      if (isNoModem(p)) noModem++;
     }
-    return { checked, errors, withSim, noSim };
+    return { checked, errors, withSim, noSim, alive, noModem, probed };
   });
   const checkedCount = $derived(counts.checked);
   const errorCount = $derived(counts.errors);
   const withSimCount = $derived(counts.withSim);
   const noSimCount = $derived(counts.noSim);
+  const aliveCount = $derived(counts.alive);
+  const noModemCount = $derived(counts.noModem);
+  const hasProbed = $derived(counts.probed > 0);
 
   const filteredPorts = $derived.by(() => {
     const q = debouncedQuery.trim().toLowerCase();
@@ -72,7 +88,8 @@
       if (statusFilter === 'with_sim' && !hasValidSim(p)) return false;
       if (statusFilter === 'no_sim' && hasValidSim(p)) return false;
       if (statusFilter === 'selected' && !p.checked) return false;
-      if (statusFilter === 'errors' && !p.live_error) return false;
+      if (statusFilter === 'no_modem' && !isNoModem(p)) return false;
+      if (statusFilter === 'errors' && !(p.live_error && !isNoModem(p))) return false;
       if (!q) return true;
       const hay = `${portLabel(p.name)} ${p.name} ${p.sim_number}`.toLowerCase();
       return hay.includes(q);
@@ -172,14 +189,44 @@
   <header class="page-header">
     <div class="flex items-center gap-2 sm:gap-3 mr-auto min-w-0 flex-wrap gap-y-1">
       <h1 class="page-title shrink-0">Ports</h1>
-      <span class="badge badge-primary font-mono tabular-nums shrink-0" title="Detected ports">
+      <span class="badge badge-primary font-mono tabular-nums shrink-0" title="Serial ports the OS reports">
         {totalPorts} port{totalPorts !== 1 ? 's' : ''}
       </span>
+      {#if hasProbed}
+        <span
+          class="badge badge-success font-mono tabular-nums shrink-0"
+          title="Ports that answered an AT probe"
+        >
+          {aliveCount} modem{aliveCount !== 1 ? 's' : ''}
+        </span>
+        {#if noModemCount > 0}
+          <span
+            class="badge badge-muted font-mono tabular-nums shrink-0"
+            title="Ports with no modem answering — empty SIM slots"
+          >
+            {noModemCount} empty
+          </span>
+        {/if}
+      {/if}
       {#if errorCount > 0}
         <span class="badge badge-danger font-mono tabular-nums shrink-0">{errorCount} error{errorCount !== 1 ? 's' : ''}</span>
       {/if}
     </div>
     <div class="flex items-center gap-1.5 sm:gap-2 flex-wrap w-full sm:w-auto">
+      <button
+        class="btn-secondary text-primary border-primary/30 hover:bg-primary/10 gap-1.5"
+        onclick={() => api.detectPorts()}
+        disabled={liveStore.on || liveStore.detectBusy || liveStore.ussdBusy || liveStore.scanBusy || totalPorts === 0}
+        title="Send a quick AT probe to every port and keep only the ones with a modem selected"
+      >
+        {#if liveStore.detectBusy}
+          <Icon name="loader" size={13} class="animate-spin" />
+          <span>Detecting…</span>
+        {:else}
+          <Icon name="monitor" size={13} />
+          <span>Detect Modems</span>
+        {/if}
+      </button>
       <button
         class="btn-secondary text-primary border-primary/30 hover:bg-primary/10 gap-1.5"
         onclick={selectWithSim}
@@ -297,6 +344,17 @@
       >
         Selected
         <span class="px-1.5 min-w-[18px] text-center rounded-full text-[10px] leading-4 tabular-nums bg-primary/15 text-primary">{checkedCount}</span>
+      </button>
+      <button
+        class="inline-flex items-center gap-1.5 h-7 px-2 rounded-[5px] text-xs font-medium transition-colors duration-150
+               focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70
+               {statusFilter === 'no_modem' ? 'bg-elevated text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}"
+        aria-pressed={statusFilter === 'no_modem'}
+        onclick={() => { statusFilter = 'no_modem'; }}
+        title="Ports where no modem answered the AT probe"
+      >
+        No Modem
+        <span class="px-1.5 min-w-[18px] text-center rounded-full text-[10px] leading-4 tabular-nums bg-muted text-muted-foreground">{noModemCount}</span>
       </button>
       <button
         class="inline-flex items-center gap-1.5 h-7 px-2 rounded-[5px] text-xs font-medium transition-colors duration-150
@@ -441,7 +499,17 @@
                 <span class="font-mono text-[10px] text-muted-foreground/60 truncate" title={port.name}>{port.name}</span>
               </div>
 
-              {#if port.live_error}
+              {#if isNoModem(port)}
+                <div class="mt-3 p-2.5 rounded-md bg-elevated border border-border text-xs text-muted-foreground animate-fade-in">
+                  <div class="flex items-center gap-1.5 font-medium">
+                    <Icon name="info" size={13} strokeWidth={2} />
+                    No modem on this port
+                  </div>
+                  <div class="mt-1 ml-[22px] text-[10px] opacity-80">
+                    Nothing answered the AT probe — most likely an empty SIM slot. Skipped by scan and live.
+                  </div>
+                </div>
+              {:else if port.live_error}
                 <div class="mt-3 p-2.5 rounded-md bg-danger/10 border border-danger/25 text-xs text-danger animate-fade-in">
                   <div class="flex items-center gap-1.5 font-medium">
                     <Icon name="alert-circle" size={13} strokeWidth={2} />

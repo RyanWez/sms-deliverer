@@ -25,6 +25,78 @@ impl Transport for SerialTransport {
     }
 }
 
+/// Scripted in-memory transport for tests.
+///
+/// Replays `script` in `bytes_per_read` chunks and then reports `TimedOut`
+/// forever — which is exactly how an empty SIM slot behaves: the tty node reads
+/// cleanly and never produces a byte. Lives outside `mod tests` so the modem
+/// and live layers can drive an `AtChannel` without touching real hardware.
+#[cfg(test)]
+pub(crate) struct FakeTransport {
+    script: Vec<u8>,
+    pos: usize,
+    bytes_per_read: usize,
+    fail_reads: bool,
+    /// Withhold the script until this many commands have been written. Models a
+    /// modem that swallows the first `AT` while it finishes booting.
+    reply_after_writes: usize,
+    writes: usize,
+}
+
+#[cfg(test)]
+impl FakeTransport {
+    pub(crate) fn new(script: &str, bytes_per_read: usize) -> Self {
+        Self {
+            script: script.as_bytes().to_vec(),
+            pos: 0,
+            bytes_per_read,
+            fail_reads: false,
+            reply_after_writes: 0,
+            writes: 0,
+        }
+    }
+
+    /// Silent until `n` commands have been sent, then replays `script`.
+    pub(crate) fn silent_for_writes(script: &str, n: usize) -> Self {
+        Self {
+            reply_after_writes: n,
+            ..Self::new(script, 1024)
+        }
+    }
+
+    pub(crate) fn failing() -> Self {
+        Self {
+            fail_reads: true,
+            ..Self::new("", 1024)
+        }
+    }
+}
+
+#[cfg(test)]
+impl Transport for FakeTransport {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.fail_reads {
+            return Err(io::Error::other("device lost"));
+        }
+        if self.writes < self.reply_after_writes {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        let remaining = self.script.len() - self.pos;
+        if remaining == 0 {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        let n = remaining.min(buf.len()).min(self.bytes_per_read);
+        buf[..n].copy_from_slice(&self.script[self.pos..self.pos + n]);
+        self.pos += n;
+        Ok(n)
+    }
+
+    fn write_all(&mut self, _data: &[u8]) -> io::Result<()> {
+        self.writes += 1;
+        Ok(())
+    }
+}
+
 pub fn preview(s: &str, max_chars: usize) -> String {
     let mut out: String = s
         .chars()
@@ -196,57 +268,6 @@ impl AtChannel {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    struct FakeTransport {
-        script: Vec<u8>,
-        pos: usize,
-        bytes_per_read: usize,
-        fail_reads: bool,
-        written: Vec<u8>,
-    }
-
-    impl FakeTransport {
-        fn new(script: &str, bytes_per_read: usize) -> Self {
-            Self {
-                script: script.as_bytes().to_vec(),
-                pos: 0,
-                bytes_per_read,
-                fail_reads: false,
-                written: Vec::new(),
-            }
-        }
-
-        fn failing() -> Self {
-            Self {
-                script: vec![],
-                pos: 0,
-                bytes_per_read: 1024,
-                fail_reads: true,
-                written: Vec::new(),
-            }
-        }
-    }
-
-    impl Transport for FakeTransport {
-        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            if self.fail_reads {
-                return Err(io::Error::other("device lost"));
-            }
-            let remaining = self.script.len() - self.pos;
-            if remaining == 0 {
-                return Err(io::ErrorKind::TimedOut.into());
-            }
-            let n = remaining.min(buf.len()).min(self.bytes_per_read);
-            buf[..n].copy_from_slice(&self.script[self.pos..self.pos + n]);
-            self.pos += n;
-            Ok(n)
-        }
-
-        fn write_all(&mut self, data: &[u8]) -> io::Result<()> {
-            self.written.extend_from_slice(data);
-            Ok(())
-        }
-    }
 
     #[test]
     fn classification_matches_sms_net_rules() {

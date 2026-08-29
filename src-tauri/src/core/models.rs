@@ -39,6 +39,12 @@ pub struct PortInfo {
     pub path: String,
     pub checked: bool,
     pub sim_number: String,
+    /// Result of the last liveness probe: `Some(true)` a modem answered,
+    /// `Some(false)` the node exists but nothing replied (empty SIM slot),
+    /// `None` never probed. A SIM bank creates a tty per channel whether or not
+    /// a SIM is inserted, so this is the only way to tell the two apart.
+    #[serde(default)]
+    pub alive: Option<bool>,
     pub live_ready: bool,
     pub live_error: Option<String>,
 }

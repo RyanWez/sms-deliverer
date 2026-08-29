@@ -2,30 +2,44 @@
   import Icon from '$lib/components/Icon.svelte';
   import { messagesStore } from '$lib/stores/messages.svelte';
   import { liveStore } from '$lib/stores/live.svelte';
+  import { portsStore } from '$lib/stores/ports.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { api } from '$lib/services/api';
   import { confirmDialog } from '$lib/services/dialog';
 
   const busy = $derived(
-    liveStore.on || messagesStore.deleteBusy || liveStore.scanBusy || liveStore.ussdBusy
+    liveStore.on ||
+      messagesStore.deleteBusy ||
+      liveStore.scanBusy ||
+      liveStore.ussdBusy ||
+      liveStore.detectBusy
   );
-  // Truthful live state: all ready → green, some lost/reconnecting → amber,
-  // off → muted. Previously the badge stayed green ("Live 64/64") even after
-  // every port had silently died, which is exactly what masked the outage.
+
+  // Ports live mode is holding but where no modem answers — empty SIM slots.
+  // They can never become ready, so they must be excluded from the "everything
+  // is up" comparison or the badge sits on amber forever.
+  const offlineCount = $derived(
+    portsStore.items.filter((p) => p.checked && p.alive === false).length
+  );
+  const monitorable = $derived(Math.max(0, liveStore.totalPorts - offlineCount));
+
+  // Truthful live state: every reachable port ready → green, some lost or still
+  // connecting → amber, off → muted. Previously the badge stayed green
+  // ("Live 64/64") even after every port had silently died, which is exactly
+  // what masked the outage.
   const liveBadgeClass = $derived(
     !liveStore.on
       ? 'badge-muted'
-      : liveStore.readyPorts.length >= liveStore.totalPorts
+      : liveStore.readyPorts.length >= monitorable
         ? 'badge-success'
         : 'badge-warning'
   );
-  const liveBadgeLabel = $derived(
-    !liveStore.on
-      ? 'Live off'
-      : liveStore.readyPorts.length >= liveStore.totalPorts
-        ? `Live ${liveStore.readyPorts.length}/${liveStore.totalPorts}`
-        : `Live ${liveStore.readyPorts.length}/${liveStore.totalPorts} · reconnecting`
-  );
+  const liveBadgeLabel = $derived.by(() => {
+    if (!liveStore.on) return 'Live off';
+    const base = `Live ${liveStore.readyPorts.length}/${liveStore.totalPorts}`;
+    if (liveStore.readyPorts.length < monitorable) return `${base} · connecting`;
+    return offlineCount > 0 ? `${base} · ${offlineCount} empty` : base;
+  });
   let exportOpen = $state(false);
 </script>
 
@@ -63,7 +77,7 @@
 
     <button
       class="{liveStore.on ? 'btn-danger' : 'btn-success'} min-w-[104px] justify-center gap-2"
-      disabled={messagesStore.deleteBusy || liveStore.scanBusy || liveStore.ussdBusy}
+      disabled={messagesStore.deleteBusy || liveStore.scanBusy || liveStore.ussdBusy || liveStore.detectBusy}
       onclick={() => (liveStore.on ? api.stopLive() : api.startLive())}
       title={liveStore.on ? 'Stop live monitoring' : 'Start live monitoring on checked ports'}
     >

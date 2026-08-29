@@ -61,6 +61,7 @@ export function generateSyntheticPorts(count: number = 32): PortInfo[] {
       path: name.includes('ttyUSB') ? `pci-0000:00:14.0-usb-0:1.${idx}:1.0-port0` : name,
       checked: Math.random() < 0.6,
       sim_number: sim,
+      alive: null,
       live_ready: Math.random() < 0.3,
       live_error: isError ? 'AT+CMGF failed: timeout after 3000ms — device not responding' : null,
     });

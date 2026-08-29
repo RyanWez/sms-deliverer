@@ -5,12 +5,21 @@ export function portNum(name: string): number {
   return m ? parseInt(m[1], 10) : 0;
 }
 
+/**
+ * Short display name for a port.
+ *
+ * Windows `COM*` names are already short. Linux device paths are shortened to
+ * the device node only (`/dev/ttyUSB20` → `ttyUSB20`) — they used to be
+ * relabelled `COM20`, which meant the UI, the log file and the JSON export each
+ * called the same port something different.
+ */
 export function portLabel(name: string): string {
   if (name.startsWith('COM')) return name;
-  return `COM${portNum(name)}`;
+  const node = name.split('/').pop();
+  return node && node.length > 0 ? node : name;
 }
 
-export type PortStatusKey = 'error' | 'live' | 'connecting' | 'ready' | 'disabled';
+export type PortStatusKey = 'error' | 'live' | 'connecting' | 'ready' | 'no-modem' | 'disabled';
 
 export interface PortStatus {
   key: PortStatusKey;
@@ -20,6 +29,17 @@ export interface PortStatus {
 }
 
 export function portStatus(p: PortInfo, liveOn: boolean): PortStatus {
+  // A probed-silent port is the normal state of an empty SIM slot, not a
+  // failure, so it gets its own muted styling ahead of the error branch —
+  // otherwise every unused slot in the bank screams red.
+  if (p.alive === false) {
+    return {
+      key: 'no-modem',
+      label: 'NO MODEM',
+      badge: 'badge-muted',
+      tile: 'bg-elevated text-muted-foreground',
+    };
+  }
   if (p.live_error) {
     return { key: 'error', label: 'ERROR', badge: 'badge-danger', tile: 'bg-danger/10 text-danger' };
   }

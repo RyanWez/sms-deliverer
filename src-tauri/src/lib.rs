@@ -23,6 +23,7 @@ pub fn run() {
             commands::checked_ports,
             commands::toggle_port_checked,
             commands::set_all_ports_checked,
+            commands::detect_ports,
             commands::start_scan,
             commands::get_ports,
             commands::get_sim_numbers,
