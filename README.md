@@ -66,7 +66,7 @@ By leveraging **Tauri v2** and **Rust** on the backend paired with **Svelte 5** 
 - **Intelligent OTP / Verification Code Detection**:
   - Built-in heuristic and regex engine identifying 4–8 digit verification codes and multilingual patterns.
   - Instant one-click or auto-copy to clipboard.
-- **USSD / SIM Phone Number Discovery**: Automated execution of USSD commands (`*97#`, `*123#`, `*111#`, etc.) to automatically detect and map SIM phone numbers to their respective hardware ports.
+- **USSD / SIM Phone Number Discovery**: SIM phone numbers are mapped to their hardware ports in three escalating steps, cheapest first. `AT+CNUM` reads EF_MSISDN straight off the SIM — no network, no dialogue, answers in milliseconds — and many banks are fully resolved by this alone. When the operator left that field blank, the app falls back to the carrier's own-number USSD codes (`*88#`, then the `*124#` balance dialogue, whose reply text usually echoes the MSISDN). Any USSD session left open by an earlier run is cancelled first, because firmware that still believes a dialogue is active rejects the next request with an instant `+CME ERROR: 100`, and a rejected code is retried once without the data-coding-scheme argument for firmware that will not accept it.
 - **Message Management & Filtering**:
   - Filter by port, sender, date range, or OTP-only messages.
   - Table and card view modes with customizable pagination.
@@ -294,6 +294,8 @@ device node existing says nothing about a modem being present:
    - `AT+CMEE=1`: Enable numeric extended error reporting.
 2. **SIM & Registration Status**:
    - `AT+CPIN?`: Verify SIM card is ready (`+CPIN: READY`).
+   - `AT+CUSD=2` then `AT+CNUM`: Cancel a stale USSD session, then read the
+     subscriber number off the SIM before any network query is attempted.
    - `AT+CREG?`: Registration state. No result code here means a wedged modem
      and the USSD queries are skipped rather than attempted.
    - `AT+CSQ`: Signal quality check.
@@ -315,7 +317,7 @@ from:
 | Operation | Timeout chain on a silent port | With the probe |
 |---|---|---|
 | Scan (`read_port`) | `+CMGF=0` 4 s → `+CSCS` 4 s → `CMGL="ALL"` 15 s → 24 s | ~1.6 s |
-| Get SIM (`get_sim_number`) | `ATE0`/`CSCS` 6 s → `CREG?`/`CSQ` 8 s → `*88#` 9 s → `*124#` 9 s → 35 s | ~1.6 s |
+| Get SIM (`get_sim_number`) | `ATE0`/`CSCS` 6 s → `CUSD=2`/`CNUM` 3.5 s → `CREG?`/`CSQ` 8 s → `*88#` 9 s → `*124#` 9 s → 38 s | ~1.6 s |
 | Live startup | `+CMGF=0` 4 s → `CNMI` 3 s → `CMGL="ALL"` 15 s → 22 s | ~1.6 s |
 
 ---

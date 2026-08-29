@@ -39,6 +39,7 @@ static CMTI_IDX_RE: LazyLock<Regex> =
 static CUSD_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"\+CUSD:\s*(\d+),"([^"]*)"(?:,(\d+))?"#).unwrap());
 static NUMBER_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:959|09)\d{8,10}").unwrap());
+static CNUM_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\+CNUM:\s*(.+)$").unwrap());
 static DATE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(\d{2,4})/(\d{1,2})/(\d{1,2})[ ,](\d{1,2}):(\d{1,2}):(\d{1,2})(?:\s*([+-])(\d{1,2}))?",
@@ -221,6 +222,28 @@ pub fn extract_number_from_ussd(resp: &str) -> Option<String> {
     } else {
         NUMBER_RE.find(resp).map(|m| m.as_str().to_string())
     }
+}
+
+/// Pull the subscriber number out of an `AT+CNUM` reply.
+///
+/// The reply is `+CNUM: "<alpha>","<number>",<type>[,<speed>,<service>]`, one
+/// line per record, and EF_MSISDN is optional — a perfectly healthy prepaid SIM
+/// often answers a bare `OK`. Only Myanmar-shaped numbers are accepted so that
+/// service dialling numbers or a factory-blank field cannot be mistaken for the
+/// subscriber's own MSISDN.
+pub fn extract_number_from_cnum(resp: &str) -> Option<String> {
+    resp.lines()
+        .filter_map(|l| CNUM_RE.captures(l.trim()))
+        .filter_map(|cap| {
+            let fields = split_quoted(cap.get(1)?.as_str());
+            // Field 0 is the alphanumeric label, field 1 the number. Some
+            // firmware omits the label entirely, so scan both.
+            fields
+                .iter()
+                .take(2)
+                .find_map(|f| NUMBER_RE.find(f).map(|m| m.as_str().to_string()))
+        })
+        .next()
 }
 
 // ── CMTI helpers ──
@@ -917,6 +940,35 @@ mod tests {
     fn extract_number_hex_ussd() {
         let r = "+CUSD: 2,\"09780001122\",15";
         assert_eq!(extract_number_from_ussd(r), Some("09780001122".into()));
+    }
+
+    // ── AT+CNUM ──
+
+    #[test]
+    fn cnum_reads_local_number() {
+        let r = "+CNUM: \"MSISDN\",\"09780001122\",129\r\nOK";
+        assert_eq!(extract_number_from_cnum(r), Some("09780001122".into()));
+    }
+
+    #[test]
+    fn cnum_reads_international_number() {
+        let r = "+CNUM: \"\",\"+959780001122\",145\r\nOK";
+        assert_eq!(
+            normalize_number(&extract_number_from_cnum(r).unwrap()),
+            "09780001122"
+        );
+    }
+
+    #[test]
+    fn cnum_skips_record_without_myanmar_number() {
+        let r = "+CNUM: \"Voice Mail\",\"1234\",129\r\n+CNUM: \"Own\",\"09780001122\",129\r\nOK";
+        assert_eq!(extract_number_from_cnum(r), Some("09780001122".into()));
+    }
+
+    #[test]
+    fn cnum_blank_msisdn_is_not_a_number() {
+        assert_eq!(extract_number_from_cnum("OK"), None);
+        assert_eq!(extract_number_from_cnum("+CNUM: \"\",\"\",129\r\nOK"), None);
     }
 
     // ── decodeHexOrRaw ──

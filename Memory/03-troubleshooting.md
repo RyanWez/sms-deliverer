@@ -1,4 +1,4 @@
-# 03 — Troubleshooting Casebook (တကယ်ဖြစ်ခဲ့တဲ့ ၁၀ ခု)
+# 03 — Troubleshooting Casebook (တကယ်ဖြစ်ခဲ့တဲ့ ၁၁ ခု)
 
 > Format: Symptom → Root Cause → Fix → Preventive Rule. Debug ခင် ဒီထဲ အရင်ရှာပါ။
 
@@ -112,6 +112,28 @@
 - **Rule:** GSM-7 septet count တွေက UDH ရဲ့ **အစ**ကနေ ရေတွက်တယ် (header + fill bits ပါ)၊
   payload byte ကနေ မဟုတ်ဘူး။ Encoding branch အသစ် ထည့်တိုင်း UDH ရှိ/မရှိ **နှစ်မျိုးလုံး** test ရေးပါ။
   (commit `431dcaf`, 2026-08-29)
+
+## 1️⃣1️⃣ Get SIM နှိပ်လိုက်ရင် `Found: 1/32` — registered modem တွေက USSD ကို ငြင်းပယ်တာ
+
+- **Symptom:** 32 port ထဲ 1 ခုပဲ number ရ။ log မှာ port 22 ခုက `*88#` နဲ့ `*124#` နှစ်ခုလုံးကို
+  `+CME ERROR: 100`၊ 7 ခုက `no reply within 9s`၊ 2 ခုပဲ `reg stat 2` (network မရ)
+- **Root Cause (တစ်ခုမဟုတ် သုံးခု):**
+  1. `+CME ERROR: 100` က **13 ms အတွင်း** ပြန်လာတယ် (14:27:36.811 → .824) — network timeout မဟုတ်ဘူး၊
+     modem က command ကိုတင် ငြင်းတာ။ ရှေးက run တစ်ခုက USSD session ပိတ်မကျန်ခဲ့ရင် firmware က
+     session ရှိနေတယ်လို့ ထင်ပြီး `AT+CUSD=1` အသစ်ကို ချက်ချင်း ငြင်းတယ်
+  2. firmware အချို့က `,15` (dcs argument) ကို လက်မခံဘူး
+  3. USSD code ကို `*88#`/`*124#` နှစ်ခုပဲ hardcode ထားတယ် — carrier လိုက် ကွဲတယ်
+- **အရေးကြီးတာ:** failure 31 ခုထဲ 29 ခုက `reg stat 1` (home network, signal 10–22/31) ပြနေတယ် —
+  ဒါကြောင့် "SIM လိုင်း မကောင်းလို့" က port 2 ခုအတွက်ပဲ မှန်တယ်။ ကျန်တာက modem/USSD ပြဿနာ
+- **Fix:** `get_sim_number` order ကို ပြောင်း — (a) `AT+CUSD=2` နဲ့ stale session အရင်ရှင်း၊
+  (b) `AT+CNUM` (EF_MSISDN — SIM ပေါ်က file၊ network မလို၊ ms အတွင်း ပြန်) ကို **အရင်** စမ်း၊
+  (c) USSD ငြင်းခံရရင် တူတဲ့ code ကို dcs မပါဘဲ တစ်ခါ retry။ code list ကို
+  `OWN_NUMBER_USSD_CODES` const အဖြစ် တစ်နေရာတည်းမှာ စုထား (Mytel: `*88#` → `*124#`)
+- **Rule:** SIM ကနေ တိုက်ရိုက် ရနိုင်တာကို network ကို မတောင်းနဲ့။ `+CME ERROR` က ms အတွင်း ပြန်လာရင်
+  network ပြဿနာ မဟုတ်ဘူး — modem state ကို ကြည့်။ `Found: x/y` က data ဆုံးရှုံးမှု မဟုတ်ဘူး၊
+  cache ထဲ အရင်ရခဲ့တဲ့ number တွေ အတိအကျ ကျန်နေတယ် (`ussd_one_port` ရဲ့ `else` branch က log ပဲ ရေးတယ်)။
+  ဒါပေမဲ့ **slot တစ်ခုထဲမှာ SIM လဲထည့်လိုက်ရင်** အရင် number က stable path key ပေါ်မှာ ကျန်နေမယ် —
+  ဒါက cache ရဲ့ တစ်ခုတည်းသော အန္တရာယ်
 
 ## Bonus UX Notes
 

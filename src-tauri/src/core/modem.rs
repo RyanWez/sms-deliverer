@@ -423,6 +423,22 @@ pub fn get_sim_number(port_name: &str) -> (Option<String>, Option<String>) {
     ch.send("ATE0", 3000);
     ch.send("AT+CSCS=\"GSM\"", 3000);
 
+    // Cancel any USSD session left open by an earlier run, or by a crash in the
+    // middle of a dialogue. Firmware that still believes a session is active
+    // answers the next `AT+CUSD=1` with an immediate `+CME ERROR: 100`, which is
+    // exactly what a bank of otherwise-registered sticks was reporting.
+    let _ = ch.send("AT+CUSD=2", 1500);
+
+    // EF_MSISDN first: it is a file on the SIM, so it needs no network, spends no
+    // USSD dialogue and answers in milliseconds. Operators often leave it blank
+    // on prepaid SIMs, so a bare `OK` here is normal and not a fault.
+    let cnum_resp = ch.send("AT+CNUM", 2000);
+    if let Some(n) = decoder::extract_number_from_cnum(&cnum_resp) {
+        let normalized = decoder::normalize_number(&n);
+        log::info!("{}: SIM number {} (AT+CNUM)", port_name, normalized);
+        return (Some(normalized), None);
+    }
+
     // Network pre-check: USSD fails opaquely (+CME ERROR: 100 or no reply)
     // when the modem has no service, so ask the modem for its registration
     // state and signal level first. Skipping hopeless probes also saves the
@@ -446,9 +462,12 @@ pub fn get_sim_number(port_name: &str) -> (Option<String>, Option<String>) {
         return (None, Some(problem));
     }
 
-    let mut num = ussd_query(&mut ch, "*88#", 9000);
-    if num.is_none() {
-        num = ussd_query(&mut ch, "*124#", 9000);
+    let mut num = None;
+    for code in OWN_NUMBER_USSD_CODES {
+        num = ussd_query(&mut ch, code, 9000);
+        if num.is_some() {
+            break;
+        }
     }
 
     let _ = ch.send("AT+CUSD=2", 2000);
@@ -508,16 +527,49 @@ fn network_problem(creg: Option<u32>, rssi: Option<u32>) -> Option<String> {
     }
 }
 
+/// USSD codes that return (or echo) the subscriber's own number, tried in
+/// order. Mytel is the only carrier in this deployment: `*88#` is its
+/// own-number code, and `*124#` is the balance dialogue, whose reply text
+/// usually carries the MSISDN too. Each entry costs up to 9 s on a port that
+/// never answers, so keep the list short and the most reliable code first.
+const OWN_NUMBER_USSD_CODES: [&str; 2] = ["*88#", "*124#"];
+
+enum UssdOutcome {
+    Number(String),
+    /// The modem refused the command itself (`+CME`/`+CMS ERROR`).
+    Rejected,
+    /// No usable reply: silence until the deadline, or a dialogue with no number.
+    NoAnswer,
+}
+
 fn ussd_query(ch: &mut at::AtChannel, code: &str, timeout_ms: u64) -> Option<String> {
+    // `,15` names the plain-GSM data coding scheme and is what most firmware
+    // wants, but some rejects the argument outright. A rejection comes back in
+    // milliseconds, so retrying the bare form costs almost nothing and recovers
+    // sticks that would otherwise report no number at all.
+    match ussd_attempt(ch, &format!("AT+CUSD=1,\"{code}\",15"), code, timeout_ms) {
+        UssdOutcome::Number(n) => Some(n),
+        UssdOutcome::NoAnswer => None,
+        UssdOutcome::Rejected => {
+            let _ = ch.send("AT+CUSD=2", 1000);
+            match ussd_attempt(ch, &format!("AT+CUSD=1,\"{code}\""), code, timeout_ms) {
+                UssdOutcome::Number(n) => Some(n),
+                _ => None,
+            }
+        }
+    }
+}
+
+fn ussd_attempt(ch: &mut at::AtChannel, command: &str, code: &str, timeout_ms: u64) -> UssdOutcome {
     let _stale = ch.take_notifications();
-    let resp = ch.send(&format!("AT+CUSD=1,\"{code}\",15"), timeout_ms);
+    let resp = ch.send(command, timeout_ms);
     if let Some(err_line) = resp
         .lines()
         .find(|l| l.starts_with("+CME ERROR") || l.starts_with("+CMS ERROR"))
     {
         log::warn!("{}: USSD {} rejected ({})", ch.name, code, err_line.trim());
         ch.take_notifications();
-        return None;
+        return UssdOutcome::Rejected;
     }
 
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
@@ -530,7 +582,7 @@ fn ussd_query(ch: &mut at::AtChannel, code: &str, timeout_ms: u64) -> Option<Str
                 code,
                 timeout_ms / 1000
             );
-            return None;
+            return UssdOutcome::NoAnswer;
         }
         match ch.wait_notification(remaining.as_millis() as u64) {
             Some(note) => {
@@ -538,7 +590,7 @@ fn ussd_query(ch: &mut at::AtChannel, code: &str, timeout_ms: u64) -> Option<Str
                     continue;
                 }
                 match decoder::extract_number_from_ussd(&note) {
-                    Some(n) => return Some(n),
+                    Some(n) => return UssdOutcome::Number(n),
                     None => {
                         log::warn!(
                             "{}: USSD {} replied without a number: {}",
@@ -546,7 +598,7 @@ fn ussd_query(ch: &mut at::AtChannel, code: &str, timeout_ms: u64) -> Option<Str
                             code,
                             at::preview(&note, 100)
                         );
-                        return None;
+                        return UssdOutcome::NoAnswer;
                     }
                 }
             }
