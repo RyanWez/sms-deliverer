@@ -43,15 +43,21 @@ gh run list --limit 5 && gh run view <id> --json jobs
 
 # Validation
 python3 -m json.tool <file>                       # JSON syntax
-npx svelte-check --tsconfig ./tsconfig.json       # frontend types
+npm run check                                     # frontend types (svelte-check)
+npm test                                          # frontend unit tests (node:test, no framework)
 npm run build                                     # vite production build
 cargo check --manifest-path src-tauri/Cargo.toml  # rust + lockfile sync
+cargo test --manifest-path src-tauri/Cargo.toml   # rust unit tests
 
 # Release ops
 gh release view v1.0.1 --json assets -q '[.assets[].name] | sort | .[]'
 gh release create vX.Y.Z --target main --notes-file f.md   # bootstrap trigger
 curl -sIL .../releases/latest/download/latest.json -o /dev/null -w '%{http_code}\n'
 ```
+
+> Frontend tests deliberately use Node's built-in runner + `--experimental-strip-types`
+> (Node 22+) instead of vitest: vitest pulls a critical-severity advisory chain
+> through this project's `vite@5` pin, and the tested units are pure functions.
 
 ## E. Agent/CLI Environment Tips (non-interactive shells)
 
@@ -89,4 +95,8 @@ Cache/CDN illusions ကို အရင်ပယ် — ပြီးမှ confi
    `ps -o pid,ppid,lstart,args -C sms-tauri` (user's own running session ≠ your test one — PPID/lstart နဲ့ခွဲပြီး mine-only kill!)
    Idle app က serial port hold မလုပ်ဘူး — probe နဲ့ conflict မရှိ။
 
-> ⚠️ Gotcha: startup မှာ port list auto-checked (`checked:true`) — "Scan & Read All" နှိပ်ရင် checked ports အားလုံး thread spawn (`AT+CMGL=4`, 15s timeout each)။
+> ⚠️ Gotcha: startup မှာ port list auto-checked (`checked:true`)။ **"Detect Modems" ကို အရင်နှိပ်ပါ** —
+> `AT` probe (800ms × ၂) နဲ့ modem တကယ်ရှိတဲ့ port တွေကိုပဲ ရွေးထားပေးတယ်၊ ကျန်တာကို auto-uncheck လုပ်တယ်။
+> Detect မလုပ်ဘဲ "Scan & Read All" နှိပ်ရင် checked port အားလုံး thread spawn ဖြစ်တယ် — ဒါပေမဲ့ v1.3+ မှာ
+> probe gate ရှိပြီးမို့ dead port တစ်ခုက ~1.6s ပဲ ကုန်တယ် (အရင်က 24s)။ တစ်ခါတည်း သတိ:
+> device node ရှိတာ = modem ရှိတာ မဟုတ်ဘူး (doc 03 §9 ကြည့်)။

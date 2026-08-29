@@ -56,11 +56,12 @@ By leveraging **Tauri v2** and **Rust** on the backend paired with **Svelte 5** 
 
 ## ✨ Key Features
 
+- **Modem Detection Before Work**: A one-shot `AT` liveness probe (800 ms timeout, two attempts) identifies which serial ports actually have a modem behind them. A SIM bank publishes one serial device per channel whether or not a SIM is inserted, so on a partly-filled bank this is the difference between a scan that finishes in seconds and one that spends its full timeout chain on every empty slot. Ports that do not answer are deselected automatically and skipped by scan, live mode, USSD and SIM cleanup.
 - **Concurrent Multi-Port Scanning**: Parallel asynchronous workers read SMS across all connected serial ports (`COM1..N` on Windows, `/dev/ttyUSB*` / `/dev/ttyACM*` on Linux) simultaneously without UI freezing.
-- **Live SMS Monitoring Mode**: Real-time asynchronous polling and unsolicited event listener (+CMTI notifications) that triggers instant desktop alerts and sounds on incoming SMS.
+- **Live SMS Monitoring Mode**: Real-time asynchronous polling and unsolicited event listener (+CMTI notifications) that triggers instant desktop alerts and sounds on incoming SMS. A port is reported `LIVE` only after a modem answers; empty slots are labelled `NO MODEM` and excluded from the ready total instead of showing green.
 - **Advanced SMS Decoding & Concatenation**:
   - Full GSM 7-bit default alphabet, 8-bit binary, and 16-bit UCS-2 (Unicode / multi-language / Myanmar unicode) decoding.
-  - Automatic reassembly of multi-part concatenated SMS messages (TP-UDHI 8-bit & 16-bit reference numbers).
+  - Automatic reassembly of multi-part concatenated SMS messages (TP-UDHI 8-bit & 16-bit reference numbers), with GSM-7 payloads decoded from the septet boundary that follows the User Data Header.
   - PDU mode primary parsing (`AT+CMGF=0`) with graceful fallback to AT Text mode (`AT+CMGF=1`).
 - **Intelligent OTP / Verification Code Detection**:
   - Built-in heuristic and regex engine identifying 4–8 digit verification codes and multilingual patterns.
@@ -278,12 +279,23 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 ### AT Command Execution Flow
 
+Every port-touching operation opens with the same liveness gate, because a
+device node existing says nothing about a modem being present:
+
+0. **Liveness probe** (gate for scan, live mode, USSD and delete):
+   - `AT`: sent with an 800 ms timeout, up to twice. Any final result code
+     (`OK`, `ERROR`, `+CME ERROR`) counts as alive — a modem in a bad command
+     state is still worth talking to. No answer after both attempts and the port
+     is reported `Modem not responding` immediately, in about a second, instead
+     of running the sequences below against silence.
+
 1. **Initialization**:
-   - `AT`: Ping modem test (`OK`).
    - `ATE0`: Disable command echo.
    - `AT+CMEE=1`: Enable numeric extended error reporting.
 2. **SIM & Registration Status**:
    - `AT+CPIN?`: Verify SIM card is ready (`+CPIN: READY`).
+   - `AT+CREG?`: Registration state. No result code here means a wedged modem
+     and the USSD queries are skipped rather than attempted.
    - `AT+CSQ`: Signal quality check.
 3. **Reading SMS**:
    - `AT+CMGF=0`: Switch to PDU mode (reads raw hex PDUs for Unicode/UCS-2 and concatenated headers).
@@ -293,6 +305,18 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
    - `AT+CNMI=2,1,0,0,0`: Configure modem to route new message indications (+CMTI) to the terminal.
 5. **Message Deletion**:
    - `AT+CMGD=<index>`: Delete processed message by index to free up SIM storage.
+
+#### Cost of an unpopulated slot
+
+Without the probe, each timeout in a sequence is paid in full before the next
+command is tried. On a 64-port bank holding 7 SIMs that is where the wait came
+from:
+
+| Operation | Timeout chain on a silent port | With the probe |
+|---|---|---|
+| Scan (`read_port`) | `+CMGF=0` 4 s → `+CSCS` 4 s → `CMGL="ALL"` 15 s → 24 s | ~1.6 s |
+| Get SIM (`get_sim_number`) | `ATE0`/`CSCS` 6 s → `CREG?`/`CSQ` 8 s → `*88#` 9 s → `*124#` 9 s → 35 s | ~1.6 s |
+| Live startup | `+CMGF=0` 4 s → `CNMI` 3 s → `CMGL="ALL"` 15 s → 22 s | ~1.6 s |
 
 ---
 
@@ -317,7 +341,13 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 ```bash
 # Run Svelte and TypeScript typechecking
-npx svelte-check --tsconfig ./tsconfig.json
+npm run check
+
+# Run frontend unit tests
+#
+# These use Node's built-in test runner plus --experimental-strip-types rather
+# than a separate framework, so they add no dependencies. Node 22+ required.
+npm test
 
 # Build frontend assets with Vite
 npm run build
@@ -332,7 +362,7 @@ npm run preview
 # Fast compile & syntax check
 cargo check --manifest-path src-tauri/Cargo.toml
 
-# Run all unit tests (decoder, AT parser, reassembly, logging)
+# Run all unit tests (decoder, AT parser, modem probe, reassembly, logging)
 cargo test --manifest-path src-tauri/Cargo.toml
 
 # Run Clippy linter for code health and warnings
