@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.0](https://github.com/RyanWez/sms-deliverer/compare/v1.2.0...v1.3.0) (2026-08-29)
+
+
+### Features
+
+* add expand/collapse toggle for long message text ([091c48d](https://github.com/RyanWez/sms-deliverer/commit/091c48d03e6f4d50f043791d694c15b6e6b30a28))
+* **ports:** probe modems before work so empty slots cost ~1.6s not 24s ([e50d0b0](https://github.com/RyanWez/sms-deliverer/commit/e50d0b0efb99e4643231d7328dfe3d0d8cb3b550))
+* **updates:** review release notes in-app, then download and restart separately ([82686e3](https://github.com/RyanWez/sms-deliverer/commit/82686e30ca6a68b85c45ca8c66ef54047a00cf8c))
+
+
+### Bug Fixes
+
+* decode GSM-7 payload from UDH septet boundary in deliver PDUs ([431dcaf](https://github.com/RyanWez/sms-deliverer/commit/431dcaf75e70dde5dd0827df41b1f0c27f32e496))
+* **delete:** confirm a delete by re-reading the SIM, not by per-command replies ([712cbef](https://github.com/RyanWez/sms-deliverer/commit/712cbef06ed6936c97bd0e84796cfae3758cda1e))
+* **delete:** confirm each AT+CMGD instead of assuming it worked ([7613a80](https://github.com/RyanWez/sms-deliverer/commit/7613a80e81e8eb5aecd45a7ee107714829e60496))
+* **sim:** key SIM numbers on ICCID, not on the serial port ([31d3e5b](https://github.com/RyanWez/sms-deliverer/commit/31d3e5bf8f0360f9c807a528b2510b0ae19bb157))
+* **sim:** read EF_MSISDN before USSD and clear stale USSD sessions ([060fb3e](https://github.com/RyanWez/sms-deliverer/commit/060fb3e9082b2524b885b2050890ee53fae325c6))
+
 ## [1.2.0](https://github.com/RyanWez/sms-deliverer/compare/v1.1.0...v1.2.0) (2026-08-28)
 
 
