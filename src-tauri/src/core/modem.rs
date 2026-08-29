@@ -247,6 +247,31 @@ pub fn read_port(port_name: &str) -> ReadResult {
     }
 }
 
+/// Delete one SIM slot and report whether the modem actually confirmed it.
+///
+/// `AT+CMGD` can fail per index — the slot may already be empty, or the SIM may
+/// reject the write — and the reply is the only evidence either way. The caller
+/// used to ignore it and report every requested index as deleted, so the UI's
+/// "Deleted: 1 ok" said nothing about the state of the SIM.
+fn delete_index(ch: &mut at::AtChannel, idx: i32) -> bool {
+    ch.send(&format!("AT+CMGD={idx}"), 3000)
+        .lines()
+        .any(|l| l.trim() == "OK")
+}
+
+/// Delete the given SIM slots, highest index first, and return the ones the
+/// modem confirmed.
+///
+/// Highest-first matches the live worker: some modems compact their index space
+/// after a delete, and walking down means a shift can never move a slot we have
+/// not visited yet.
+fn delete_each(ch: &mut at::AtChannel, indices: &[i32]) -> Vec<i32> {
+    let mut order: Vec<i32> = indices.to_vec();
+    order.sort_unstable_by(|a, b| b.cmp(a));
+    order.retain(|idx| delete_index(ch, *idx));
+    order
+}
+
 pub fn delete_messages(port_name: &str, indices: Option<&[i32]>) -> OpResult {
     let mut ch = match at::AtChannel::open(port_name) {
         Ok(ch) => ch,
@@ -287,28 +312,53 @@ pub fn delete_messages(port_name: &str, indices: Option<&[i32]>) -> OpResult {
             }
             ch.send("AT+CSCS=\"UCS2\"", 2000);
             let lst = ch.send("AT+CMGL=\"ALL\"", 15000);
-            let idxs = decoder::parse_indices(&lst);
-            for idx in &idxs {
-                ch.send(&format!("AT+CMGD={idx}"), 3000);
+            let found = decoder::parse_indices(&lst);
+            let gone = delete_each(&mut ch, &found);
+            if gone.len() < found.len() {
+                log::warn!(
+                    "{}: deleted {}/{} msg(s) one-by-one — the SIM refused the rest",
+                    port_name,
+                    gone.len(),
+                    found.len()
+                );
+            } else {
+                log::info!("{}: deleted {} msg(s) (one-by-one)", port_name, gone.len());
             }
-            log::info!("{}: deleted {} msg(s) (one-by-one)", port_name, idxs.len());
             OpResult {
-                ok: true,
-                error: None,
-                deleted: idxs.len(),
-                indices: idxs,
+                ok: !gone.is_empty() || found.is_empty(),
+                error: if gone.len() < found.len() {
+                    Some(format!("Deleted {}/{} from SIM", gone.len(), found.len()))
+                } else {
+                    None
+                },
+                deleted: gone.len(),
+                indices: gone,
             }
         }
         Some(idxs) => {
-            for idx in idxs {
-                ch.send(&format!("AT+CMGD={idx}"), 3000);
+            let gone = delete_each(&mut ch, idxs);
+            if gone.len() < idxs.len() {
+                // Not fatal: the app's own copy is still dropped, but say so
+                // rather than letting the SIM quietly fill up behind a green
+                // status line.
+                log::warn!(
+                    "{}: deleted {}/{} msg(s) — SIM did not confirm the rest",
+                    port_name,
+                    gone.len(),
+                    idxs.len()
+                );
+            } else {
+                log::info!("{}: deleted {} msg(s)", port_name, gone.len());
             }
-            log::info!("{}: deleted {} msg(s)", port_name, idxs.len());
             OpResult {
-                ok: true,
-                error: None,
-                deleted: idxs.len(),
-                indices: idxs.to_vec(),
+                ok: !gone.is_empty(),
+                error: if gone.len() < idxs.len() {
+                    Some(format!("Deleted {}/{} from SIM", gone.len(), idxs.len()))
+                } else {
+                    None
+                },
+                deleted: gone.len(),
+                indices: gone,
             }
         }
     }
@@ -491,7 +541,7 @@ pub fn expire_old(port_name: &str, cutoff_ms: i64) -> OpResult {
     OpResult {
         ok: d.ok,
         error: d.error,
-        deleted: if d.ok { old.len() } else { 0 },
+        deleted: d.deleted,
         indices: d.indices,
     }
 }
@@ -499,11 +549,88 @@ pub fn expire_old(port_name: &str, cutoff_ms: i64) -> OpResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::at::{AtChannel, FakeTransport};
+    use crate::core::at::{AtChannel, FakeTransport, Transport};
+    use std::io;
+    use std::sync::{Arc, Mutex};
     use std::time::Instant;
 
     fn channel(script: &str) -> AtChannel {
         AtChannel::with_transport("ttyUSBtest", Box::new(FakeTransport::new(script, 1024)))
+    }
+
+    /// Answers `OK` to everything except the listed `AT+CMGD=<idx>` slots, which
+    /// get `+CMS ERROR: 321` (invalid memory index) — the reply a real modem
+    /// sends for a slot that is already empty.
+    struct DeleteTransport {
+        refuse: Vec<i32>,
+        pending: Vec<u8>,
+        sent: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Transport for DeleteTransport {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.pending.is_empty() {
+                return Err(io::ErrorKind::TimedOut.into());
+            }
+            let n = self.pending.len().min(buf.len());
+            buf[..n].copy_from_slice(&self.pending[..n]);
+            self.pending.drain(..n);
+            Ok(n)
+        }
+
+        fn write_all(&mut self, data: &[u8]) -> io::Result<()> {
+            let cmd = String::from_utf8_lossy(data).trim().to_string();
+            let refused = cmd
+                .strip_prefix("AT+CMGD=")
+                .and_then(|n| n.parse::<i32>().ok())
+                .is_some_and(|n| self.refuse.contains(&n));
+            self.sent.lock().unwrap().push(cmd);
+            self.pending.extend_from_slice(if refused {
+                b"\r\n+CMS ERROR: 321\r\n"
+            } else {
+                b"\r\nOK\r\n"
+            });
+            Ok(())
+        }
+    }
+
+    fn delete_channel(refuse: &[i32]) -> (AtChannel, Arc<Mutex<Vec<String>>>) {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let ch = AtChannel::with_transport(
+            "ttyUSBtest",
+            Box::new(DeleteTransport {
+                refuse: refuse.to_vec(),
+                pending: Vec::new(),
+                sent: Arc::clone(&sent),
+            }),
+        );
+        (ch, sent)
+    }
+
+    // ── SIM deletion ──
+
+    #[test]
+    fn delete_each_reports_only_the_slots_the_modem_confirmed() {
+        let (mut ch, _) = delete_channel(&[4]);
+        assert_eq!(delete_each(&mut ch, &[1, 4, 7]), vec![7, 1]);
+    }
+
+    #[test]
+    fn delete_each_walks_the_highest_slot_first() {
+        // A modem that compacts its index space after a delete would otherwise
+        // shift a slot we have not visited yet onto a number we already passed.
+        let (mut ch, sent) = delete_channel(&[]);
+        delete_each(&mut ch, &[1, 4, 7]);
+        assert_eq!(
+            *sent.lock().unwrap(),
+            vec!["AT+CMGD=7", "AT+CMGD=4", "AT+CMGD=1"]
+        );
+    }
+
+    #[test]
+    fn delete_each_reports_nothing_when_the_sim_refuses_everything() {
+        let (mut ch, _) = delete_channel(&[1, 2]);
+        assert!(delete_each(&mut ch, &[1, 2]).is_empty());
     }
 
     // ── Liveness probe ──

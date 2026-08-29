@@ -997,16 +997,18 @@ pub fn delete_selected(
     let state_clone = Arc::clone(&state);
     let app2 = app.clone();
     thread::spawn(move || {
-        let mut ok = 0usize;
         let mut fail = 0usize;
+        let mut wanted = 0usize;
+        let mut gone = 0usize;
         // A panic mid-delete would otherwise leave delete_busy set and the
         // toolbar spinner stuck; the flag is cleared below either way.
         let counted = catch_unwind(AssertUnwindSafe(|| {
             for (port, indices) in &to_delete {
                 let r = crate::core::modem::delete_messages(port, Some(indices.as_slice()));
+                wanted += indices.len();
+                gone += r.deleted;
                 if r.ok {
-                    ok += 1;
-                    log::info!("Deleted {} msg(s) from {}", indices.len(), port);
+                    log::info!("Deleted {} msg(s) from {}", r.deleted, port);
                 } else {
                     fail += 1;
                     log::warn!(
@@ -1025,7 +1027,17 @@ pub fn delete_selected(
             let mut st = lock_state(&state_clone);
             st.delete_busy = false;
             st.messages.retain(|m| !ids.contains(&m.id));
-            st.status_text = format!("Deleted: {} ok, {} fail", ok, fail);
+            // Count SIM slots, not ports. A port can confirm some of its indices
+            // and refuse the rest, and "1 ok" would hide that the messages are
+            // still occupying SIM storage.
+            st.status_text = if fail == 0 && gone == wanted {
+                format!("Deleted {} message(s) from SIM", gone)
+            } else {
+                format!(
+                    "Deleted {}/{} from SIM  |  FAILED: {} port(s)",
+                    gone, wanted, fail
+                )
+            };
             log::info!("{}", st.status_text);
             text = st.status_text.clone();
         }
