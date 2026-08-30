@@ -14,6 +14,7 @@
 | [03-troubleshooting.md](./03-troubleshooting.md) | တကယ်ကြုံခဲ့ရတဲ့ bug ၇ ခု — symptom → root cause → fix |
 | [04-conventions.md](./04-conventions.md) | Commit စံနှုန်း၊ verification loop၊ security rules၊ command cheatsheet |
 | [05-feature-roadmap.md](./05-feature-roadmap.md) | အနာဂတ်တွင် ဆက်လက် အကောင်အထည်ဖော်မည့် Features & Roadmap စာရင်း |
+| [06-git-workflow.md](./06-git-workflow.md) | Feature branch workflow — branch → commit → push → PR → squash merge, CI trigger matrix |
 
 ## ⚡ TL;DR — ဒီ Project ရဲ့ Golden Rules
 
