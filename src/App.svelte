@@ -61,6 +61,20 @@
     void settingsStore.updates.checkInterval;
     restartAutoUpdater();
   });
+
+  // The Logs page only exists while Developer Mode is on. Turning it off hides
+  // the sidebar entry but would otherwise leave the page mounted — and its
+  // 1s log poll running — so send the user back to the Inbox. This lives here
+  // rather than in the settings setter so it also covers Reset to Defaults,
+  // which flips developer.enabled back off without going through setDeveloper.
+  $effect(() => {
+    if (
+      !settingsStore.developer.enabled &&
+      navigationStore.currentSection === "logs"
+    ) {
+      navigationStore.navigate("inbox");
+    }
+  });
 </script>
 
 <div class="h-full flex flex-col bg-background">
