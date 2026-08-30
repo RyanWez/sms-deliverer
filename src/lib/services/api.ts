@@ -19,6 +19,18 @@ function toast(kind: ToastData['kind'], title: string, body: string, otp?: strin
   });
 }
 
+/**
+ * Announce a freshly detected OTP, unless the user has muted notifications.
+ *
+ * Only OTP announcements are gated: operational feedback (scan/detect/export
+ * failures) always goes through `toast` directly, because silencing an error is
+ * never what "Enable Notifications: off" is asking for.
+ */
+function notifyOtp(title: string, body: string, otp: string) {
+  if (!settingsStore.notifications.enabled) return;
+  toast('Otp', title, body, otp);
+}
+
 async function refreshFromBackend() {
   if (!isTauri()) return;
   try {
@@ -179,7 +191,7 @@ export const api = {
           messagesStore.items = [...messagesStore.items, smsItem];
         }
         if (smsItem.otp) {
-          toast('Otp', 'New OTP', smsItem.message.text ?? '', smsItem.otp);
+          notifyOtp('New OTP', smsItem.message.text ?? '', smsItem.otp);
         }
       });
 
@@ -194,7 +206,7 @@ export const api = {
             i === idx ? updated : m
           );
           if (updated.otp) {
-            toast('Otp', 'OTP detected', updated.message.text ?? '', updated.otp);
+            notifyOtp('OTP detected', updated.message.text ?? '', updated.otp);
           }
         }
       });
