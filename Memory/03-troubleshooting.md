@@ -211,6 +211,7 @@
 Case မဟုတ်သေးပါ — 2026-08-30 settings cleanup (`fbd7b8b`) လုပ်ရင်း တွေ့ခဲ့တဲ့ ချောင်း ၃ ခု
 (T1–T2 settings layer၊ T3 decoder)။ Symptom မရှိသေးလို့ fix မလုပ်ခဲ့ဘူး၊ ဒါပေမဲ့ နောက်ဆို
 ရှင်းပြရ ခက်တဲ့ bug ဖြစ်လာနိုင်တယ်။
+**T3 က v1.4.0 မှာ ကုဒ် ပြင်ပြီးသွားပြီ** (အောက်တွင်) — T1/T2 က ပြင်ရသေး။
 
 ### T1. `deepMerge` က **stored** key တွေကို iterate တာ — ဖျက်ထားတဲ့ setting က profile ထဲ မပျောက်
 
@@ -249,24 +250,34 @@ runtime မှာ `undefined` ပဲ။ Checkbox အတွက် အဲ့ဒါ
   reload ပြီးရင် value ကျန်လား၊ consumer တကယ် တုံ့ပြန်လား။ Type checker က ဒီအလွှာမှာ
   မကာကွယ်ပေးဘူး (doc 04 §H)
 
-### T3. `KW_CONFIRM` keyword constant က စာလုံးပေါင်း မှားနေတယ် (OTP gate — ကုဒ် မပြင်ရသေး)
+### T3. `KW_CONFIRM` keyword constant က စာလုံးပေါင်း မှားခဲ့တယ် (OTP gate — **v1.4.0 မှာ ပြင်ပြီး**)
 
-`src-tauri/src/core/decoder.rs` ရဲ့ keyword constant:
+**အရင်က ဒီလို ဖြစ်ခဲ့တယ် (context အတွက် ကျန်ထား):** `src-tauri/src/core/decoder.rs` ရဲ့
+keyword constant က
 
 ```rust
 const KW_CONFIRM: &str = "\u{1021}\u{1010}\u{1014}\u{103A}\u{1015}\u{103C}\u{102F}"; // = အတန်ပြု
 ```
 
 `\u{1014}` က **န**။ မြန်မာ "confirm" က **အတည်ပြု** — `\u{100A}` (**ည**) ဖြစ်ရမယ်။ ဆိုတော့
-`KEYWORD_RE` gate ထဲက ဒီ alternative က **တကယ့် SMS ဘယ်တော့မှ မ match ဘူး** (မရှိတဲ့ စာလုံးပေါင်း)။
+`KEYWORD_RE` gate ထဲက ဒီ alternative က **တကယ့် SMS ဘယ်တော့မှ မ match ခဲ့ဘူး** (မရှိတဲ့ စာလုံးပေါင်း)။
 
-- **Impact:** အခြား keyword (`otp`, `code`, `pin`, `ကုဒ်`, `လုံခြုံ`, `verify`…) မပါဘဲ
+- **အရင် Impact:** အခြား keyword (`otp`, `code`, `pin`, `ကုဒ်`, `လုံခြုံ`, `verify`…) မပါဘဲ
   **"အတည်ပြု" တစ်ခုတည်း** သုံးတဲ့ မြန်မာ OTP SMS က gate ကို မဖြတ်ဘူး → OTP မတွေ့ဘူး
   (silent miss — decoder က `None` ပြန်တာမို့ error မတက်)
-- Unit test တစ်ခုမှ ဒီ constant ကို မထိထားဘူး၊ ဒါကြောင့် green test suite က ဒါကို မဖမ်းဘူး
-- **Fix:** `\u{1014}` → `\u{100A}` + `extract_otp` အတွက် "အတည်ပြု" body နဲ့ test တစ်ခု ထည့်။
-  (2026-08-30 settings ledger လုပ်ရင်း တွေ့တာ — `src-tauri/` ကို ထိတဲ့ change မို့ အဲ့ session မှာ
-  မပြင်ခဲ့ဘူး)
+- Unit test တစ်ခုမှ ဒီ constant ကို မထိထားခဲ့ဘူး၊ ဒါကြောင့် green test suite က ဒါကို မဖမ်းခဲ့ဘူး
+- **အခု ပြင်ပြီးသွားပြီ (v1.4.0):** `src-tauri/src/core/decoder.rs:7` က `\u{100A}` သုံးပြီ —
+  constant က **အတည်ပြု** ဖြစ်သွားပြီ။ Regression test လည်း ပါလာပြီ:
+  `src-tauri/src/core/decoder.rs:943` `otp_myanmar_confirm_keyword` — "အတည်ပြု" body နဲ့
+  `extract_otp` က OTP ပြန်ရမယ်၊ ပြီးတော့ **keyword ဖြုတ်ထားတဲ့ တူတူ body** က `None`
+  ပြန်ရမယ် (negative control — gate ကို တကယ် ဖွင့်ပေးတာ ဒီ keyword ဆိုတာ သက်သေ)
+- **ချောင်းအဖြစ် ဒီအတိုင်း မှတ်ထား** — bug class က ကျန်နေတယ်။ **Keyword constant ထဲက Unicode
+  escape sequence ကို မျက်လုံးနဲ့ စစ်လို့ မရဘူး**: `\u{1014}` ↔ `\u{100A}` က code point တစ်ခုပဲ
+  ကွာတယ်၊ diff/review မှာ ဘယ်သူမှ မမြင်ဘူး၊ compiler နဲ့ regex ၂ ခုလုံးအတွက်လည်း valid ပဲ။
+  **render ဖြစ်လာတဲ့ စာလုံးကို assert လုပ်တဲ့ test** ပဲ ဖမ်းနိုင်တာ — escape ကို ပြန်ဖတ်ကြည့်တာ မဟုတ်ဘူး
+- **Rule:** မြန်မာ (ဒါမှမဟုတ် non-ASCII) keyword constant အသစ် ထည့်တိုင်း **သူ့ကို match
+  ဖြစ်ရမယ့် body တစ်ခု + မဖြစ်ရမယ့် body တစ်ခု** နဲ့ test ထည့်ပါ။ Constant တစ်ခုတည်းကို
+  မှန်လား စစ်တာ မလုံလောက်ဘူး — gate တစ်ခုလုံးကို ပြေးခိုင်းပါ
 
 ## Bonus UX Notes
 

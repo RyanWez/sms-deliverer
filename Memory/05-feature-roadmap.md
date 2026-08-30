@@ -85,7 +85,8 @@
 | `developer.maxLogs` | *(label မရှိ)* | UI မှာ render မဖြစ်ခဲ့ဘူး; ring buffer က Rust ဘက် hardcode (`MAX_RING_BUFFER = 1000`) |
 
 ကျန်ခဲ့တဲ့ inert field ၂ ခု (`general.portRefreshInterval`, `developer.autoScroll`) က
-**တမင် ချန်ထားတာ** — §C ကြည့်။
+**တမင် ချန်ထားတာ** — §C ကြည့်။ (`portRefreshInterval` က **v1.4.0 မှာ wire ပြီးသွားပြီ** —
+inert မဟုတ်တော့ဘူး၊ §C.2။ `autoScroll` ကတော့ inert အတိုင်း ကျန်နေတယ်။)
 
 ## B. Hard Refusals — ဒီ ၂ ခုကို editable field အဖြစ် **ပြန်မထည့်ရ**
 
@@ -100,7 +101,7 @@ OTP detection က `src-tauri/src/core/decoder.rs::extract_otp` — regex တစ�
 1. `normalize_myanmar_digits()` — မြန်မာ digit (`U+1040`–`U+1049`) → ASCII
 2. `KEYWORD_RE` **gate** — `otp|one.?time|code|pin|verification|verify|confirm` + မြန်မာ keyword
    constants (`KW_KODE` = ကုဒ်၊ `KW_CONFIRM`၊ `KW_SECURE` = လုံခြုံ)။ **မ match ရင် ချက်ချင်း `None`**
-   *(`KW_CONFIRM` စာလုံးပေါင်း အမှား ရှိတယ် — doc 03 §T3)*
+   *(`KW_CONFIRM` စာလုံးပေါင်း အမှား ရှိခဲ့တယ် — v1.4.0 မှာ ပြင်ပြီး၊ doc 03 §T3)*
 3. `P1` (keyword ၂၄ char အတွင်း digit 4–8) → `P2` (digit + `is|as your|`ဖြစ်) → `P3` (bare 6-digit)
    → `P4` (bare 4–8 digit) — ဒီ **order** ကိုယ်တိုင် precision ကို ထိန်းတာ
 
@@ -140,47 +141,85 @@ window (default ၂ နာရီ) ထက် ပိုအသက်ရှည်တ
 
 ## C. Deferred — သဘောတူထားတဲ့ **အစဉ်လိုက်** (next session ဒီ order နဲ့ ဆက်ပါ)
 
-### C.1 ⬅️ **NEXT:** Theme Dark/Light တကယ် အလုပ်လုပ်အောင် လုပ်
+> **v1.4.0 အခြေအနေ:** C.1 (theme) နဲ့ C.2 (port auto-refresh) ၂ ခုလုံး **ပြီးသွားပြီ** —
+> ဆုံးဖြတ်ရသေးတဲ့ setting က C.3 တစ်ခုပဲ။ ပြီးသွားတဲ့ ၂ ခုကို history အဖြစ် ချန်ထားတယ်
+> (ဖျက်လိုက်ရင် blocker တွေက ဘာလို့ blocker ဖြစ်ခဲ့တာလဲ ဆိုတာ ပျောက်သွားမယ်)။
+> **C.4–C.7 က v1.4.0 ကုဒ်ပေါ် စစ်ပြီး ရွှေ့ထားတဲ့ limitation အသစ် ၄ ခု (L1–L4)။**
 
-Control က Settings ပေါ် ရှိတယ် (System / Dark / Light)၊ **Light က no-op ဖြစ်နိုင်တယ်**။
-တစ်ခုတည်း မဟုတ်ဘူး — **သီးသန့် blocker ၃ ခု** ရှိတယ်၊ ၃ ခုလုံး မဖြေရင် theme မလာဘူး:
+### C.1 ✅ **DONE (v1.4.0):** Theme Dark/Light တကယ် အလုပ်လုပ်အောင် လုပ်ပြီး
 
-| # | Blocker | တကယ့် အခြေအနေ |
-|---|---|---|
-| 1 | **Class strategy မပြည့်စုံ** | `applyTheme()` (`src/lib/stores/settings.svelte.ts`) က `dark` class ကို add/remove ပဲ လုပ်တယ် — `light` class ဆိုတာ မရှိ၊ ပြီးတော့ `src/` တစ်ခုလုံးမှာ **`dark:` Tailwind variant တစ်ခုမှ မသုံးထားဘူး** (grep → zero)။ Component တွေက `bg-surface` စတဲ့ CSS-variable token တွေပဲ သုံးတယ် |
-| 2 | **Light token တွေ OS ကို ချုပ်ခံထား** | `src/app.css` ရဲ့ light palette က `@media (prefers-color-scheme: light) { :root:not(.dark) { … } }` အောက်။ OS က dark ဖြစ်တဲ့ machine မှာ Light ရွေးရင် — `dark` class ဖြုတ်ပေမဲ့ media query က မ match တာမို့ — `:root` ရဲ့ dark token တွေ ကျန်နေတယ်၊ **ဘာမှ မပြောင်း** |
-| 3 | **Shell က dark ကို pin ထား** | `index.html`: `<html class="dark" style="…color-scheme: dark">` + inline `<style>` မှာ `html, body, #app { background-color: #171717 !important }` (+ `color: #e4e4e4`၊ `<body style>`၊ `meta theme-color`/`color-scheme`)။ `!important` ကြောင့် app background ကို token နဲ့ override မရဘူး၊ `color-scheme: dark` ကြောင့် **native scrollbar နဲ့ `<select>` dropdown တွေလည်း dark ကျန်နေမယ်** |
+Control က Settings ပေါ် ရှိခဲ့တယ် (System / Dark / Light)၊ **Light က no-op ဖြစ်ခဲ့တယ်**။
+တစ်ခုတည်း မဟုတ်ဘူး — **သီးသန့် blocker ၄ ခု** ရှိခဲ့တယ် (ledger မှာ ၃ ခု လို့ မှတ်ခဲ့တာ
+**မပြည့်စုံခဲ့ဘူး** — Logs console ရဲ့ hardcoded hex က စတုတ္ထ blocker၊ အောက်တွင်)၊
+၄ ခုလုံး ဖြေပြီးမှ theme လာတယ်:
 
-> ⚠️ **`index.html` block ကို ဒီအတိုင်း မဖျက်ပါနဲ့** — သူက **flash guard**။ Vite က CSS ကို
-> inject မလုပ်ခင် webview က default white ကို ခဏ ပြတယ်၊ dark app မှာ အဲ့ဒါက အလင်းပြက်ခြင်း
-> အဖြစ် မြင်ရတယ်။ Theme လုပ်တဲ့အခါ ဒီ guard ကို **persist ထားတဲ့ theme အလိုက် ရွေးပေးတဲ့
-> inline script** (localStorage `sms-reader-settings` ကို `<head>` ထဲကတင် ဖတ်တာ) နဲ့ အစားထိုးရမယ် —
-> ဖျက်ပစ်တာ မဟုတ်ဘူး။
+| # | Blocker | အရင် အခြေအနေ | v1.4.0 ဖြေရှင်းချက် |
+|---|---|---|---|
+| 1 | **Class strategy မပြည့်စုံ** | `applyTheme()` (`src/lib/stores/settings.svelte.ts`) က `dark` class ကို add/remove ပဲ လုပ်တယ် — `light` class ဆိုတာ မရှိ၊ ပြီးတော့ `src/` တစ်ခုလုံးမှာ **`dark:` Tailwind variant တစ်ခုမှ မသုံးထားဘူး** (grep → zero)။ Component တွေက `bg-surface` စတဲ့ CSS-variable token တွေပဲ သုံးတယ် | `setResolved()` (`settings.svelte.ts:154`) က `dark`/`light` ၂ ခုလုံးကို `classList.toggle` နဲ့ explicit ရေးတယ် + `root.style.colorScheme` ပါ set တယ် (native scrollbar / `<select>` popup အတွက်) |
+| 2 | **Light token တွေ OS ကို ချုပ်ခံထား** | `src/app.css` ရဲ့ light palette က `@media (prefers-color-scheme: light) { :root:not(.dark) { … } }` အောက်။ OS က dark ဖြစ်တဲ့ machine မှာ Light ရွေးရင် — `dark` class ဖြုတ်ပေမဲ့ media query က မ match တာမို့ — `:root` ရဲ့ dark token တွေ ကျန်နေတယ်၊ **ဘာမှ မပြောင်း** | `src/app.css:21` `:root, :root.dark` နဲ့ `src/app.css:48` `:root.light` ၂ ခုလုံး **variable ၂၀ လုံး အပြည့်** သတ်မှတ်တယ် (partial override မရှိ)၊ palette က **class ပေါ်ပဲ** မှီတယ်။ `prefers-color-scheme` က app.css ထဲမှာ comment အဖြစ်ပဲ ကျန်တယ် — ဘယ် class တင်မလဲ ဆုံးဖြတ်တဲ့အခါ ၂ နေရာ (flash guard + `applyTheme`) မှာပဲ ဖတ်တယ် |
+| 3 | **Shell က dark ကို pin ထား** | `index.html`: `<html class="dark" style="…color-scheme: dark">` + inline `<style>` မှာ `html, body, #app { background-color: #171717 !important }`။ `!important` ကြောင့် app background ကို token နဲ့ override မရဘူး | `index.html` ရဲ့ flash guard က **synchronous inline IIFE** ဖြစ်သွားပြီ — stylesheet/bundle မတင်ခင် `localStorage` `sms-reader-settings` ကနေ theme ဖတ်၊ `dark`/`light` class + `colorScheme` ကို တင်၊ corrupt JSON / storage ပိတ်ထားရင် `<html>` ပေါ် ကြေညာပြီးသား dark default ကို ချန်။ Pre-stylesheet paint colour ကို `html` / `html.light` ၂ ခုနဲ့ ရေးတယ်၊ **`!important` ပါ ဖြုတ်လိုက်ပြီ** |
+| 4 | **Logs console က hex hardcode** *(ledger မှာ "Bonus trap" လို့ မှတ်ခဲ့တာ — တကယ်က blocker)* | `src/lib/pages/Logs.svelte` က `bg-[#0d1117] text-[#e6edf3]` — `src/` တစ်ခုလုံးမှာ **hardcoded hex တစ်ခုတည်း**။ အထဲက log line တွေက token colour သုံးတာမို့ light theme လာရင် **အလင်းပေါ်အလင်း — လုံးဝ မဖတ်နိုင်** | Console အတွက် သီးသန့် token ၃ ခု ထည့်ပြီး (`--console-bg` / `--console-fg` / `--console-row-hover`၊ theme ၂ ခုလုံးမှာ ရှိ)၊ `Logs.svelte:223` က `bg-[rgb(var(--console-bg))] text-[rgb(var(--console-fg))]`၊ row hover က `:242` မှာ `--console-row-hover`။ Console က တမင် `--surface` ကို မလိုက်ဘူး (terminal surface — GitHub canvas pair) |
 
-**Bonus trap:** `src/lib/pages/Logs.svelte:223` က `bg-[#0d1117] text-[#e6edf3]` လို့ hardcode
-ထားတယ် — `src/` တစ်ခုလုံးမှာ **hardcoded hex တစ်ခုတည်း**။ Console အတွင်းထဲက log line တွေက
-token colour (`text-muted-foreground` စသည်) သုံးတာမို့ light theme အလုပ်လုပ်လာရင် Logs page က
-"dark ကျန်နေတာ" မဟုတ်ဘဲ **အလင်းပေါ်အလင်း — လုံးဝ မဖတ်နိုင်တာ** ဖြစ်လာမယ်။ Console အတွက်
-သီးသန့် token pair (`--console-bg` / `--console-fg`) ထည့်ရမယ်။
+> ⚠️ **`index.html` ရဲ့ flash guard ကို ဘယ်တော့မှ မဖျက်ပါနဲ့** — Vite က CSS ကို inject မလုပ်ခင်
+> webview က `<html>` default ကို ခဏ ပြတယ်၊ အဲ့ဒါက အလင်းပြက်ခြင်း အဖြစ် မြင်ရတယ်။ v1.4.0 မှာ
+> **အစားထိုးလိုက်တာ၊ ဖျက်လိုက်တာ မဟုတ်ဘူး** — အခု guard က persist ထားတဲ့ theme အလိုက်
+> class ရွေးပေးတယ်။ ဒါက `settings.svelte.ts` ရဲ့ resolution logic (storage key၊ JSON shape၊
+> class နာမည်၊ `color-scheme`) ကို **တမင် duplicate ထားတာ** — bundle မတင်ခင် run ရတာမို့။
+> တစ်ဖက် ပြောင်းရင် နောက်တစ်ဖက် လိုက်ပြောင်းပါ (`index.html` ရဲ့ comment ကိုယ်တိုင် ဒါကို ဆိုထား)။
 
-### C.2 `general.portRefreshInterval` — inert အတိုင်း **တမင် ချန်ထား**
+**မှတ်ထားရမယ့် အချက် ၂ ခု:**
+- **OS media listener က အရင်ကတည်းက ရှိခဲ့တယ် — ဒါပေမဲ့ ဘယ်တော့မှ unsubscribe မလုပ်ခဲ့ဘူး**။
+  v1.3.1 မှာ startup တစ်ခါ `addEventListener('change', …)` တင်ထားပြီး `removeEventListener`
+  မရှိ၊ callback ထဲမှာ `theme === 'system'` လား စစ်တာနဲ့ ကာခဲ့တာ။ အခု listener က
+  **System ရွေးထားစဉ်မှာပဲ တင်ရှိတယ်** — `detachSystemListener()` (`settings.svelte.ts:136`)
+  က attach တိုင်း အရင် ဖြုတ်တာမို့ `applyTheme` က idempotent ဖြစ်တယ် (listener မထပ်နိုင်)၊
+  ပြီးတော့ Dark/Light pin ထားတဲ့ user ကို OS ညနေ dark ပြောင်းလိုက်တာနဲ့ ပြန်မဆွဲတော့ဘူး
+- `matchMedia` မရှိတဲ့ embedded webview မှာ **dark ကို fallback** (`settings.svelte.ts:173`) —
+  OS-less light branch ကို မဟုတ်ဘူး၊ shipped default က dark ဖြစ်လို့
 
-Field က `types.ts` နဲ့ Settings page ၂ ခုလုံးမှာ ရှိတယ် (default `30`)၊ timer တစ်ခုမှ မဖတ်ဘူး။
-Feature က တကယ် အသုံးဝင်တယ် (SIM bank ကို re-plug လုပ်ရင် အလိုအလျောက် သိစေတာ) — ဒါကြောင့်
-ဖျက်မထားဘူး။ ဒါပေမဲ့ **trap:**
+### C.2 ✅ **DONE (v1.4.0):** `general.portRefreshInterval` — wire လုပ်ပြီး၊ `live_ready` trap ပိတ်ပြီး
 
+**အရင်က ဒီလို ဖြစ်ခဲ့တယ် (context အတွက် ကျန်ထား):** Field က `types.ts` နဲ့ Settings page ၂ ခုလုံးမှာ
+ရှိခဲ့တယ် (default `30`)၊ timer တစ်ခုမှ မဖတ်ခဲ့ဘူး — တမင် ချန်ထားခဲ့တာ။ Trap က:
 `refresh_ports` (`src-tauri/src/commands/mod.rs`) က port အားလုံးအတွက် **`live_ready: false`** နဲ့
-`PortInfo` အသစ် ပြန်တည်တယ် (`checked`/`alive`/`iccid` ကိုပဲ stable `path` နဲ့ carry over တယ်)။
-ဆိုတော့ live mode ဖွင့်ထားစဉ် background timer တစ်ခု ပြေးလိုက်ရင် **LIVE badge အားလုံး ပြုတ်သွားမယ်** —
-modem တွေ ကောင်းနေတဲ့ အခိုက်မှာ။
+`PortInfo` အသစ် ပြန်တည်ခဲ့တယ် (`checked`/`alive`/`iccid` ကိုပဲ stable `path` နဲ့ carry over)။
+ဆိုတော့ live mode ဖွင့်ထားစဉ် background timer ပြေးလိုက်ရင် **LIVE badge အားလုံး ပြုတ်သွားမယ်** —
+modem တွေ ကောင်းနေတဲ့ အခိုက်မှာ (လက်နဲ့ Refresh နှိပ်တာနဲ့တောင် ဖြစ်ခဲ့တာ)။
 
-Implementation က ဒီ ၂ ခုထဲ တစ်ခု လိုတယ်:
-- Frontend timer ကို `App.svelte` ရဲ့ `portsBusy()` helper နဲ့ gate လုပ် (live / scan / USSD /
-  delete busy ဖြစ်ရင် skip) — SIM cleanup timer တွေ ဒီ pattern ကို သုံးပြီးသား၊ ဒါမှမဟုတ်
-- `refresh_ports` ကိုယ်တိုင် `live_ready`/`live_error` ကို old map ကနေ preserve လုပ်အောင် ပြင်
+**အခု ဖြေရှင်းပြီးသွားပြီ (v1.4.0)** — ledger မှာ "၂ ခုထဲ တစ်ခု" လို့ ရေးခဲ့ပေမဲ့ တကယ်က
+**၂ ခုလုံး** လုပ်လိုက်တယ်:
 
-Owner လိုချင်တာ ထပ်တစ်ခု: auto-detect လုပ်လိုက်တဲ့ **re-plug ကို UI မှာ ပြပေးတာ**
-(port အသစ် ပေါ်လာ/ပျောက်သွားတာကို status line ဒါမှမဟုတ် toast နဲ့) — refresh တိတ်တဆိတ် ဖြစ်နေတာ မဟုတ်ဘဲ။
+| အလွှာ | ဖိုင် | ဘာ ဖြစ်သွားလဲ |
+|---|---|---|
+| Timer | `src/App.svelte:78` `restartPortRefresh()` + `$effect` (`:99`) | `portRefreshInterval` ပြောင်းတိုင်း arm/re-arm (timer မထပ်ဘူး၊ unmount မှာ `stopPortRefresh`)၊ `isTauri()` မဟုတ်ရင် arm မလုပ် (browser preview မှာ hotplug မရှိ)။ Tick တိုင်း **port operation တစ်ခုခု လုပ်နေရင် skip** — `portsBusy()` (live/scan/USSD/delete) **+ `liveStore.detectBusy` သီးသန့်** (`:92`၊ detect က `portsBusy()` ထဲ မပါ) |
+| Clamp | `src/lib/utils/port-refresh.ts` `portRefreshPeriodMs()` | `MIN_PORT_REFRESH_SECONDS = 5` / `MAX_PORT_REFRESH_SECONDS = 3600`၊ `0` နဲ့ non-finite/negative/junk အားလုံး → `null` = **off**။ Ceiling က corrupt value က `setInterval` delay ကို 2³¹−1 ms ကျော်ခိုင်းပြီး near-zero ကို overflow ဖြစ်တာ (64 serial device ပေါ် tight loop) ကို ကာတာ။ Runes/Tauri import မပါတဲ့ plain `.ts` — `npm test` နဲ့ စမ်းနိုင်တယ် |
+| Diff / UI | `port-refresh.ts` `diffPorts` / `summarizeNames` / `describePortChanges` | Diff က **device name** ပေါ် အခြေခံတယ် (index မဟုတ် — backend က port number အလိုက် sort တာမို့ အောက်က stick တစ်ခု ပေါ်လာရင် index တွေ ရွှေ့ကုန်တယ်; `path` လည်း မဟုတ် — replug မှာ tty node ပြောင်းတာကိုယ်တိုင် operator သိရမယ့် အချက်)။ Toast က ပေါ်လာ = Success၊ ပျောက် = Warning၊ ၂ ခုလုံး = Info၊ **မပြောင်းရင် တိတ်တိတ်**၊ နာမည် ၃ ခုကျော်ရင် `… and N more` |
+| Merge | `src-tauri/src/commands/mod.rs:143` `merge_ports(enumerated, old, sim_dir, live_session)` | `refresh_ports` (`:194`) က pure function ခေါ်တာ ဖြစ်သွားပြီ — `/dev/serial/by-path` မလိုဘဲ rule တွေကို unit test လုပ်နိုင်တယ် (`:1675` ကနေ test ၆ ခု) |
+
+**`live_ready` trap ကို တကယ် ဘယ်လို ပိတ်ခဲ့လဲ:** badge ဟာ "အခုချိန်မှာ ဒီ port ပေါ် worker
+တစ်ခု ထိုင်နေတယ်" ဆိုတဲ့ အဓိပ္ပာယ်၊ ဒါကြောင့် refresh ကို ဖြတ်ကျန်တာ အောက်ပါ **၃ ချက်
+အားလုံး** မှန်တဲ့အခါမှသာ (`mod.rs:177`):
+
+1. **live session ကျန်နေရမယ်** — `st.live_on || st.live_stop.is_some()` (`:203`)၊
+   `port_busy()` က ports-held လို့ သတ်မှတ်တဲ့ window တူတူ။ session မရှိရင် worker မရှိ
+2. **port က enumeration ထဲ ကျန်နေရမယ်** — ပျောက်သွားတဲ့ port က ဒီ list ထဲ entry မရှိတာမို့
+   ပြန်လာချိန်မှာ fresh `false` ကနေ စတယ်
+3. **stable path အောက်က tty name မပြောင်းရဘူး** (`p.live_ready && p.name == name`) —
+   live worker က **spawn ချိန် name ကို တစ်သက်လုံး** ကိုင်ထားပြီး outage ပြီးရင်လည်း အဲ့ name
+   ကိုပဲ ပြန်ဖွင့်တာမို့ renumber ဖြစ်သွားတဲ့ stick က path ကျန်ပေမဲ့ worker မရှိတော့ဘူး —
+   carry over လုပ်ရင် badge က လိမ်တာ ဖြစ်မယ်
+
+State carry over က **stable `path` ပေါ်ပဲ** (name ပေါ် ဘယ်တော့မှ မဟုတ်) — name က replug မှာ
+ရွှေ့တဲ့ ဟာ ဖြစ်လို့ name နဲ့ တွဲရင် stick တစ်ခုရဲ့ liveness/card ကို အခြား stick ပေါ် တင်မိမယ်။
+
+**ICCID တူတာကို condition အဖြစ် တမင် မထည့်ဘူး:** `refresh_ports` က **port ကို ဘယ်တော့မှ
+မဖွင့်ဘူး** — ဒါကြောင့် သူ report တဲ့ ICCID က old entry ကနေ ကူးလာတာ ဒါမှမဟုတ် SIM directory
+ရဲ့ "ဒီ path မှာ နောက်ဆုံး တွေ့ခဲ့တာ" hint ပဲ။ ဆိုတော့ သူ ပြောင်းနိုင်တာက `None` → hint
+တစ်မျိုးပဲ ဖြစ်ပြီး၊ အဲ့ဒါက **card ပြောင်းသွားတယ် ဆိုတဲ့ သက်သေ မဟုတ်ဘူး** (session အရင်က
+ဟာ ဖြစ်နိုင်တယ်)။ တကယ့် swap ကို ဖမ်းတာက tty-name check ပဲ။ Test:
+`mod.rs` `a_slot_hint_filling_in_an_unknown_iccid_leaves_the_badge_alone`။
+
+`live_error` ကတော့ refresh တိုင်း `None` ဖြစ်တယ် (`mod.rs:187`) — ဒါက L1 ရဲ့ ဇစ်မြစ်၊ §C.4 ကြည့်။
 
 ### C.3 `developer.autoScroll` — inert အတိုင်း၊ **မဆုံးဖြတ်ရသေး**
 
@@ -188,6 +227,71 @@ Logs page မှာ session-local toggle ကိုယ်ပိုင် ရှ�
 default `true`၊ `src/lib/stores/logs.svelte.ts`)၊ setting ကနေ မဖတ်ဘူး။ Wire လုပ်တာ ခက်တာ မဟုတ် —
 store ကို settings ကနေ **seed** လုပ်ရမယ်၊ ပြီးတော့ toggle ကို session-only ထားမလား setting ထဲ
 ပြန်ရေးမလား ဆိုတာ ဆုံးဖြတ်ရမယ် (owner မဆုံးဖြတ်ရသေး)။
+
+---
+
+**C.4–C.7: v1.4.0 ကုဒ်ပေါ် စစ်ပြီး ရွှေ့ထားတဲ့ limitation ၄ ခု (L1–L4)** — bug မဟုတ်တဲ့
+"မလုပ်ရသေးတာ" မဟုတ်ဘူး၊ **ရှိပြီးသား behaviour ရဲ့ အပေါက်** တွေ။ တစ်ခုချင်းစီမှာ file:line
+သက်သေ နဲ့ operator မြင်ရမယ့် symptom ပါတယ်။
+
+### C.4 (L1) Live mode က **နာမည် ပြောင်းပြီး ပြန်လာတဲ့ stick** ကို ဘယ်တော့မှ ပြန်မကောက်ဘူး
+
+- **သက်သေ:** worker တစ်ခုက spawn ချိန် tty name ကို **တစ်သက်လုံး** ကိုင်ထားတယ်
+  (`src-tauri/src/core/live.rs:167` — reconnect loop က `AtChannel::open(port_name)` အဲ့ name
+  ကိုပဲ ပြန်ဖွင့်တာ)။ `merge_ports` က name ပြောင်းသွားရင် `live_ready` ကို carry over
+  မလုပ်ဘူး (`src-tauri/src/commands/mod.rs:177`) ပြီးတော့ `live_error: None` ရေးတယ်
+  (`:187`) — ဆိုတော့ `portStatus` က **CONNECTING ကို အမြဲ ကျသွားတယ်**
+  (`src/lib/utils/port.ts:63`)
+- **ပိုဆိုးတာ:** မိဘမရှိ ဖြစ်သွားတဲ့ worker ရဲ့ `Reconnecting` event ကို **name နဲ့ ရှာတယ်**
+  (`src-tauri/src/commands/mod.rs:902` arm၊ lookup က `:907`
+  `find(|p| p.name == port)`) — name အဲ့ဒါနဲ့ row မရှိတော့တာမို့ **ERROR တောင် ရေးမပြနိုင်ဘူး**
+- **Symptom:** operator က stick ကို ပြန်ထိုးတယ်၊ card က `CONNECTING…` နဲ့ **ထာဝရ** ကျန်နေတယ် —
+  error မရှိ၊ ERROR badge မရှိ၊ message မရှိ
+- **Workaround:** live ကို **Stop → Start** (start_live က ယခု checked name တွေအလိုက်
+  worker အသစ် ပြန် spawn တာမို့)
+- **v1.4.0 မှာ ပိုမြင်လာတယ်:** auto-refresh က timer နဲ့ re-enumerate လုပ်တာမို့ အရင်က
+  Refresh နှိပ်မှ ပေါ်တဲ့ ဒီ အခြေအနေက အခု အလိုအလျောက် ရောက်လာတယ်
+
+### C.5 (L2) `start_live` က thread pool မရှိ၊ stagger မရှိ — checked port အရေအတွက် အတိုင်း spawn
+
+- **သက်သေ:** `src-tauri/src/commands/mod.rs:838` `for port in ports` loop က port တစ်ခုစီအတွက်
+  `thread::spawn` တစ်ခု (`:842`)၊ ports က `p.checked` filter (`:803`) ကနေ လာတာ။ semaphore /
+  worker cap **မရှိ**
+- **နှိုင်းယှဉ်:** တခြား port-heavy path အားလုံးက cap ကို လိုက်နာတယ် — `detect_ports`
+  (`:277`၊ `MAX_CONCURRENT_PROBES = 32`)၊ `start_scan` (`:475`)၊ `get_sim_numbers` = USSD
+  (`:615`)၊ `cleanup_sim_storage` (`:1351`) ၃ ခုက `MAX_CONCURRENT_PORTS = 16`
+  (constant တွေ `:84` / `:90`)
+- **Symptom:** 64-slot bank မှာ live start လုပ်လိုက်ရင် USB bridge တစ်ခုပေါ်
+  **AT conversation ၆၄ ခု တစ်ပြိုင်နက်** ဖြစ်တယ်
+- **⚠️ Benchmark မလုပ်ထားဘူး** — verify လုပ်ခဲ့တာက **concurrency shape** ပဲ (cap မရှိတာ)၊
+  တကယ့် throughput/ပျက်ကွက်မှု အပေါ် သက်ရောက်မှုကို မတိုင်းထားဘူး
+
+### C.6 (L3) `LiveEvent::Closed` က ready list ကို မရှင်းဘူး — status line က over-count ဖြစ်တယ်
+
+- **သက်သေ:** `Closed` arm (`src-tauri/src/commands/mod.rs:1019`) က `p.live_ready = false`
+  ရေးတယ်၊ `p.live_error` ကို set တယ်၊ `st.live_failed.push(...)` လုပ်တယ်၊ `status_text` ကို
+  `"{port} FAILED: {e}"` လို့ ရေးတယ် — ဒါပေမဲ့ **`st.live_ports_ready.retain(...)` ကို
+  မလုပ်ဘူး**၊ `live_status()` ကိုလည်း ပြန်မခေါ်ဘူး
+- **နှိုင်းယှဉ်:** `Offline` arm က `st.live_ports_ready.retain(|p| p != &port)` လုပ်ပြီး
+  (`:886`) `live_status(&st, port_count)` ကို ပြန်တွက်တယ် (`:890`)
+- **Symptom:** worker တစ်ခု crash ပြီးရင် card က ERROR ပြပေမဲ့ နောက်တစ်ခါ status line
+  ပြန်တွက်ချိန်မှာ (နောက် `Ready`/`Offline` event တစ်ခုခု) `live_ports_ready.len()` က
+  ကျွတ်သွားတဲ့ port ကို ထည့်ရေတွက်နေတာမို့ **"Live x/y ready" က အများပြပြီး
+  "connecting…" ရေတွက်မှုပါ လိုက်လွဲတယ်** (`live_status` က `:395`)
+
+### C.7 (L4) Live monitoring loop အတွင်းမှာ **liveness re-probe မရှိဘူး**
+
+- **သက်သေ:** `probe_channel` က (re)connect တစ်ခါစီမှာ **တစ်ခါပဲ** ပြေးတယ်
+  (`src-tauri/src/core/live.rs:201`)။ Inner loop (`:327`–`:370`) က လုပ်တာ ၄ ခုပဲ:
+  `+CMTI` queue ကို drain / `handle_cmgr`၊ ရပ်နေတဲ့ concat group ကို `flush_stale`၊
+  `ch.is_dead()` စစ်တာ၊ ပြီးတော့ `SIM_SWEEP_EVERY` (600 s) retention sweep — **AT ပြန်ထုတ်ပြီး
+  modem ကို ပြန်စစ်တာ မရှိဘူး**
+- **Symptom:** tty node က ပွင့်နေပေမဲ့ modem က AT ကို ပြန်မဖြေတော့တဲ့ အခြေအနေမှာ
+  badge က **အစိမ်း LIVE ကျန်နေပြီး message တစ်စောင်မှ မလာဘူး** — `is_dead()` က
+  channel-level error ကိုပဲ ဖမ်းတာ ဖြစ်လို့ တိတ်တဆိတ် ငြိမ်သွားတာကို မဖမ်းဘူး
+- **60 s `OFFLINE_RETRY` re-probe က ကူညီမပေးဘူး** (`live.rs:53`၊ `:210`) — သူက
+  **probe က ကျရှုံးပြီးသား branch** အတွက်ပဲ (Offline latch ဝင်ပြီးသား port)၊ Ready
+  ဖြစ်သွားပြီးသား port အတွက် မဟုတ်ဘူး
 
 ## D. Dropped — feature အဖြစ်ပါ **ပြန်မမွေးရ**
 
@@ -216,9 +320,9 @@ command (notification handle ကို state ထဲ သိမ်း → close) �
 အောက်မှာ **စမ်းလို့ မရဘူး** (plugin ကိုယ်တိုင် `target/debug`|`target/release` ကနေ ပြေးရင်
 `app_id` ကို မ set တာ ဒီအတွက်)။
 
-**ACL:** `src-tauri/capabilities/default.json` မှာ `notification:` entry **မရှိဘူး** — ဆိုတော့
-ရိုးရိုး notification တစ်ခုတောင် ယခု ACL က ပိတ်ထားတယ် (plugin က `lib.rs` မှာ init ဖြစ်ပေမဲ့)။
-လိုအပ်တဲ့ **minimum set က ၃ ခု**:
+**ACL:** `src-tauri/capabilities/default.json` မှာ `notification:` entry **ဘယ်တုန်းကမှ မရှိခဲ့ဘူး** —
+ဆိုတော့ plugin ရှိစဉ်ကတောင် ရိုးရိုး notification တစ်ခုကို ACL က ပိတ်ထားခဲ့တယ် (အဲ့တုန်းက plugin က
+`lib.rs` မှာ init ဖြစ်နေခဲ့တာ)။ ပြန်ထည့်ရင် လိုအပ်မယ့် **minimum set က ၃ ခု**:
 
 ```jsonc
 "notification:allow-notify",
@@ -235,10 +339,24 @@ body ထဲ ထည့်လိုက်ရင် သူ OS notification center (
 lock screen ပေါ် ပေါ်နိုင်တယ် — အဲ့ဒါက log masking work (§B.2၊ `mask_number`/`otp_summary`) ရဲ့
 ဆန့်ကျင်ဘက်။ အနည်းဆုံး "OTP ရောက်ပြီ (port X)" လို့ပဲ ပြပြီး code ကို app ထဲမှာသာ ပြသင့်တယ်။
 
-**Cleanup candidate (ယခု မဖျက်ပါနဲ့):** `@tauri-apps/plugin-notification` က ဘယ်နေရာကမှ
-import မဖြစ်တဲ့ **unused dependency** ဖြစ်နေပြီ — `package.json`၊ `src-tauri/Cargo.toml`
-(`tauri-plugin-notification = "2"`)၊ `src-tauri/src/lib.rs` (`.plugin(tauri_plugin_notification::init())`)
-၃ နေရာ။ Notification ကို ပြီးပြီးပြတ်ပြတ် စွန့်လွှတ်ဆုံးဖြတ်မှ ၃ နေရာ တစ်ပြိုင်နက် ဖျက်ပါ။
+**✅ Cleanup ပြီးသွားပြီ (v1.4.0) — plugin ကို ဖျက်လိုက်ပြီ:** `@tauri-apps/plugin-notification`
+က ဘယ်နေရာကမှ import မဖြစ်တဲ့ **unused dependency** ဖြစ်နေခဲ့တာမို့ အထက်က feasibility
+ဆုံးဖြတ်ချက် (desktop မှာ dismissal မရနိုင်) အပေါ် အခြေခံပြီး ၃ နေရာလုံး တစ်ပြိုင်နက်
+ဖျက်လိုက်ပြီ — `package.json`၊ `src-tauri/Cargo.toml` (`tauri-plugin-notification = "2"`)၊
+`src-tauri/src/lib.rs` (`.plugin(tauri_plugin_notification::init())`)။ (commit `d5d53e5` ရဲ့
+`chore: drop the unused notification plugin`)
+
+- **ACL ကနေ ဘာမှ မပြုတ်ဘူး:** `src-tauri/capabilities/default.json` မှာ `notification:`
+  permission **ဘယ်တုန်းကမှ မရှိခဲ့ဘူး** (ဖိုင်ရဲ့ git history တစ်ခုလုံး စစ်ပြီး — `notification`
+  ဆိုတဲ့ စာလုံး ဘယ် revision ထဲမှ မရှိ)။ ဆိုတော့ ဖျက်လိုက်တာက capability တစ်ခုကို
+  **revoke လုပ်တာ မဟုတ်ဘူး** — plugin က `lib.rs` မှာ init ဖြစ်နေခဲ့ပေမဲ့ ACL က ပိတ်ထားခဲ့တာမို့
+  runtime behaviour ကို **လုံးဝ မထိဘူး**
+- **တကယ့် အကျိုးဆက် ၂ ချက်ပဲ:** (၁) bundle ငယ်သွားတာ၊ (၂) Linux မှာ **D-Bus dependency
+  တစ်ခု လျော့သွားတာ**။ `notify-rust`၊ `tauri-winrt-notification`၊ `mac-notification-sys`၊
+  `zbus` တွေ ကျွတ်သွားပြီး **`Cargo.lock` က ၅၂၁ လိုင်း ဆုတ်သွားတယ်** (`package-lock.json` ၁၀ လိုင်း)
+- **ပြန်ထည့်ရင် သတိ:** အထက်က table/ACL အပိုင်းက **ပြန်ထည့်တဲ့အခါ လိုအပ်တဲ့ လက်စွဲ** အဖြစ်
+  ကျန်ထားတာ — dismissal dead end ကို **ပြန်မစစ်ရ**၊ ပြီးတော့ ပြန်ထည့်ရင် permission ၃ ခုကို
+  ကိုယ်တိုင် ရေးထည့်ရမယ် (`notification:default` ကို မသုံးရ)
 
 
 
