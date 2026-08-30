@@ -3,6 +3,19 @@ import { DEFAULT_SETTINGS } from '$lib/types';
 
 const STORAGE_KEY = 'sms-reader-settings';
 
+/**
+ * A private copy of the defaults, safe to hand to `$state`.
+ *
+ * `DEFAULT_SETTINGS` is a module-level literal and the settings object is a deep
+ * `$state` proxy the Settings page mutates in place, so a shallow spread would
+ * let user edits write straight through into the shared literal — after a reset
+ * (or on a fresh profile) the "defaults" would drift with whatever the user
+ * last typed.
+ */
+function defaultsClone(): SettingsState {
+  return structuredClone(DEFAULT_SETTINGS);
+}
+
 function deepMerge<T extends Record<string, any>>(target: T, source: Partial<T>): T {
   const result = { ...target };
   for (const key of Object.keys(source) as Array<keyof T>) {
@@ -47,12 +60,12 @@ function loadSettings(): SettingsState {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
       const parsed = migrate(JSON.parse(stored));
-      return deepMerge(DEFAULT_SETTINGS, parsed);
+      return deepMerge(defaultsClone(), parsed);
     }
   } catch {
     // ignore parse errors
   }
-  return { ...DEFAULT_SETTINGS };
+  return defaultsClone();
 }
 
 function saveSettings(settings: SettingsState) {
@@ -70,7 +83,6 @@ export function createSettingsStore() {
     get settings() { return settings; },
     get general() { return settings.general; },
     get notifications() { return settings.notifications; },
-    get otp() { return settings.otp; },
     get appearance() { return settings.appearance; },
     get updates() { return settings.updates; },
     get developer() { return settings.developer; },
@@ -81,10 +93,6 @@ export function createSettingsStore() {
     },
     setNotifications(v: Partial<SettingsState['notifications']>) {
       settings = { ...settings, notifications: { ...settings.notifications, ...v } };
-      saveSettings(settings);
-    },
-    setOtp(v: Partial<SettingsState['otp']>) {
-      settings = { ...settings, otp: { ...settings.otp, ...v } };
       saveSettings(settings);
     },
     setAppearance(v: Partial<SettingsState['appearance']>) {
@@ -102,7 +110,7 @@ export function createSettingsStore() {
     },
 
     resetToDefaults() {
-      settings = { ...DEFAULT_SETTINGS };
+      settings = defaultsClone();
       saveSettings(settings);
       applyTheme('system');
     },
