@@ -73,31 +73,64 @@ fn extract_concat_from_udh(udh: &[u8]) -> Option<ConcatInfo> {
     while pos + 2 <= udh.len() {
         let iei = udh[pos];
         let len = udh[pos + 1] as usize;
-        if len > 0 && udh.len() >= pos + 2 + len {
-            let data = &udh[pos + 2..pos + 2 + len];
-            match (iei, len) {
-                (0x00, l) if l >= 3 => {
-                    return Some(ConcatInfo {
-                        ref_num: data[0] as u16,
-                        total: data[1],
-                        seq: data[2],
-                    });
-                }
-                (0x08, l) if l >= 4 => {
-                    return Some(ConcatInfo {
-                        ref_num: ((data[0] as u16) << 8) | data[1] as u16,
-                        total: data[2],
-                        seq: data[3],
-                    });
-                }
-                _ => {}
-            }
-            pos += 2 + len;
-        } else {
+        // Every length in here is attacker/firmware controlled, so the element
+        // body is taken with `get`: an element that claims more bytes than the
+        // header carries means the rest of the header is unparseable, and there
+        // is nothing to scan past it.
+        let Some(data) = udh.get(pos + 2..pos + 2 + len) else {
             break;
+        };
+        match (iei, len) {
+            (0x00, l) if l >= 3 => {
+                return Some(ConcatInfo {
+                    ref_num: data[0] as u16,
+                    total: data[1],
+                    seq: data[2],
+                });
+            }
+            (0x08, l) if l >= 4 => {
+                return Some(ConcatInfo {
+                    ref_num: ((data[0] as u16) << 8) | data[1] as u16,
+                    total: data[2],
+                    seq: data[3],
+                });
+            }
+            // Anything else (including a zero-length element, which is legal
+            // padding) is skipped: `pos` always advances by at least 2, so this
+            // cannot loop. Bailing out here instead used to hide a concat header
+            // that merely sat behind an element we do not understand.
+            _ => {}
         }
+        pos += 2 + len;
     }
     None
+}
+
+/// Split the User Data Header off the front of the user data at `i`.
+///
+/// Returns the concat header (when one is present), the declared UDHL and the
+/// offset of the first payload byte — clamped, by construction, to inside
+/// `bytes`.
+///
+/// `None` means the header itself does not fit in the PDU: the UDHL byte is
+/// missing, or it claims more bytes than were received. That is the one case
+/// where nothing can be salvaged — the payload start is unknown, so there is no
+/// text to recover and no trustworthy fragment number to file it under — so the
+/// caller rejects the whole PDU. Returning a half-decoded fragment would push an
+/// empty part into the reassembler and let a long message "complete" with a hole
+/// in it. Truncation *after* the header is a different story and is clamped, not
+/// rejected: the surviving prefix often still carries the OTP.
+///
+/// Bounding this is not cosmetic. `i += 1 + udhl` used to run past the end of
+/// the buffer and the following `bytes.len() - i` underflowed, panicking the
+/// thread that decoded the PDU (debug) or silently yielding garbage (release).
+fn split_udh(bytes: &[u8], i: usize) -> Option<(Option<ConcatInfo>, usize, usize)> {
+    let udhl = *bytes.get(i)? as usize;
+    let end = i + 1 + udhl;
+    if end > bytes.len() {
+        return None;
+    }
+    Some((extract_concat_from_udh(&bytes[i + 1..end]), udhl, end))
 }
 
 
@@ -632,37 +665,29 @@ fn decode_deliver(pdu_hex: &str, port: &str) -> Option<DeliverInfo> {
     let text = match alphabet {
         SmsAlphabet::Ucs2 => {
             let mut udhl = 0;
-            if has_udh && i < bytes.len() {
-                udhl = bytes[i] as usize;
-                if udhl > 0 && i + 1 + udhl <= bytes.len() {
-                    concat = extract_concat_from_udh(&bytes[i + 1..i + 1 + udhl]);
-                }
-                i += 1 + udhl;
+            if has_udh {
+                // A header that does not fit rejects the PDU (see `split_udh`).
+                let (c, h, next) = split_udh(&bytes, i)?;
+                concat = c;
+                udhl = h;
+                i = next;
             }
-            let mut len = udl.saturating_sub(udhl);
-            if i + len > bytes.len() {
-                len = bytes.len() - i;
-            }
+            // UDL is declared by the sender and routinely overshoots what the
+            // serial read actually delivered, so it is clamped to the bytes on
+            // hand rather than trusted.
+            let len = udl.saturating_sub(udhl).min(bytes.len().saturating_sub(i));
             utf16be_to_string(&bytes, i, len)
         }
         SmsAlphabet::EightBit => {
             let mut udhl = 0;
-            if has_udh && i < bytes.len() {
-                udhl = bytes[i] as usize;
-                if udhl > 0 && i + 1 + udhl <= bytes.len() {
-                    concat = extract_concat_from_udh(&bytes[i + 1..i + 1 + udhl]);
-                }
-                i += 1 + udhl;
+            if has_udh {
+                let (c, h, next) = split_udh(&bytes, i)?;
+                concat = c;
+                udhl = h;
+                i = next;
             }
-            let mut len = udl.saturating_sub(udhl);
-            if i + len > bytes.len() {
-                len = bytes.len() - i;
-            }
-            let slice = if i < bytes.len() {
-                &bytes[i..(i + len).min(bytes.len())]
-            } else {
-                &[]
-            };
+            let len = udl.saturating_sub(udhl).min(bytes.len().saturating_sub(i));
+            let slice = bytes.get(i..i + len).unwrap_or(&[]);
             if slice.len() >= 2 && slice.len() % 2 == 0 && (slice[0] == 0x10 || slice[0] == 0x00) {
                 utf16be_to_string(&bytes, i, len)
             } else if let Ok(s) = std::str::from_utf8(slice) {
@@ -680,12 +705,10 @@ fn decode_deliver(pdu_hex: &str, port: &str) -> Option<DeliverInfo> {
             // UDHL byte even though `i` moves past the header for the UCS-2
             // recovery probe below.
             let ud_start = i;
-            if has_udh && i < bytes.len() {
-                let udhl = bytes[i] as usize;
-                if udhl > 0 && i + 1 + udhl <= bytes.len() {
-                    concat = extract_concat_from_udh(&bytes[i + 1..i + 1 + udhl]);
-                }
-                i += 1 + udhl;
+            if has_udh {
+                let (c, udhl, next) = split_udh(&bytes, i)?;
+                concat = c;
+                i = next;
                 skip = ((udhl + 1) * 8).div_ceil(7);
                 septets = udl.saturating_sub(skip);
             }
@@ -1361,6 +1384,161 @@ mod tests {
         let pdu = build_deliver_pdu("966", 0x00, &pack_gsm7("Your OTP is 483920"), Some(18));
         let d = decode_deliver(&pdu, "COM1").unwrap();
         assert_eq!(d.message.text, "Your OTP is 483920");
+    }
+
+    /// Build a UDHI deliver PDU with a hand-written user-data field, so the
+    /// UDHL byte can lie about how much header follows. `udl` is written to the
+    /// PDU verbatim — malformed PDUs disagree with the bytes they carry, which is
+    /// the whole point of these cases.
+    fn build_deliver_pdu_raw_ud(dcs: u8, udl: u8, ud: &[u8]) -> String {
+        let mut b = vec![0x00u8, 0x44]; // SCA length 0; MTI=deliver + UDHI
+        b.push(3); // address length (digits)
+        b.push(0x91); // TOA: international
+        b.push(0x69); // "96"
+        b.push(0xF6); // "6" + filler
+        b.push(0x00); // PID
+        b.push(dcs);
+        b.extend_from_slice(&[0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x00]); // SCTS
+        b.push(udl);
+        b.extend_from_slice(ud);
+        b.iter().map(|x| format!("{:02x}", x)).collect()
+    }
+
+    // ── Malformed UDH: must never panic ──
+    //
+    // A panic here is not a lost message: `commands::start_scan` catches it per
+    // worker (so one port's whole read is dropped) and `live::run_live` catches
+    // it per worker, which retires that port from live monitoring for the rest of
+    // the session. Rejecting the PDU costs one SMS instead.
+
+    /// UDHL says five header bytes follow, the PDU carries two. This is the input
+    /// that used to reach `len = bytes.len() - i` with `i` past the end and panic
+    /// with "attempt to subtract with overflow" in a debug build.
+    #[test]
+    fn pdu_truncated_mid_udh_is_rejected() {
+        for dcs in [0x08u8, 0x04, 0x00] {
+            let pdu = build_deliver_pdu_raw_ud(dcs, 7, &[0x05, 0x00, 0x03]);
+            assert_eq!(
+                decode_deliver(&pdu, "COM1").map(|d| d.message.text),
+                None,
+                "dcs {:#04x}: a header that does not fit is rejected, not decoded",
+                dcs
+            );
+        }
+    }
+
+    /// UDHL far past the end of the buffer, in all three alphabets — the UCS-2
+    /// and 8-bit branches panicked, the GSM-7 branch silently produced garbage.
+    #[test]
+    fn pdu_udh_length_beyond_the_buffer_is_rejected() {
+        for dcs in [0x08u8, 0x04, 0x00] {
+            let pdu = build_deliver_pdu_raw_ud(dcs, 0x21, &[0x20, 0x00, 0x03, 0x42]);
+            assert!(
+                decode_deliver(&pdu, "COM1").is_none(),
+                "dcs {:#04x} should reject a UDHL of 32 with 3 bytes present",
+                dcs
+            );
+        }
+        // Nothing at all after the UDL byte, UDHI still set.
+        assert!(decode_deliver(&build_deliver_pdu_raw_ud(0x08, 6, &[]), "COM1").is_none());
+    }
+
+    /// The header itself fits, but an information element inside it claims more
+    /// bytes than the header holds. The payload start *is* known here, so the
+    /// message is kept — just without concat info, i.e. as a standalone SMS.
+    #[test]
+    fn pdu_udh_element_running_past_the_header_keeps_the_text() {
+        let mut ud = vec![0x05u8, 0x00, 0x0A, 0x42, 0x02, 0x01];
+        ud.extend_from_slice(&utf16be_bytes("Hi"));
+        let pdu = build_deliver_pdu_raw_ud(0x08, 9, &ud);
+        let d = decode_deliver(&pdu, "COM1").expect("payload is intact, so the SMS survives");
+        assert_eq!(d.message.text, "Hi");
+        assert_eq!(
+            d.concat, None,
+            "a bogus element must not fabricate a fragment"
+        );
+    }
+
+    /// UDHI set with an empty header (UDHL = 0). Legal, if pointless: no concat
+    /// info, and the payload starts right after the UDHL byte.
+    #[test]
+    fn pdu_zero_length_udh_decodes_the_payload() {
+        let mut ud = vec![0x00u8];
+        ud.extend_from_slice(&utf16be_bytes("Hi"));
+        let pdu = build_deliver_pdu_raw_ud(0x08, 4, &ud);
+        let d = decode_deliver(&pdu, "COM1").expect("an empty UDH is not a malformed PDU");
+        assert_eq!(d.message.text, "Hi");
+        assert_eq!(d.concat, None);
+    }
+
+    /// A zero-length information element is padding, not a stop sign: the concat
+    /// header behind it still has to be found, or every part of a long SMS from
+    /// such a gateway is filed as a separate message.
+    #[test]
+    fn zero_length_udh_element_does_not_hide_the_concat_header() {
+        let info = extract_concat_from_udh(&[0x1F, 0x00, 0x08, 4, 0x12, 0x34, 2, 1]);
+        assert_eq!(
+            info,
+            Some(ConcatInfo {
+                ref_num: 0x1234,
+                total: 2,
+                seq: 1
+            })
+        );
+        // A truncated trailing element is where the scan stops.
+        assert_eq!(extract_concat_from_udh(&[0x1F, 0x00, 0x08, 4, 0x12]), None);
+        assert_eq!(extract_concat_from_udh(&[]), None);
+        assert_eq!(extract_concat_from_udh(&[0x08]), None);
+    }
+
+    /// UDL declares more payload than arrived (a truncated serial read). The
+    /// header is complete, so the surviving prefix — often the whole OTP — is
+    /// returned rather than thrown away, with the fragment number intact.
+    #[test]
+    fn pdu_payload_truncated_after_a_valid_udh_keeps_the_prefix() {
+        let mut ud = vec![0x06u8, 0x08, 0x04, 0x12, 0x34, 0x02, 0x01];
+        ud.extend_from_slice(&utf16be_bytes("Hi"));
+        let pdu = build_deliver_pdu_raw_ud(0x08, 46, &ud); // claims 40 payload bytes, carries 4
+        let d = decode_deliver(&pdu, "COM1").expect("a short tail is recoverable");
+        assert_eq!(d.message.text, "Hi");
+        assert_eq!(
+            d.concat.map(|c| (c.ref_num, c.total, c.seq)),
+            Some((0x1234, 2, 1))
+        );
+    }
+
+    /// Every truncation of a well-formed concatenated PDU, in all three
+    /// alphabets, through both entry points the port workers use. The assertion
+    /// is that this test finishes: any panic fails it.
+    #[test]
+    fn every_truncation_of_a_concat_pdu_decodes_without_panicking() {
+        let ucs2 = build_deliver_pdu_udh(
+            "959123456789",
+            0x08,
+            &[0x08, 4, 0x12, 0x34, 2, 1],
+            &utf16be_bytes("ကုဒ် 719815"),
+        );
+        let eight_bit = build_deliver_pdu_udh(
+            "959123456789",
+            0x04,
+            &[0x00, 3, 0x42, 2, 1],
+            &utf16be_bytes("code 719815"),
+        );
+        let gsm7 = build_deliver_pdu_udh_gsm7(
+            "959123456789",
+            &[0x00, 3, 0x42, 2, 1],
+            "719815 is your OTP code",
+        );
+        for pdu in [ucs2, eight_bit, gsm7] {
+            for cut in (0..pdu.len()).step_by(2) {
+                let head = &pdu[..cut];
+                let _ = decode_deliver(head, "COM1");
+                let resp =
+                    format!("+CMGL: 3,\"REC UNREAD\",\"\",26/08/29,08:54:06+26\n{head}\nOK\n");
+                let _ = parse_pdu_list(&resp, "COM1");
+                let _ = parse_pdu_cmgr(&format!("+CMGR: 0,,{}\n{head}\nOK\n", cut / 2), "COM1");
+            }
+        }
     }
 
     #[test]
