@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.4.0](https://github.com/RyanWez/sms-deliverer/compare/v1.3.1...v1.4.0) (2026-08-30)
+
+
+### Features
+
+* working theme switching, port auto-refresh, and reliability hardening ([#11](https://github.com/RyanWez/sms-deliverer/issues/11)) ([d5d53e5](https://github.com/RyanWez/sms-deliverer/commit/d5d53e52aba0211efa305275645351882f38b3d4))
+
+
+### Bug Fixes
+
+* tell a failed serial write apart from a silent modem ([41bbc71](https://github.com/RyanWez/sms-deliverer/commit/41bbc71a47cc5274fe96cbcc175d514a4e7c2868))
+
 ## [1.3.1](https://github.com/RyanWez/sms-deliverer/compare/v1.3.0...v1.3.1) (2026-08-29)
 
 
