@@ -8,6 +8,31 @@ const NOTIFICATION_PREFIXES: [&str; 7] = [
     "+CMTI:", "+CUSD:", "+CRING:", "RING", "+CMT:", "+CBM:", "+CDS:",
 ];
 
+/// Hard cap on the unterminated tail carried in `partial`.
+///
+/// `ingest` only drains `partial` when it finds a '\n', and `send` deliberately
+/// no longer clears it (see the comment there — wiping it destroyed `+CMTI`
+/// notifications split across two USB reads). Nothing else empties it, so a
+/// modem that streams bytes without ever producing a newline — binary garbage
+/// after a USB glitch, firmware wedged mid-transfer — would grow this buffer for
+/// the whole life of the channel. Live mode holds a channel open for days across
+/// up to 64 ports, so that is unbounded per-port growth.
+///
+/// Worst-case *legitimate* single line, from the commands this app actually
+/// sends:
+///   * PDU from `AT+CMGR`/`AT+CMGL=4`: SMSC address ≤ 12 octets + TPDU ≤ 163
+///     octets (1 first octet + 12 TP-OA + 1 PID + 1 DCS + 7 SCTS + 1 UDL + 140
+///     UD) = 175 octets, hex-encoded → **350 chars**.
+///   * Text-mode body under `AT+CSCS="UCS2"`: a 160-character GSM-7 message is
+///     re-encoded as UCS2 hex, 4 chars per character → **640 chars**. This, not
+///     the PDU, is the real maximum on the read path.
+///   * `+CUSD:` reply: a USSD string is ≤ 182 GSM-7 characters, which in UCS2 hex
+///     is **~730 chars** on one line.
+///
+/// 4096 leaves ~5.6× headroom over that 730-char worst case, and even 64 ports
+/// each holding a full buffer is a quarter of a megabyte.
+const MAX_PARTIAL_BYTES: usize = 4096;
+
 pub trait Transport {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize>;
     fn write_all(&mut self, data: &[u8]) -> io::Result<()>;
@@ -146,6 +171,9 @@ pub struct AtChannel {
     t: Box<dyn Transport>,
     pub name: String,
     partial: String,
+    /// Set after [`MAX_PARTIAL_BYTES`] was exceeded: everything up to and
+    /// including the next '\n' is discarded before parsing resumes.
+    resyncing: bool,
     response: String,
     notifications: VecDeque<String>,
     done: bool,
@@ -163,6 +191,7 @@ impl AtChannel {
             t: Box::new(SerialTransport(port)),
             name: name.to_string(),
             partial: String::new(),
+            resyncing: false,
             response: String::new(),
             notifications: VecDeque::new(),
             done: false,
@@ -177,6 +206,7 @@ impl AtChannel {
             t,
             name: name.to_string(),
             partial: String::new(),
+            resyncing: false,
             response: String::new(),
             notifications: VecDeque::new(),
             done: false,
@@ -212,8 +242,15 @@ impl AtChannel {
             log::warn!("{}: serial write failed: {}", self.name, e);
             return String::new();
         }
+        // Only `response` is reset: stale reply text must not leak into this
+        // command's answer. `partial` is deliberately kept — it holds the tail of
+        // a line that has not seen its '\n' yet, and a modem can split
+        // `+CMTI: "SM",7` across two USB reads with a command of ours (a queued
+        // CMGR, the 10-minute SIM sweep) going out in between. Wiping it made the
+        // remainder (`I: "SM",7`) stop looking like a notification prefix, so the
+        // index was filed into `response` instead of the notification queue and
+        // that SMS stayed invisible until the next reconnect re-read the SIM.
         self.response.clear();
-        self.partial.clear();
         self.done = false;
         let deadline = Instant::now() + Duration::from_millis(timeout_ms);
         while !self.done && !self.dead && Instant::now() < deadline {
@@ -269,6 +306,25 @@ impl AtChannel {
 
     fn ingest(&mut self, chunk: &[u8]) {
         self.partial.push_str(&String::from_utf8_lossy(chunk));
+
+        // Recovering from an overflow: throw bytes away until a line boundary
+        // arrives, then resume normally.
+        if self.resyncing {
+            match self.partial.find('\n') {
+                Some(pos) => {
+                    self.partial.drain(..=pos);
+                    self.resyncing = false;
+                }
+                None => {
+                    // No boundary yet. Silent — the one warning was already
+                    // logged, and a modem spewing megabytes must not spew log
+                    // lines with it.
+                    self.partial.clear();
+                    return;
+                }
+            }
+        }
+
         while let Some(pos) = self.partial.find('\n') {
             let line: String = self.partial.drain(..=pos).collect();
             let line = line.trim_end_matches(['\r', '\n']).trim().to_string();
@@ -276,6 +332,32 @@ impl AtChannel {
                 continue;
             }
             self.handle_line(line);
+        }
+
+        if self.partial.len() > MAX_PARTIAL_BYTES {
+            // Drop the *whole* buffer rather than keeping either end of it.
+            //
+            // The overflowing line is garbage by definition, but a valid line may
+            // well follow it, and keeping the newest N bytes would splice the tail
+            // of the garbage onto that line's head: `<junk>+CMTI: "SM",7` no
+            // longer starts with a notification prefix, so it would be filed as a
+            // command response and the SMS lost — the same class of bug as wiping
+            // `partial` in `send`. Keeping the oldest bytes is worse still, since
+            // they are the garbage itself.
+            //
+            // So: discard everything and stay out of the parser until the next
+            // '\n'. That costs at most one real line (the one straddling the
+            // overflow) and guarantees no half-line is ever handed to
+            // `handle_line`. A modem's reply is preceded by CRLF, so in practice
+            // the resync ends before the reply's first character.
+            log::warn!(
+                "{}: no line terminator in {} bytes — discarding buffered garbage \
+                 and resyncing to the next newline",
+                self.name,
+                self.partial.len()
+            );
+            self.partial.clear();
+            self.resyncing = true;
         }
     }
 
@@ -415,5 +497,157 @@ mod tests {
         );
         let resp = ch.send("AT", 100);
         assert_eq!(resp, "OK\r\n");
+    }
+
+    /// Hands out the first command's reply plus the *head* of an unsolicited
+    /// line, then releases the tail only after the next command is written —
+    /// the split-read race a real modem produces when a `+CMTI` lands while a
+    /// CMGR (or the SIM sweep) is going out.
+    struct SplitNotificationTransport {
+        writes: usize,
+        head_sent: bool,
+        tail_sent: bool,
+    }
+
+    impl Transport for SplitNotificationTransport {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let data: &[u8] = if self.writes == 1 && !self.head_sent {
+                self.head_sent = true;
+                b"\r\n+CMGR: 1,,10\r\nOK\r\n+CMT"
+            } else if self.writes >= 2 && !self.tail_sent {
+                self.tail_sent = true;
+                b"I: \"SM\",7\r\nOK\r\n"
+            } else {
+                return Err(io::ErrorKind::TimedOut.into());
+            };
+            let n = data.len().min(buf.len());
+            buf[..n].copy_from_slice(&data[..n]);
+            Ok(n)
+        }
+
+        fn write_all(&mut self, _data: &[u8]) -> io::Result<()> {
+            self.writes += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn half_received_notification_survives_the_next_command() {
+        let mut ch = AtChannel::with_transport(
+            "ttyUSB2",
+            Box::new(SplitNotificationTransport {
+                writes: 0,
+                head_sent: false,
+                tail_sent: false,
+            }),
+        );
+        let first = ch.send("AT+CMGR=1", 200);
+        assert!(first.contains("+CMGR: 1,,10"), "first reply: {first:?}");
+
+        // Second command: its reply must be only `OK`. If `send` had wiped the
+        // carried-over `+CMT`, the tail would land here as a response line and
+        // the notification would be lost.
+        let second = ch.send("AT+CMGL=\"ALL\"", 200);
+        assert!(
+            !second.contains("I: \"SM\""),
+            "notification tail leaked into the response: {second:?}"
+        );
+        assert_eq!(second, "OK\r\n");
+        assert_eq!(
+            ch.wait_notification(0),
+            Some("+CMTI: \"SM\",7".to_string())
+        );
+    }
+
+    /// Streams newline-free bytes for as long as only one command has been
+    /// written, then answers the next command normally. Models a USB glitch that
+    /// leaves binary garbage on the line: reads keep succeeding and never contain
+    /// a terminator.
+    struct NewlinelessGarbageTransport {
+        left: usize,
+        writes: usize,
+        replied: bool,
+    }
+
+    impl Transport for NewlinelessGarbageTransport {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.writes < 2 && self.left > 0 {
+                let n = buf.len().min(self.left).min(1024);
+                buf[..n].fill(b'x');
+                self.left -= n;
+                return Ok(n);
+            }
+            if self.writes >= 2 && !self.replied {
+                self.replied = true;
+                let data = b"\r\nOK\r\n";
+                buf[..data.len()].copy_from_slice(data);
+                return Ok(data.len());
+            }
+            Err(io::ErrorKind::TimedOut.into())
+        }
+
+        fn write_all(&mut self, _data: &[u8]) -> io::Result<()> {
+            self.writes += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn newlineless_garbage_cannot_grow_the_buffer_without_bound() {
+        let garbage = MAX_PARTIAL_BYTES * 8;
+        let mut ch = AtChannel::with_transport(
+            "ttyUSB4",
+            Box::new(NewlinelessGarbageTransport {
+                left: garbage,
+                writes: 0,
+                replied: false,
+            }),
+        );
+        let resp = ch.send("AT", 100);
+        assert_eq!(resp, "", "garbage must not be parsed as a response");
+        assert!(!ch.is_dead(), "garbage must not kill the channel");
+        assert!(
+            ch.partial.len() <= MAX_PARTIAL_BYTES,
+            "buffered {} bytes after {} bytes of garbage",
+            ch.partial.len(),
+            garbage
+        );
+
+        // Still usable, and the leftover garbage did not splice itself onto the
+        // front of the next reply — that splice is what would turn a following
+        // `+CMTI:` line into an unrecognised response line.
+        let resp2 = ch.send("AT", 200);
+        assert_eq!(resp2, "OK\r\n");
+    }
+
+    #[test]
+    fn maximum_length_legitimate_lines_are_never_truncated() {
+        // Longest PDU `AT+CMGR` can return on one line: SMSC address (≤12 octets)
+        // plus a full TPDU (163 octets), hex-encoded → 350 chars.
+        let pdu = "0F".repeat(175);
+        assert_eq!(pdu.len(), 350);
+        assert!(pdu.len() < MAX_PARTIAL_BYTES);
+        let script = format!("\r\n+CMGR: 1,,175\r\n{pdu}\r\nOK\r\n");
+        let mut ch = AtChannel::with_transport("ttyUSB2", Box::new(FakeTransport::new(&script, 7)));
+        let resp = ch.send("AT+CMGR=1", 2000);
+        assert!(resp.contains(&pdu), "PDU line was truncated: {resp:?}");
+        assert!(resp.ends_with("OK\r\n"));
+
+        // The actual worst case on the read path: a 160-character GSM-7 body
+        // re-encoded as UCS2 hex under `AT+CSCS="UCS2"` is 640 chars on one line.
+        let ucs2_body = "0041".repeat(160);
+        assert_eq!(ucs2_body.len(), 640);
+        let script = format!(
+            "\r\n+CMGL: 1,\"REC READ\",\"00390036\",,\"26/08/29,11:00:00+00\"\r\n{ucs2_body}\r\nOK\r\n"
+        );
+        let mut ch =
+            AtChannel::with_transport("ttyUSB2", Box::new(FakeTransport::new(&script, 13)));
+        let resp = ch.send("AT+CMGL=\"ALL\"", 2000);
+        assert!(
+            resp.contains(&ucs2_body),
+            "UCS2 body line was truncated: {} chars",
+            resp.len()
+        );
+        assert!(resp.ends_with("OK\r\n"));
     }
 }
