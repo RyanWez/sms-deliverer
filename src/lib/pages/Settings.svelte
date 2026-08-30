@@ -34,10 +34,11 @@
         {
           key: "portRefreshInterval",
           label: "Port Refresh Interval (seconds)",
-          description: "How often to automatically refresh the port list",
+          description:
+            "How often the port list is re-enumerated in the background, so a re-plugged modem appears without pressing Refresh. 5–300 seconds; 0 turns it off. Skipped while a scan, live session, SIM lookup or delete is running.",
           type: "number" as const,
           bind: "general",
-          min: 10,
+          min: 0,
           max: 300,
           step: 5,
         },

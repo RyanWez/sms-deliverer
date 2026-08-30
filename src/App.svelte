@@ -14,6 +14,8 @@
   import { navigationStore } from "$lib/stores/navigation.svelte";
   import { liveStore } from "$lib/stores/live.svelte";
   import { messagesStore } from "$lib/stores/messages.svelte";
+  import { isTauri } from "$lib/utils/tauri";
+  import { portRefreshPeriodMs } from "$lib/utils/port-refresh";
 
   const SIM_CLEANUP_EVERY = 10 * 60_000;
 
@@ -60,6 +62,44 @@
     void settingsStore.updates.autoCheck;
     void settingsStore.updates.checkInterval;
     restartAutoUpdater();
+  });
+
+  // Port hotplug sweep: the operator physically plugs and pulls sticks, so the
+  // list is re-enumerated on a timer instead of only on mount and on Refresh.
+  // Lives here rather than in Ports.svelte so a stick plugged in while the
+  // operator is reading the Inbox is still picked up.
+  let portTimer: ReturnType<typeof setInterval> | undefined;
+
+  function stopPortRefresh() {
+    clearInterval(portTimer);
+    portTimer = undefined;
+  }
+
+  function restartPortRefresh() {
+    stopPortRefresh();
+    // Nothing hotplugs in browser preview, and the synthetic generator would
+    // just reshuffle the demo bank every tick — same reasoning as
+    // restartAutoUpdater(), which also only arms inside the desktop shell.
+    if (!isTauri()) return;
+    const period = portRefreshPeriodMs(settingsStore.general.portRefreshInterval);
+    if (period === null) return; // 0 / junk value = turned off
+    portTimer = setInterval(() => {
+      // refresh_ports rebuilds the shared port state, so it must not land in the
+      // middle of an operation that owns the ports. portsBusy() covers live,
+      // scan, USSD and delete; detectBusy is not part of it (the SIM sweep above
+      // relies on the backend answering "Busy" instead), so it is checked
+      // explicitly here rather than widening portsBusy() for every caller.
+      if (portsBusy() || liveStore.detectBusy) return;
+      void api.refreshPorts("auto");
+    }, period);
+  }
+
+  // Re-arm whenever the interval changes so editing the setting takes effect
+  // immediately, and without stacking a second timer.
+  $effect(() => {
+    void settingsStore.general.portRefreshInterval;
+    restartPortRefresh();
+    return stopPortRefresh;
   });
 
   // The Logs page only exists while Developer Mode is on. Turning it off hides

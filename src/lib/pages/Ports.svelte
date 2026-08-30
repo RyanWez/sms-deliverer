@@ -413,6 +413,7 @@
         <div class="grid gap-3 port-grid" style="grid-template-columns: repeat(auto-fill, minmax(260px, 1fr))">
           {#each filteredPorts as port, index (port.name)}
             {@const st = portStatus(port, liveStore.on)}
+            {@const justAppeared = portsStore.isRecentlyAdded(port.name)}
             <div
               role="button"
               tabindex="0"
@@ -420,6 +421,7 @@
               class="group card p-4 text-left transition-colors duration-150 cursor-pointer hover:border-muted-foreground/40 waterfall-row
                      focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70
                      {activePortName === port.name ? 'border-primary ring-1 ring-primary/40' : ''}
+                     {justAppeared && activePortName !== port.name ? 'border-primary/60 ring-1 ring-primary/25' : ''}
                      {st.key === 'error' ? 'bg-danger/[0.04]' : ''}"
               style="animation-delay: {Math.min(index * 24, 380)}ms;"
               onclick={(e) => {
@@ -450,6 +452,14 @@
                       {portLabel(port.name)}
                     </label>
                     <span class="flex-1"></span>
+                    {#if justAppeared}
+                      <span
+                        class="badge badge-primary text-[9px] px-1.5 h-4 uppercase tracking-wide shrink-0"
+                        title="This port appeared during the last port refresh"
+                      >
+                        New
+                      </span>
+                    {/if}
                     <span class="badge {st.badge}">
                       {#if st.key === 'live' || st.key === 'connecting'}
                         <span class="w-1.5 h-1.5 rounded-full shrink-0 aspect-square bg-current {st.key === 'connecting' ? 'animate-pulse-dot' : ''}" aria-hidden="true"></span>

@@ -4,10 +4,13 @@ import { messagesStore } from '$lib/stores/messages.svelte';
 import { liveStore } from '$lib/stores/live.svelte';
 import { settingsStore } from '$lib/stores/settings.svelte';
 import { logsStore } from '$lib/stores/logs.svelte';
+import { describePortChanges, diffPorts } from '$lib/utils/port-refresh';
 import type { SmsItem, ToastData, PortInfo, LogEntry } from '$lib/types';
 
 let nextToastId = 1;
 let initialized = false;
+/** Guard against a manual Refresh and the background timer overlapping. */
+let portRefreshInFlight = false;
 
 function toast(kind: ToastData['kind'], title: string, body: string, otp?: string | null) {
   liveStore.addToast({
@@ -29,6 +32,30 @@ function toast(kind: ToastData['kind'], title: string, body: string, otp?: strin
 function notifyOtp(title: string, body: string, otp: string) {
   if (!settingsStore.notifications.enabled) return;
   toast('Otp', title, body, otp);
+}
+
+/**
+ * Publish a re-enumerated port list and say what changed.
+ *
+ * The operator plugs and pulls sticks by hand, so a refresh that silently swaps
+ * the list out is the one thing this must not be — but it also runs on a timer,
+ * so an unchanged bank has to pass without a word. The very first enumeration is
+ * exempt: there is no previous state, and everything would read as "new".
+ *
+ * Port topology is operational information, like `detect:done`, so it goes
+ * through `toast` and is deliberately not gated on `notifications.enabled` —
+ * that switch mutes OTP announcements only.
+ */
+function applyRefreshedPorts(ports: PortInfo[]) {
+  const first = !portsStore.hasLoaded;
+  const diff = diffPorts(portsStore.items, ports);
+  portsStore.set(ports);
+  if (first) return;
+
+  const notice = describePortChanges(diff);
+  if (!notice) return;
+  portsStore.markRecentlyAdded(diff.added);
+  toast(notice.kind, notice.title, notice.body);
 }
 
 async function refreshFromBackend() {
@@ -239,19 +266,29 @@ export const api = {
     }
   },
 
-  async refreshPorts() {
-    if (!isTauri()) {
-      const { generateSyntheticPorts } = await import('$lib/utils/synthetic');
-      portsStore.set(generateSyntheticPorts(16));
-      toast('Success', 'Refreshed', 'Synthetic ports refreshed.');
-      return;
-    }
+  async refreshPorts(source: 'manual' | 'auto' = 'manual') {
+    // Two enumerations at once would only fight over the same shared port state:
+    // the background timer can tick while the operator is on the Refresh button.
+    if (portRefreshInFlight) return;
+    portRefreshInFlight = true;
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const ports = await invoke<PortInfo[]>('refresh_ports');
-      portsStore.set(ports);
-    } catch (e) {
-      toast('Danger', 'Refresh failed', String(e));
+      if (!isTauri()) {
+        const { generateSyntheticPorts } = await import('$lib/utils/synthetic');
+        applyRefreshedPorts(generateSyntheticPorts(16));
+        // Only the button press gets the "it did something" acknowledgement; the
+        // timer stays quiet unless the port list actually changed.
+        if (source === 'manual') toast('Success', 'Refreshed', 'Synthetic ports refreshed.');
+        return;
+      }
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const ports = await invoke<PortInfo[]>('refresh_ports');
+        applyRefreshedPorts(ports);
+      } catch (e) {
+        toast('Danger', 'Refresh failed', String(e));
+      }
+    } finally {
+      portRefreshInFlight = false;
     }
   },
 
