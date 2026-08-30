@@ -5,10 +5,20 @@ name: test
 #
 # Note: tests are pure logic (no serial hardware required), so they run safely
 # on hosted runners. See Memory/02-release-automation.md for the release flow.
+#
+# Triggers: `push` covers every branch so a feature branch gets CI even before a
+# PR exists. The release-please branch is excluded — it already gets a
+# `pull_request` run, and release-please.yml's sync-cargo-lock job pushes to it.
+# `pull_request` is kept for fork PRs and required-check reporting; the
+# concurrency group is keyed on the *head commit* (not the ref) so the push run
+# and the pull_request run for the same commit collapse into one instead of
+# burning two sets of runners.
 
 on:
   push:
-    branches: [main]
+    branches:
+      - '**'
+      - '!release-please--branches--main--components--sms-tauri'
     paths-ignore:
       - '**.md'
       - 'Memory/**'
@@ -21,7 +31,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: test-${{ github.ref }}
+  group: test-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
