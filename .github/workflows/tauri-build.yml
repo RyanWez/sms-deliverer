@@ -9,7 +9,11 @@ jobs:
     permissions:
       contents: write
     strategy:
-      fail-fast: false
+      # Publish must be all-or-nothing: with fail-fast disabled a failed Linux
+      # leg would still let Windows upload, leaving a published release that
+      # only ships one platform. (test.yml keeps fail-fast: false on purpose —
+      # there we want both platforms' failures reported.)
+      fail-fast: true
       matrix:
         include:
           - platform: 'ubuntu-22.04'
@@ -18,13 +22,18 @@ jobs:
             args: ''
 
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
+      # Pinned to 22 to match test.yml: the frontend scripts rely on Node 22's
+      # --experimental-strip-types, so publishing on lts/* could build with a
+      # Node version the tests never ran under.
       - name: setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: lts/*
+          node-version: '22'
+          cache: npm
 
       # Platform policy: Windows + Linux artifacts ONLY — the matrix above must
       # never gain a macOS entry (bundles come out per-OS from "targets": "all").
@@ -32,14 +41,22 @@ jobs:
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
       - name: install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libudev-dev libxdo-dev
 
+      # `npm ci` (not `npm install`): every frontend dependency is a caret
+      # range, so `npm install` can resolve newer versions than the committed
+      # package-lock.json that test.yml validated, and ship them signed.
       - name: install frontend dependencies
-        run: npm install
+        run: npm ci
 
       - uses: tauri-apps/tauri-action@v0
         env:

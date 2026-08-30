@@ -25,13 +25,6 @@
           bind: "general",
         },
         {
-          key: "minimizeToTray",
-          label: "Minimize to System Tray",
-          description: "Keep the app running in the background when minimized",
-          type: "checkbox" as const,
-          bind: "general",
-        },
-        {
           key: "confirmDelete",
           label: "Confirm Before Deleting",
           description: "Show confirmation dialog when deleting messages",
@@ -41,10 +34,11 @@
         {
           key: "portRefreshInterval",
           label: "Port Refresh Interval (seconds)",
-          description: "How often to automatically refresh the port list",
+          description:
+            "How often the port list is re-enumerated in the background, so a re-plugged modem appears without pressing Refresh. 5–300 seconds; 0 turns it off. Skipped while a scan, live session, SIM lookup or delete is running.",
           type: "number" as const,
           bind: "general",
-          min: 10,
+          min: 0,
           max: 300,
           step: 5,
         },
@@ -76,68 +70,10 @@
         {
           key: "enabled",
           label: "Enable Notifications",
-          description: "Show desktop notifications for new messages",
-          type: "checkbox" as const,
-          bind: "notifications",
-        },
-        {
-          key: "soundEnabled",
-          label: "Play Sound",
-          description: "Play a notification sound when a new message arrives",
-          type: "checkbox" as const,
-          bind: "notifications",
-        },
-        {
-          key: "desktopNotifications",
-          label: "Desktop Notifications",
-          description: "Show native OS notifications for new SMS",
-          type: "checkbox" as const,
-          bind: "notifications",
-        },
-        {
-          key: "otpOnlyNotifications",
-          label: "OTP Messages Only",
-          description: "Only notify for messages containing OTP codes",
-          type: "checkbox" as const,
-          bind: "notifications",
-        },
-      ],
-    },
-    {
-      id: "otp",
-      label: "OTP Settings",
-      icon: "hash" as IconName,
-      description: "One-time password detection and handling",
-      fields: [
-        {
-          key: "autoCopy",
-          label: "Auto-copy OTP to Clipboard",
-          description: "Automatically copy detected OTP codes to clipboard",
-          type: "checkbox" as const,
-          bind: "otp",
-        },
-        {
-          key: "showInTable",
-          label: "Show OTP Column",
-          description: "Display OTP codes in the message table",
-          type: "checkbox" as const,
-          bind: "otp",
-        },
-        {
-          key: "highlightNewOtp",
-          label: "Highlight New OTP",
-          description: "Visually highlight newly received OTP messages",
-          type: "checkbox" as const,
-          bind: "otp",
-        },
-        {
-          key: "otpPattern",
-          label: "OTP Detection Pattern (Regex)",
           description:
-            "Regular expression used to detect OTP codes in messages",
-          type: "text" as const,
-          bind: "otp",
-          placeholder: "\\b(\\d{4,8})\\b",
+            "Show an in-app notification when a new OTP arrives. Error and status messages are always shown.",
+          type: "checkbox" as const,
+          bind: "notifications",
         },
       ],
     },
@@ -158,13 +94,6 @@
             { value: "dark", label: "Dark" },
             { value: "light", label: "Light" },
           ],
-        },
-        {
-          key: "compactMode",
-          label: "Compact Mode",
-          description: "Reduce spacing for more content on screen",
-          type: "checkbox" as const,
-          bind: "appearance",
         },
         {
           key: "showSIMColumn",
@@ -219,19 +148,6 @@
           description: "Enable Developer Mode to view live logs and backend diagnostics in the sidebar",
           type: "checkbox" as const,
           bind: "developer",
-        },
-        {
-          key: "logLevel",
-          label: "Capture Log Level",
-          description: "Minimum severity level for capturing system logs",
-          type: "select" as const,
-          bind: "developer",
-          options: [
-            { value: "ALL", label: "All (Info, Warn, Error)" },
-            { value: "INFO", label: "Info, Warn & Error" },
-            { value: "WARN", label: "Warn & Error Only" },
-            { value: "ERROR", label: "Error Only" },
-          ],
         },
         {
           key: "autoScroll",
@@ -529,7 +445,7 @@
                     >
                       {field.buttonText ?? 'Execute'}
                     </button>
-                  {:else if field.type === "checkbox" || field.type === "select" || field.type === "number" || field.type === "text"}
+                  {:else if field.type === "checkbox" || field.type === "select" || field.type === "number"}
                     <label
                       class="flex-1 min-w-[200px] cursor-pointer"
                       for={fieldId(selectedGroup, field)}
@@ -616,28 +532,6 @@
                             }
                           }}
                         />
-                      {:else if field.type === "text"}
-                        <input
-                          id={fieldId(selectedGroup, field)}
-                          type="text"
-                          class="input w-[260px] sm:w-[300px] max-w-full text-xs shrink-0 font-mono"
-                          value={getNestedValue(
-                            settingsStore,
-                            `${field.bind}.${field.key}`,
-                          )}
-                          placeholder={field.placeholder}
-                          spellcheck="false"
-                          onchange={(e) => {
-                            const target = e.target as HTMLInputElement;
-                            setNestedValue(
-                              settingsStore,
-                              `${field.bind}.${field.key}`,
-                              target.value,
-                            );
-                            const setter = setterFor(field.bind);
-                            if (setter) setter({ [field.key]: target.value });
-                          }}
-                        />
                       {/if}
                     </div>
                   {/if}
@@ -657,8 +551,6 @@
         <p class="text-[11px] text-muted-foreground/70 mt-3 px-1">
           {#if selectedGroup.id === "appearance"}
             Theme and column visibility apply immediately.
-          {:else if selectedGroup.id === "otp"}
-            Custom regex is applied to newly received messages.
           {:else if selectedGroup.id === "updates"}
             Updates are fetched from the official release endpoint only.
           {:else}

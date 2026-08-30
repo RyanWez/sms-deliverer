@@ -11,9 +11,10 @@
 |---|---|
 | [01-github-setup.md](./01-github-setup.md) | gh CLI install → login → scopes → git push credentials |
 | [02-release-automation.md](./02-release-automation.md) | Release pipeline architecture + configs (release-please / tauri-action / updater) |
-| [03-troubleshooting.md](./03-troubleshooting.md) | တကယ်ကြုံခဲ့ရတဲ့ bug ၇ ခု — symptom → root cause → fix |
-| [04-conventions.md](./04-conventions.md) | Commit စံနှုန်း၊ verification loop၊ security rules၊ command cheatsheet |
-| [05-feature-roadmap.md](./05-feature-roadmap.md) | အနာဂတ်တွင် ဆက်လက် အကောင်အထည်ဖော်မည့် Features & Roadmap စာရင်း |
+| [03-troubleshooting.md](./03-troubleshooting.md) | တကယ်ကြုံခဲ့ရတဲ့ bug ၁၃ ခု — symptom → root cause → fix · + latent trap ၃ ခု (settings layer ၂၊ decoder keyword typo ၁) |
+| [04-conventions.md](./04-conventions.md) | Commit စံနှုန်း၊ verification loop၊ security rules၊ command cheatsheet၊ hardware live-check၊ **§H Settings control wiring rule** |
+| [05-feature-roadmap.md](./05-feature-roadmap.md) | Feature backlog + **Settings Controls Decisions Ledger** (ဖျက်ခဲ့တာ ၁၁ ခု၊ hard refusal ၂ ခု၊ deferred order၊ desktop-notification feasibility) |
+| [06-git-workflow.md](./06-git-workflow.md) | Feature branch workflow — branch → commit → push → PR → squash merge, CI trigger matrix |
 
 ## ⚡ TL;DR — ဒီ Project ရဲ့ Golden Rules
 
@@ -22,3 +23,7 @@
 3. **Tags က plain `vX.Y.Z`** — config ထဲ `"include-component-in-tag": false` ကြောင့် (default က prefix ထည့်မယ်!)
 4. **Secrets ဘယ်တော့မှ chat/code ထဲမထည့်** — `gh auth login` + keyring က စီစဉ်ပေးတယ်
 5. **Edit → Validate → Commit → Push → Verify CI** — ဒီ order ကို ဘယ်တော့မှ ခုံးမထားနဲ့
+6. **Inert UI control ကို ဘယ်တော့မှ မ ship လုပ်နဲ့** — setting အသစ်ကို control ထည့်တဲ့ change
+   တစ်ခုတည်းအတွင်း wire ပြီးရမယ်၊ မဟုတ်ရင် လုံးဝ မထည့်ရ။ ဘာမှ မလုပ်တဲ့ switch က operator ကို
+   "Settings က လိမ်တယ်" လို့ သွန်သင်လိုက်တာ — field failure debug လုပ်နေချိန်မှာ အဲ့ဒါက
+   အဆိုးဆုံး (04 §H · ledger 05 §Settings Decisions Ledger)

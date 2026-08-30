@@ -163,12 +163,14 @@
         <span class="hidden sm:inline">Export</span>
       </button>
       {#if exportOpen}
+        <!-- popover/accent are not tokens in tailwind.config.ts, so those
+             utilities never get emitted. Floating surfaces use surface+border. -->
         <div
-          class="absolute right-0 top-full mt-1 z-30 min-w-[9rem] overflow-hidden rounded-lg border border-border bg-popover shadow-xl"
+          class="absolute right-0 top-full mt-1 z-30 min-w-[9rem] overflow-hidden rounded-lg border border-border bg-surface shadow-xl"
           role="menu"
         >
           <button
-            class="block w-full px-3 py-2 text-left text-xs text-foreground hover:bg-accent"
+            class="block w-full px-3 py-2 text-left text-xs text-foreground hover:bg-elevated"
             role="menuitem"
             onclick={() => {
               exportOpen = false;
@@ -178,7 +180,7 @@
             <Icon name="download" size={12} class="mr-2 text-muted-foreground" />CSV (.csv)
           </button>
           <button
-            class="block w-full px-3 py-2 text-left text-xs text-foreground hover:bg-accent"
+            class="block w-full px-3 py-2 text-left text-xs text-foreground hover:bg-elevated"
             role="menuitem"
             onclick={() => {
               exportOpen = false;

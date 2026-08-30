@@ -4,10 +4,20 @@ import { messagesStore } from '$lib/stores/messages.svelte';
 import { liveStore } from '$lib/stores/live.svelte';
 import { settingsStore } from '$lib/stores/settings.svelte';
 import { logsStore } from '$lib/stores/logs.svelte';
+import { describePortChanges, diffPorts } from '$lib/utils/port-refresh';
+import { toCsv } from '$lib/utils/csv';
+import type { CsvRow } from '$lib/utils/csv';
+import {
+  applyBufferedUpdate,
+  dropBufferedIds,
+  selectRowsToAdd,
+} from '$lib/utils/message-buffer';
 import type { SmsItem, ToastData, PortInfo, LogEntry } from '$lib/types';
 
 let nextToastId = 1;
 let initialized = false;
+/** Guard against a manual Refresh and the background timer overlapping. */
+let portRefreshInFlight = false;
 
 function toast(kind: ToastData['kind'], title: string, body: string, otp?: string | null) {
   liveStore.addToast({
@@ -17,6 +27,42 @@ function toast(kind: ToastData['kind'], title: string, body: string, otp?: strin
     body,
     otp: otp ?? null,
   });
+}
+
+/**
+ * Announce a freshly detected OTP, unless the user has muted notifications.
+ *
+ * Only OTP announcements are gated: operational feedback (scan/detect/export
+ * failures) always goes through `toast` directly, because silencing an error is
+ * never what "Enable Notifications: off" is asking for.
+ */
+function notifyOtp(title: string, body: string, otp: string) {
+  if (!settingsStore.notifications.enabled) return;
+  toast('Otp', title, body, otp);
+}
+
+/**
+ * Publish a re-enumerated port list and say what changed.
+ *
+ * The operator plugs and pulls sticks by hand, so a refresh that silently swaps
+ * the list out is the one thing this must not be — but it also runs on a timer,
+ * so an unchanged bank has to pass without a word. The very first enumeration is
+ * exempt: there is no previous state, and everything would read as "new".
+ *
+ * Port topology is operational information, like `detect:done`, so it goes
+ * through `toast` and is deliberately not gated on `notifications.enabled` —
+ * that switch mutes OTP announcements only.
+ */
+function applyRefreshedPorts(ports: PortInfo[]) {
+  const first = !portsStore.hasLoaded;
+  const diff = diffPorts(portsStore.items, ports);
+  portsStore.set(ports);
+  if (first) return;
+
+  const notice = describePortChanges(diff);
+  if (!notice) return;
+  portsStore.markRecentlyAdded(diff.added);
+  toast(notice.kind, notice.title, notice.body);
 }
 
 async function refreshFromBackend() {
@@ -68,7 +114,7 @@ export const api = {
         isInitialGathering = false;
 
         const existing = new Set(messagesStore.items.map((m) => m.id));
-        const toAdd = incoming.filter((i) => !existing.has(i.id));
+        const toAdd = selectRowsToAdd(existing, incoming);
         if (toAdd.length > 0) {
           messagesStore.items = [...messagesStore.items, ...toAdd];
         }
@@ -110,6 +156,9 @@ export const api = {
       });
 
       await listen<{ ids: number[] }>('messages:removed', (event) => {
+        // A row deleted while it is still buffered has to be forgotten here too,
+        // otherwise the next flush appends it back into the store.
+        msgBuffer = dropBufferedIds(msgBuffer, event.payload.ids);
         messagesStore.removeByIds(event.payload.ids);
         messagesStore.deleteBusy = false;
       });
@@ -175,27 +224,50 @@ export const api = {
           otp: item.otp ?? null,
           is_new: item.is_new ?? true,
         };
-        if (!messagesStore.items.some(m => m.id === smsItem.id)) {
+        // The backend allocates a fresh id for `sms:new` (it emits
+        // `messages:updated` when a row is superseded), so a collision with a
+        // buffered row should not happen — but if one ever did, patching the
+        // buffer keeps a single ordered path for that id instead of racing the
+        // flush.
+        const patchedBuffer = applyBufferedUpdate(msgBuffer, smsItem);
+        if (patchedBuffer) {
+          msgBuffer = patchedBuffer;
+        } else if (!messagesStore.items.some(m => m.id === smsItem.id)) {
           messagesStore.items = [...messagesStore.items, smsItem];
         }
         if (smsItem.otp) {
-          toast('Otp', 'New OTP', smsItem.message.text ?? '', smsItem.otp);
+          notifyOtp('New OTP', smsItem.message.text ?? '', smsItem.otp);
         }
       });
 
       // A concatenated (long) message finished collecting all its parts — the
       // backend swapped the partial row for the complete text under the same
       // id, so we refresh that row in place instead of appending a duplicate.
+      //
+      // The id can be in the store or still in the add-buffer: the backend
+      // supersedes a row it delivered through `messages:added`, and that burst
+      // is held here for 50–200 ms. Patch wherever it is found — a store-only
+      // lookup dropped the update, leaving the partial text and no OTP for a
+      // message that has one.
       await listen<{ item: SmsItem }>('messages:updated', (event) => {
         const updated = event.payload.item;
+        // Patch the buffer first and unconditionally: the buffered copy is
+        // replaced, never merely shadowed, so the later flush can only append
+        // this version. That is what stops the flush from re-staling the row.
+        const patchedBuffer = applyBufferedUpdate(msgBuffer, updated);
+        if (patchedBuffer) msgBuffer = patchedBuffer;
+
         const idx = messagesStore.items.findIndex((m) => m.id === updated.id);
         if (idx >= 0) {
           messagesStore.items = messagesStore.items.map((m, i) =>
             i === idx ? updated : m
           );
-          if (updated.otp) {
-            toast('Otp', 'OTP detected', updated.message.text ?? '', updated.otp);
-          }
+        }
+
+        // An update for a row we have never seen is left alone on purpose:
+        // re-adding it here would resurrect rows already deleted or purged.
+        if ((idx >= 0 || patchedBuffer) && updated.otp) {
+          notifyOtp('OTP detected', updated.message.text ?? '', updated.otp);
         }
       });
 
@@ -227,19 +299,29 @@ export const api = {
     }
   },
 
-  async refreshPorts() {
-    if (!isTauri()) {
-      const { generateSyntheticPorts } = await import('$lib/utils/synthetic');
-      portsStore.set(generateSyntheticPorts(16));
-      toast('Success', 'Refreshed', 'Synthetic ports refreshed.');
-      return;
-    }
+  async refreshPorts(source: 'manual' | 'auto' = 'manual') {
+    // Two enumerations at once would only fight over the same shared port state:
+    // the background timer can tick while the operator is on the Refresh button.
+    if (portRefreshInFlight) return;
+    portRefreshInFlight = true;
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const ports = await invoke<PortInfo[]>('refresh_ports');
-      portsStore.set(ports);
-    } catch (e) {
-      toast('Danger', 'Refresh failed', String(e));
+      if (!isTauri()) {
+        const { generateSyntheticPorts } = await import('$lib/utils/synthetic');
+        applyRefreshedPorts(generateSyntheticPorts(16));
+        // Only the button press gets the "it did something" acknowledgement; the
+        // timer stays quiet unless the port list actually changed.
+        if (source === 'manual') toast('Success', 'Refreshed', 'Synthetic ports refreshed.');
+        return;
+      }
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const ports = await invoke<PortInfo[]>('refresh_ports');
+        applyRefreshedPorts(ports);
+      } catch (e) {
+        toast('Danger', 'Refresh failed', String(e));
+      }
+    } finally {
+      portRefreshInFlight = false;
     }
   },
 
@@ -414,9 +496,13 @@ export const api = {
    * Export the currently filtered message list to a user-chosen file.
    * In Tauri the native save dialog + write run on the Rust side; in browser
    * preview we fall back to a Blob download.
+   *
+   * CSV cells go through `utils/csv`, which neutralizes formula-injection: the
+   * sender, the SIM number and the body are all attacker-controlled. JSON needs
+   * no such treatment — nothing evaluates a JSON string value.
    */
   async exportMessages(format: 'csv' | 'json') {
-    const rows = messagesStore.visible.map((it) => ({
+    const rows: CsvRow[] = messagesStore.visible.map((it) => ({
       time: it.message.received || '',
       from: it.message.from || '',
       port: it.message.port || '',
@@ -540,18 +626,3 @@ export const api = {
     }
   },
 };
-
-/** Serialize smoke-report style rows to CSV with RFC-4180 escaping. */
-function csvCell(v: string): string {
-  if (/[",\n\r]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
-  return v;
-}
-
-function toCsv(rows: Array<Record<string, string>>): string {
-  if (rows.length === 0) return 'time,from,port,sim,text,otp,status\n';
-  const header = Object.keys(rows[0]).join(',');
-  const body = rows
-    .map((r) => Object.values(r).map((v) => csvCell(String(v))).join(','))
-    .join('\n');
-  return `${header}\n${body}\n`;
-}

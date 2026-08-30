@@ -82,7 +82,6 @@ export type NavSection = 'inbox' | 'ports' | 'settings' | 'logs';
 export interface SettingsState {
   general: {
     autoStartLive: boolean;
-    minimizeToTray: boolean;
     confirmDelete: boolean;
     portRefreshInterval: number;
     /**
@@ -93,20 +92,11 @@ export interface SettingsState {
     retentionHours: number;
   };
   notifications: {
+    /** Mutes the in-app OTP toasts. Operational errors ignore this. */
     enabled: boolean;
-    soundEnabled: boolean;
-    desktopNotifications: boolean;
-    otpOnlyNotifications: boolean;
-  };
-  otp: {
-    autoCopy: boolean;
-    showInTable: boolean;
-    highlightNewOtp: boolean;
-    otpPattern: string;
   };
   appearance: {
     theme: 'system' | 'dark' | 'light';
-    compactMode: boolean;
     showSIMColumn: boolean;
     showPortColumn: boolean;
     /** Rows/messages per page. 'auto' fills the available viewport height. */
@@ -118,35 +108,22 @@ export interface SettingsState {
   };
   developer: {
     enabled: boolean;
-    logLevel: 'ALL' | 'ERROR' | 'WARN' | 'INFO';
     autoScroll: boolean;
-    maxLogs: number;
   };
 }
 
 export const DEFAULT_SETTINGS: SettingsState = {
   general: {
     autoStartLive: false,
-    minimizeToTray: false,
     confirmDelete: true,
     portRefreshInterval: 30,
     retentionHours: 2,
   },
   notifications: {
     enabled: true,
-    soundEnabled: true,
-    desktopNotifications: true,
-    otpOnlyNotifications: false,
-  },
-  otp: {
-    autoCopy: false,
-    showInTable: true,
-    highlightNewOtp: true,
-    otpPattern: '\\b(\\d{4,8})\\b',
   },
   appearance: {
     theme: 'system',
-    compactMode: false,
     showSIMColumn: true,
     showPortColumn: true,
     pageSize: 'auto',
@@ -157,9 +134,7 @@ export const DEFAULT_SETTINGS: SettingsState = {
   },
   developer: {
     enabled: false,
-    logLevel: 'ALL',
     autoScroll: true,
-    maxLogs: 1000,
   },
 };
 

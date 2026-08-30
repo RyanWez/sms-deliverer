@@ -98,6 +98,41 @@ pub fn get_log_file_path() -> Option<PathBuf> {
         .map(|d| d.data_dir().join("app.log"))
 }
 
+/// Number of trailing characters a masked number keeps.
+const MASK_KEEP: usize = 3;
+
+/// Mask a subscriber number for logging: keep the last three characters, hide
+/// the rest (`+959771234456` -> `***456`).
+///
+/// Nothing that identifies a subscriber may reach a sink. `app.log` only
+/// rotates at 5 MB and is never pruned by age, and the ring buffer is exposed
+/// verbatim on the Logs page, so a plaintext MSISDN written there outlives the
+/// inbox retention window indefinitely. Three digits are enough to tell two
+/// slots apart while debugging.
+///
+/// Iterates by `char` rather than slicing bytes: numbers arrive from USSD
+/// replies and PDU sender fields, which can carry a `+`, spaces or mangled
+/// multi-byte junk, and a byte slice landing mid-codepoint would panic.
+pub fn mask_number(n: &str) -> String {
+    let count = n.chars().count();
+    if count <= MASK_KEEP {
+        // Too short to reveal a tail from — mask it whole. Real MSISDNs never
+        // land here; a truncated or garbage value can.
+        return "*".repeat(count);
+    }
+    let tail: String = n.chars().skip(count - MASK_KEEP).collect();
+    format!("{}{}", "*".repeat(MASK_KEEP), tail)
+}
+
+/// How to describe an OTP in a log line: whether one was found and how long it
+/// is, never the value itself.
+pub fn otp_summary(otp: Option<&str>) -> String {
+    match otp {
+        Some(code) => format!("found ({} digits)", code.chars().count()),
+        None => "none".to_string(),
+    }
+}
+
 /// Shared line formatter used by every sink (debug terminal, release file).
 pub(crate) fn format_line(
     now: &str,
@@ -249,4 +284,42 @@ pub fn init() {
     }
 
     log::set_max_level(log::LevelFilter::Info);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn masking_keeps_only_the_last_three_digits() {
+        assert_eq!(mask_number("+959771234456"), "***456");
+        assert_eq!(mask_number("09771234456"), "***456");
+        assert_eq!(mask_number("1234"), "***234");
+    }
+
+    #[test]
+    fn masking_never_panics_on_short_or_empty_input() {
+        // A number field can be empty or truncated (bad USSD reply, odd PDU
+        // sender), and a byte-slice implementation would panic here.
+        assert_eq!(mask_number(""), "");
+        assert_eq!(mask_number("1"), "*");
+        assert_eq!(mask_number("12"), "**");
+        assert_eq!(mask_number("123"), "***");
+    }
+
+    #[test]
+    fn masking_handles_multi_byte_characters() {
+        // Sender fields are alphanumeric on some networks; a mangled decode can
+        // leave multi-byte characters in there.
+        assert_eq!(mask_number("МТС−телеком"), "***ком");
+        assert_eq!(mask_number("日本"), "**");
+    }
+
+    #[test]
+    fn otp_summary_reports_presence_and_length_only() {
+        assert_eq!(otp_summary(Some("123456")), "found (6 digits)");
+        assert_eq!(otp_summary(None), "none");
+        // The value itself must never appear in the summary.
+        assert!(!otp_summary(Some("987654")).contains("987654"));
+    }
 }

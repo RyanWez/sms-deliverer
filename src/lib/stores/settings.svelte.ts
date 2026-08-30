@@ -3,6 +3,19 @@ import { DEFAULT_SETTINGS } from '$lib/types';
 
 const STORAGE_KEY = 'sms-reader-settings';
 
+/**
+ * A private copy of the defaults, safe to hand to `$state`.
+ *
+ * `DEFAULT_SETTINGS` is a module-level literal and the settings object is a deep
+ * `$state` proxy the Settings page mutates in place, so a shallow spread would
+ * let user edits write straight through into the shared literal — after a reset
+ * (or on a fresh profile) the "defaults" would drift with whatever the user
+ * last typed.
+ */
+function defaultsClone(): SettingsState {
+  return structuredClone(DEFAULT_SETTINGS);
+}
+
 function deepMerge<T extends Record<string, any>>(target: T, source: Partial<T>): T {
   const result = { ...target };
   for (const key of Object.keys(source) as Array<keyof T>) {
@@ -47,12 +60,12 @@ function loadSettings(): SettingsState {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
       const parsed = migrate(JSON.parse(stored));
-      return deepMerge(DEFAULT_SETTINGS, parsed);
+      return deepMerge(defaultsClone(), parsed);
     }
   } catch {
     // ignore parse errors
   }
-  return { ...DEFAULT_SETTINGS };
+  return defaultsClone();
 }
 
 function saveSettings(settings: SettingsState) {
@@ -70,7 +83,6 @@ export function createSettingsStore() {
     get settings() { return settings; },
     get general() { return settings.general; },
     get notifications() { return settings.notifications; },
-    get otp() { return settings.otp; },
     get appearance() { return settings.appearance; },
     get updates() { return settings.updates; },
     get developer() { return settings.developer; },
@@ -81,10 +93,6 @@ export function createSettingsStore() {
     },
     setNotifications(v: Partial<SettingsState['notifications']>) {
       settings = { ...settings, notifications: { ...settings.notifications, ...v } };
-      saveSettings(settings);
-    },
-    setOtp(v: Partial<SettingsState['otp']>) {
-      settings = { ...settings, otp: { ...settings.otp, ...v } };
       saveSettings(settings);
     },
     setAppearance(v: Partial<SettingsState['appearance']>) {
@@ -102,36 +110,81 @@ export function createSettingsStore() {
     },
 
     resetToDefaults() {
-      settings = { ...DEFAULT_SETTINGS };
+      settings = defaultsClone();
       saveSettings(settings);
       applyTheme('system');
     },
   };
 }
 
-function applyTheme(theme: 'system' | 'dark' | 'light') {
-  const root = document.documentElement;
-  if (theme === 'dark') {
-    root.classList.add('dark');
-  } else if (theme === 'light') {
-    root.classList.remove('dark');
-  } else {
-    if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-    }
+type Theme = SettingsState['appearance']['theme'];
+
+const DARK_QUERY = '(prefers-color-scheme: dark)';
+
+/**
+ * The live `(prefers-color-scheme: dark)` subscription, held only while the
+ * theme is "system".
+ *
+ * Kept in module scope (rather than added once at startup) so it can be torn
+ * down when the user pins Dark or Light — otherwise the OS flipping at sunset
+ * would repaint an explicitly pinned theme. Detaching before every (re)attach
+ * also makes `applyTheme` idempotent: calling it twice cannot stack listeners.
+ */
+let systemQuery: MediaQueryList | null = null;
+let systemListener: (() => void) | null = null;
+
+function detachSystemListener() {
+  if (systemQuery && systemListener) {
+    systemQuery.removeEventListener('change', systemListener);
   }
+  systemQuery = null;
+  systemListener = null;
+}
+
+/**
+ * Write the resolved theme onto <html>.
+ *
+ * Both classes are set explicitly instead of only adding/removing `dark`: the
+ * palette in app.css is keyed on `.dark` / `.light`, and an element carrying
+ * neither would fall back to the bare `:root` (dark) rule — which is what made
+ * "Light" a no-op before. `colorScheme` is set alongside so the browser-native
+ * chrome we cannot style (scrollbar gutters, <select> popups, number spinners,
+ * form control defaults) follows the app instead of staying dark.
+ */
+function setResolved(resolved: 'dark' | 'light') {
+  const root = document.documentElement;
+  root.classList.toggle('dark', resolved === 'dark');
+  root.classList.toggle('light', resolved === 'light');
+  root.style.colorScheme = resolved;
+}
+
+function applyTheme(theme: Theme) {
+  if (typeof document === 'undefined') return;
+
+  detachSystemListener();
+
+  if (theme !== 'system') {
+    setResolved(theme);
+    return;
+  }
+
+  // matchMedia is missing in some embedded webviews; dark is the shipped
+  // default, so fall back to it rather than to the OS-less light branch.
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    setResolved('dark');
+    return;
+  }
+
+  const query = window.matchMedia(DARK_QUERY);
+  const listener = () => setResolved(query.matches ? 'dark' : 'light');
+  query.addEventListener('change', listener);
+  systemQuery = query;
+  systemListener = listener;
+  listener();
 }
 
 export const settingsStore = createSettingsStore();
 
 if (typeof window !== 'undefined') {
-  const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-  mediaQuery.addEventListener('change', () => {
-    if (settingsStore.appearance.theme === 'system') {
-      applyTheme('system');
-    }
-  });
   applyTheme(settingsStore.appearance.theme);
 }

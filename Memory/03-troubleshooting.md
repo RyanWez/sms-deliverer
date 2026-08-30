@@ -61,18 +61,31 @@
   Releases/tags ဘယ်ဟာတွေကျန်လဲ: `gh api repos/<o>/<r>/releases` , `git ls-remote --tags origin`
 - **Rule:** Full purge (delete releases → delete tags w/ branch cleanup) လုပ်ပြီး run history stale ဖြစ်နိုင် — panic မလုပ်၊ API/state machine verify ဦး။
 
-## 8️⃣ Release PR tests fail: `cargo test --locked` — Cargo.lock out of sync
+## 8️⃣ Release PR tests fail: `cargo test --locked` — Cargo.lock out of sync (ယခု auto-fix)
 
 - **Symptom:** PR #7 (release 1.2.0) မှာ ubuntu + windows cargo-test jobs နှစ်ခုလုံး fail —
   `error: cannot update the lock file … because --locked was passed`
 - **Root Cause:** release-please က `Cargo.toml` ရဲ့ `version` ကို bump ပေးပေမယ့် `Cargo.lock` ထဲက
   `sms-tauri` package version ကို ထိတ်လုပ်မပေးဘူး (doc 02 §2 မှာ extra-files က lock မပါ)။
-  CI က `--locked` နဲ့ run လို့ lock mismatch ကို error ပြတယ်။
-- **Fix:** release branch checkout → `cargo check` (lock regenerate) →
-  `chore: sync Cargo.lock with version X.Y.Z` commit → PR branch push → CI auto re-run → green → merge
-- **Rule:** Release PR ဖွင့်တာနဲ့ test jobs က fail ရင် log ကို အရင်ကြည့် —
-  `--locked` error ဖြစ်နေရင် lock sync commit နဲ့ fix လုပ်လို့ရတယ်၊ PR ကို close/reopen မလုပ်နဲ့။
-  (v1.2.0, 2026-08-28 မှာ verified)
+  lockfile version ကို cargo ကိုယ်တိုင်ပဲ ရေးနိုင်တယ်၊ CI က `--locked` နဲ့ run လို့ mismatch ကို error ပြတယ်။
+- **အရင် လက်နဲ့ လုပ်ခဲ့တာ (context အတွက် ကျန်ထား):** release branch checkout → `cargo check`
+  (lock regenerate) → `chore: sync Cargo.lock with version X.Y.Z` commit → PR branch push →
+  CI auto re-run → green → merge (commits `2d32e01` / `49a489a`)
+- **ယခု အလိုအလျောက် ဖြစ်တာ:** `.github/workflows/release-please.yml` ထဲ `sync-cargo-lock` job
+  ထည့်ထားပြီ။ release-please ရဲ့ `prs_created` / `pr` output ကို ကြည့်ပြီး
+  `fromJSON(...).headBranchName` branch ကို `secrets.PAT` နဲ့ checkout →
+  `cargo update --workspace --manifest-path src-tauri/Cargo.toml` →
+  `cargo metadata --locked` နဲ့ verify → `git diff --quiet -- src-tauri/Cargo.lock` က
+  ပြောင်းလဲမှု ရှိတဲ့အခါမှသာ `chore: sync Cargo.lock with version X.Y.Z` commit + push
+  (loop guard — release-please က main push တိုင်း re-run လုပ်တာမို့)။ PAT နဲ့ push လုပ်တာက
+  PR ရဲ့ checks ကို ပြန် trigger ဖြစ်စေတယ် (default `GITHUB_TOKEN` ဆိုရင် မဖြစ်ဘူး)။
+- **Rule:** Release PR မှာ `--locked` error ထပ်တွေ့ရင် lockfile ကို **လက်နဲ့ အရင် မဖြေနဲ့** —
+  (a) `sync-cargo-lock` job run ဖြစ်ခဲ့လား (release-please job က `prs_created=true` ထွက်ခဲ့လား)၊
+  (b) `secrets.PAT` သက်တမ်း/scope ကျန်နေလား — ဒီနှစ်ခုကို အရင်စစ်။ PR ကို close/reopen မလုပ်နဲ့။
+- **Unverified (2026-08-30):** ဒီ automation ကို ဒီ branch
+  (`fix/reliability-and-privacy-hardening`) မှာ ထည့်ထားတာ ဖြစ်ပြီး တကယ့် release PR တစ်ခုမှ
+  ဖြတ်သွားတာ **မရှိသေးဘူး**။ ဒါကြောင့် အထက်က manual procedure က fallback အဖြစ် ကျန်တယ်။
+  (Original manual fix က v1.2.0, 2026-08-28 မှာ verified)
 
 ## 9️⃣ Scan / Live / Get SIM အရမ်းကြာ — 64 port ရှိပေမယ့် SIM ၇ ခုပဲ
 
@@ -192,6 +205,68 @@
   နှိုင်းယှဉ်ခဲ့တယ်၊ 18:56 Windows log က တစ်ခုတည်း ဖြေရှင်းပေးမယ့် ဟာ ဖြစ်ပေမဲ့ မသုံးခဲ့ဘူး
 - **Rule ၃:** "device မပြန်ဘူး" နဲ့ "ငါ ပို့လို့ မရဘူး" ကို ဘယ်တော့မှ တစ်ခုတည်း error အဖြစ်
   မဖေါ်ပါ — ပေါင်းထားတာက host bug ကို SIM ပြဿနာလို့ လိုက်ရှာစေတယ်
+
+## ⚠️ Latent Traps (မဖြစ်သေးဘူး၊ ဒါပေမဲ့ ချောင်းနေတာ)
+
+Case မဟုတ်သေးပါ — 2026-08-30 settings cleanup (`fbd7b8b`) လုပ်ရင်း တွေ့ခဲ့တဲ့ ချောင်း ၃ ခု
+(T1–T2 settings layer၊ T3 decoder)။ Symptom မရှိသေးလို့ fix မလုပ်ခဲ့ဘူး၊ ဒါပေမဲ့ နောက်ဆို
+ရှင်းပြရ ခက်တဲ့ bug ဖြစ်လာနိုင်တယ်။
+
+### T1. `deepMerge` က **stored** key တွေကို iterate တာ — ဖျက်ထားတဲ့ setting က profile ထဲ မပျောက်
+
+`src/lib/stores/settings.svelte.ts` ရဲ့ `deepMerge(target, source)` မှာ loop က
+`Object.keys(source)` — `source` က `localStorage` (`sms-reader-settings`) ကနေ လာတဲ့ **stored
+profile**၊ `target` က defaults။ ဆိုတော့ merge က "DEFAULT မှာ ရှိတဲ့ key" နဲ့ မကန့်သတ်ဘူး —
+stored key **တိုင်း** result ထဲ ရောက်တယ်။
+
+**အကျိုးဆက်:** `SettingsState` ကနေ field ဖျက်လိုက်တာဟာ user တစ်ဦးရဲ့ ရှိပြီးသား profile ကို
+**မရှင်းလင်းပေးဘူး**။ `otp.otpPattern`၊ `developer.logLevel` စတာတွေ localStorage ထဲ ကျန်နေတယ်၊
+ပြီးတော့ `saveSettings` က object တစ်ခုလုံးကို stringify တာမို့ **save တိုင်း ပြန်ရေးခံရတယ်**။
+
+- ယခု အထိ **အပြစ်မရှိ** — ဘယ်သူမှ မဖတ်တာမို့
+- **အနာဂတ် ချောင်း:** နာမည် တူတဲ့ field အသစ်တစ်ခု (ဥပမာ `developer.logLevel` ကို ပုံစံ
+  ပြောင်းပြီး ပြန်ထည့်တာ) က **stale value ကို အမွေရမယ်** — default ကို မဟုတ်ဘူး။ ဒါက user
+  ရဲ့ machine မှာပဲ ဖြစ်တာမို့ "ငါ့ဆီမှာ မဖြစ်ဘူး" class bug
+- **Rule:** field နာမည်ကို semantic ပြောင်းပြီး ဘယ်တော့မှ recycle မလုပ်ပါနဲ့။ တကယ် လိုရင်
+  `migrate()` (retention migration နဲ့ တူတဲ့ ပုံစံ) ထဲမှာ key ကို explicit `delete` လုပ်ပါ။
+  `deepMerge` ကို DEFAULT key အလိုက် iterate ဖြစ်အောင် ပြောင်းလည်း ရတယ် — ဒါပေမဲ့ အဲ့ဒါက
+  legacy shape တွေအတွက် migration အားလုံး အရင် ပြေးရမယ်လို့ ဆိုလိုတယ်
+
+### T2. Settings page က data-driven၊ binding path မှာ **type check မရှိ**
+
+`src/lib/pages/Settings.svelte` က field descriptor array (`{ key, label, type, bind, … }`) ကနေ
+render တယ်၊ value access က `getNestedValue(obj: any, path: string): any` /
+`setNestedValue(obj: any, …)` — path က `` `${field.bind}.${field.key}` `` string concat။
+
+ဆိုတော့ **မရှိတဲ့ `bind`/`key` pair က compile error မတက်ဘူး**၊ `svelte-check` လည်း မဖမ်းဘူး —
+runtime မှာ `undefined` ပဲ။ Checkbox အတွက် အဲ့ဒါက "အမြဲ off ပုံပေါက်တာ"၊ `setterFor(field.bind)`
+က `undefined` ပြန်ရင် persist မဖြစ်တာ။
+
+- `fbd7b8b` မှာ field ၁၁ ခု ဖျက်တာ type-safe ဖြစ်ခဲ့တာ **တိုက်ဆိုင်မှုသာ** —
+  `SettingsState` ကနေ ဖျက်ပြီး descriptor ကို ချန်ခဲ့ရင် build အောင်မြင်ပြီး switch က
+  တိတ်တဆိတ် ပျက်နေမယ်
+- **Rule:** control အသစ် ထည့်/ဖျက် ရင် **Settings page ကို ကိုယ်တိုင် နှိပ်ပြီး စမ်းပါ** —
+  reload ပြီးရင် value ကျန်လား၊ consumer တကယ် တုံ့ပြန်လား။ Type checker က ဒီအလွှာမှာ
+  မကာကွယ်ပေးဘူး (doc 04 §H)
+
+### T3. `KW_CONFIRM` keyword constant က စာလုံးပေါင်း မှားနေတယ် (OTP gate — ကုဒ် မပြင်ရသေး)
+
+`src-tauri/src/core/decoder.rs` ရဲ့ keyword constant:
+
+```rust
+const KW_CONFIRM: &str = "\u{1021}\u{1010}\u{1014}\u{103A}\u{1015}\u{103C}\u{102F}"; // = အတန်ပြု
+```
+
+`\u{1014}` က **န**။ မြန်မာ "confirm" က **အတည်ပြု** — `\u{100A}` (**ည**) ဖြစ်ရမယ်။ ဆိုတော့
+`KEYWORD_RE` gate ထဲက ဒီ alternative က **တကယ့် SMS ဘယ်တော့မှ မ match ဘူး** (မရှိတဲ့ စာလုံးပေါင်း)။
+
+- **Impact:** အခြား keyword (`otp`, `code`, `pin`, `ကုဒ်`, `လုံခြုံ`, `verify`…) မပါဘဲ
+  **"အတည်ပြု" တစ်ခုတည်း** သုံးတဲ့ မြန်မာ OTP SMS က gate ကို မဖြတ်ဘူး → OTP မတွေ့ဘူး
+  (silent miss — decoder က `None` ပြန်တာမို့ error မတက်)
+- Unit test တစ်ခုမှ ဒီ constant ကို မထိထားဘူး၊ ဒါကြောင့် green test suite က ဒါကို မဖမ်းဘူး
+- **Fix:** `\u{1014}` → `\u{100A}` + `extract_otp` အတွက် "အတည်ပြု" body နဲ့ test တစ်ခု ထည့်။
+  (2026-08-30 settings ledger လုပ်ရင်း တွေ့တာ — `src-tauri/` ကို ထိတဲ့ change မို့ အဲ့ session မှာ
+  မပြင်ခဲ့ဘူး)
 
 ## Bonus UX Notes
 

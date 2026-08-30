@@ -100,3 +100,32 @@ Cache/CDN illusions ကို အရင်ပယ် — ပြီးမှ confi
 > Detect မလုပ်ဘဲ "Scan & Read All" နှိပ်ရင် checked port အားလုံး thread spawn ဖြစ်တယ် — ဒါပေမဲ့ v1.3+ မှာ
 > probe gate ရှိပြီးမို့ dead port တစ်ခုက ~1.6s ပဲ ကုန်တယ် (အရင်က 24s)။ တစ်ခါတည်း သတိ:
 > device node ရှိတာ = modem ရှိတာ မဟုတ်ဘူး (doc 03 §9 ကြည့်)။
+
+## H. Settings Control Rule — Inert Switch ကို လုံးဝ မထည့်ရ
+
+> **စည်းကမ်း:** Setting အသစ်တစ်ခုကို **control ထည့်တဲ့ change တစ်ခုတည်းအတွင်း wire ပြီးရမယ်၊
+> မဖြစ်ရင် လုံးဝ မထည့်ရ။**
+
+ဘာမှ မလုပ်တဲ့ switch ဟာ switch မရှိတာထက် **ပိုဆိုးတယ်** — ဘာလို့လဲဆိုတော့ သူက operator ကို
+"Settings က လိမ်တယ်" လို့ သွန်သင်လိုက်တာ။ အဲ့သွန်သင်ချက်က field failure တစ်ခုကို debug
+လုပ်နေချိန် — ယုံကြည်မှု အလိုအပ်ဆုံး အချိန် — မှာ တန်ပြန်ကိုက်တယ်: switch ကို ဖွင့်/ပိတ်ပြီး
+behaviour မပြောင်းတာ တွေ့ရင် operator က modem/SIM/network ကို လိုက်ရှာမယ်၊ တကယ့်အဖြေက
+"ဒီ switch ကို ဘယ်သူမှ မဖတ်ဘူး" ဆိုတာ။
+
+Control တစ်ခုက အနည်းဆုံး နေရာ ၃ ခု ထိတယ် — တတိယခု မရှိရင် commit မတင်ပါနဲ့:
+
+| # | နေရာ | မရှိရင် ဖြစ်တာ |
+|---|---|---|
+| 1 | `SettingsState` + `DEFAULT_SETTINGS` (`src/lib/types.ts`) | persist မဖြစ် / undefined |
+| 2 | Settings page field descriptor (`src/lib/pages/Settings.svelte`) | UI မှာ မပေါ် |
+| 3 | **တကယ် ဖတ်တဲ့ consumer** (store getter → component / `api.ts` → Rust command) | **inert switch — ဒီ rule ချိုးတာ** |
+
+သာဓက (ကောင်းတဲ့ ပုံစံ): `notifications.enabled` ကို `f88d6d0` မှာ `src/lib/services/api.ts` ရဲ့
+`notifyOtp()` helper နဲ့ wire လုပ်လိုက်တယ် — OTP announcement ၂ ခုကိုပဲ gate တယ်၊ generic `toast`
+ကို မထိဘူး (operational error ကို ပိတ်တာ "Enable Notifications: off" ရဲ့ အဓိပ္ပာယ် မဟုတ်)။
+
+2026-08-30 မှာ ဒီ rule အောက် field ၁၁ ခု ဖျက်ခဲ့တယ် (`fbd7b8b`)၊ ၂ ခုကို **hard refusal**
+အဖြစ် သတ်မှတ်ခဲ့တယ် — ledger + အကြောင်းရင်း အားလုံး **doc 05 §Settings Decisions Ledger** မှာ။
+Binding path မှာ type check မရှိတာ နဲ့ `localStorage` ထဲ ဖျက်ပြီး field ကျန်နေတာ ၂ ခုက
+**doc 03 §Latent Traps** မှာ။
+

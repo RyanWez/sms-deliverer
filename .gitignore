@@ -9,5 +9,6 @@ src-tauri/target
 .DS_Store
 Thumbs.db
 .mimosa/
+.zcode/
 /src-tauri/updater.key
 /src-tauri/updater.key.pub

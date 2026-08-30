@@ -12,6 +12,14 @@ name: release-please
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      # `prs_created` is "true" when a release PR was created *or* updated.
+      prs_created: ${{ steps.release.outputs.prs_created }}
+      # `pr` is a JSON-serialized release-please PullRequest object; its
+      # `headBranchName` field is the only place the release branch name is
+      # exposed (there is no dedicated branch-name output).
+      pr: ${{ steps.release.outputs.pr }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
@@ -19,4 +27,61 @@ jobs:
           token: ${{ secrets.PAT }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  # release-please bumps `version` in src-tauri/Cargo.toml (see
+  # release-please-config.json extra-files) but cannot bump the `sms-tauri`
+  # entry in src-tauri/Cargo.lock — a lockfile version can only be written by
+  # cargo itself. test.yml runs both cargo steps with `--locked`, so without
+  # this job every release PR fails CI with
+  #   error: cannot update the lock file ... because --locked was passed
+  # and a human has to push a lock-sync commit by hand (see commits 2d32e01 /
+  # 49a489a, and Memory/03-troubleshooting.md case #8).
+  sync-cargo-lock:
+    needs: release-please
+    if: needs.release-please.outputs.prs_created == 'true' && needs.release-please.outputs.pr != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
+          # Same PAT that opened the branch, so the push is allowed and so the
+          # resulting commit re-triggers the PR's own checks (a push made with
+          # the default GITHUB_TOKEN would not).
+          token: ${{ secrets.PAT }}
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      # No apt packages here on purpose: `cargo update` / `cargo metadata` only
+      # resolve and rewrite the lockfile. They never compile a crate or run a
+      # build script, so the gtk/webkit2gtk/libudev/libxdo set that test.yml and
+      # tauri-build.yml need for `cargo test` / `cargo build` is not required.
+      - name: sync Cargo.lock with the bumped Cargo.toml version
+        run: cargo update --workspace --manifest-path src-tauri/Cargo.toml
+
+      # Same gate CI applies, but without compiling anything: fails if the
+      # lockfile still disagrees with Cargo.toml.
+      - name: verify the lockfile is now in sync
+        run: cargo metadata --locked --manifest-path src-tauri/Cargo.toml --format-version 1 > /dev/null
+
+      - name: commit and push if the lockfile changed
+        env:
+          VERSION_REF: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
+        run: |
+          set -euo pipefail
+          # Loop guard: release-please re-runs on every push to main and this
+          # job re-runs with it, so only push when there is a real change.
+          # Once the lock matches, the diff is empty and nothing is pushed.
+          if git diff --quiet -- src-tauri/Cargo.lock; then
+            echo "Cargo.lock already in sync — nothing to push."
+            exit 0
+          fi
+          VERSION="$(cargo metadata --no-deps --manifest-path src-tauri/Cargo.toml --format-version 1 \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src-tauri/Cargo.lock
+          git commit -m "chore: sync Cargo.lock with version ${VERSION}"
+          git push origin "HEAD:${VERSION_REF}"
 

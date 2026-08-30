@@ -313,9 +313,9 @@ device node existing says nothing about a modem being present:
 
 1. **Initialization**:
    - `ATE0`: Disable command echo.
-   - `AT+CMEE=1`: Enable numeric extended error reporting.
+   - `AT+CSCS="GSM"` before an `AT+CNUM` read, `AT+CSCS="UCS2"` before a text-mode
+     list: the character set is set per operation, not once when the port opens.
 2. **SIM & Registration Status**:
-   - `AT+CPIN?`: Verify SIM card is ready (`+CPIN: READY`).
    - `AT+CCID`: Card serial, the key every phone number is filed against.
    - `AT+CUSD=2` then `AT+CNUM`: Cancel a stale USSD session, then read the
      subscriber number off the SIM before any network query is attempted.

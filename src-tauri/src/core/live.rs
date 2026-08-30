@@ -57,6 +57,66 @@ const OFFLINE_RETRY: Duration = Duration::from_secs(60);
 /// so an always-on live session has to prune as it goes.
 const SIM_SWEEP_EVERY: Duration = Duration::from_secs(600);
 
+/// Which "this port is not working" transitions have already been announced.
+///
+/// A live worker retries for as long as the operator leaves Live on, so every
+/// failure branch would otherwise emit one event per attempt — a 2 s backoff
+/// across a 64-stick bank is a flood the UI cannot absorb, which is what these
+/// latches exist to prevent.
+///
+/// The half that matters is the re-arming. A latch that is only ever set makes
+/// the *second* outage on a port silent, and a silently offline stick in a SIM
+/// bank looks exactly like a healthy one. So the only thing that clears
+/// `offline_reported` is a modem actually answering `AT` (or the port
+/// disappearing, which invalidates the verdict) — never a mere reconnect
+/// attempt, and never `open()` succeeding, because an empty slot opens cleanly.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct OutageLatch {
+    /// The port could not be opened, or was lost while we held it.
+    down_reported: bool,
+    /// The port opened but nothing answered `AT` on it.
+    offline_reported: bool,
+}
+
+impl OutageLatch {
+    /// Record that the port could not be opened. `true` when the caller should
+    /// emit `Reconnecting` — a new outage rather than another retry of one
+    /// already reported.
+    fn report_down(&mut self) -> bool {
+        let first = !self.down_reported;
+        if first {
+            self.mark_down();
+        }
+        first
+    }
+
+    /// Record a port loss that is always worth an event by itself: we were
+    /// talking to this modem a moment ago, so the transition is real.
+    fn mark_down(&mut self) {
+        self.down_reported = true;
+        // A vanished port invalidates any earlier "no modem here" verdict. The
+        // Reconnecting event overwrites `live_error` in the command layer, so if
+        // the port comes back and is *still* silent the silence has to be
+        // announced again, or the UI is left saying "Reconnecting…" about a slot
+        // we already know is empty.
+        self.offline_reported = false;
+    }
+
+    /// Record that the liveness probe found silence. `true` when the caller
+    /// should emit `Offline`.
+    fn report_offline(&mut self) -> bool {
+        !std::mem::replace(&mut self.offline_reported, true)
+    }
+
+    /// A modem answered `AT` on this port: it is genuinely back, so both latches
+    /// re-arm. `true` when the port had been reported silent, which is worth a
+    /// log line.
+    fn modem_answered(&mut self) -> bool {
+        self.down_reported = false;
+        std::mem::replace(&mut self.offline_reported, false)
+    }
+}
+
 pub fn run_live<F>(
     port_name: String,
     stop: Arc<AtomicBool>,
@@ -94,11 +154,8 @@ fn run_live_inner<F>(
     let mut seen: HashSet<u64> = HashSet::new();
     let mut ever_connected = false;
     let mut backoff = RECONNECT_MIN;
-    let mut was_down = false;
-    // Whether the "nothing answers here" state has already been reported. Kept
-    // separate from `was_down` so an empty slot logs and paints once instead of
-    // once per re-probe.
-    let mut offline_reported = false;
+    // One event per outage, and one per *recovery* too: see `OutageLatch`.
+    let mut latch = OutageLatch::default();
     // Set on every (re)connect, just before the monitoring loop reads it.
     let mut last_sweep;
 
@@ -114,8 +171,7 @@ fn run_live_inner<F>(
                 // transition once so the UI can show "Reconnecting", then back
                 // off silently — no point flooding the log with one warn per
                 // port per retry across a 64-stick bank.
-                if !was_down {
-                    was_down = true;
+                if latch.report_down() {
                     on_event(LiveEvent::Reconnecting {
                         port: port_name.to_string(),
                         error: e,
@@ -129,10 +185,11 @@ fn run_live_inner<F>(
             }
         };
 
-        // Reconnected: reset backoff. (`was_down` intentionally stays set —
-        // nothing reads it false until the next open failure re-arms it.)
+        // Reconnected: reset backoff. The port opening again is *not* proof the
+        // modem is back — an empty slot opens cleanly — so the latches stay as
+        // they are until the probe below answers.
         backoff = RECONNECT_MIN;
-        if was_down {
+        if latch.down_reported {
             log::info!("{}: port reopened after outage", port_name);
         }
 
@@ -142,8 +199,7 @@ fn run_live_inner<F>(
         // can never deliver a message — which is how a bank with 7 SIMs came up
         // showing 64 green "LIVE" badges.
         if !crate::core::modem::probe_channel(&mut ch) {
-            if !offline_reported {
-                offline_reported = true;
+            if latch.report_offline() {
                 let why = crate::core::modem::probe_failure_reason(&ch);
                 log::warn!("{}: {} — live monitoring idle for this port", port_name, why);
                 on_event(LiveEvent::Offline {
@@ -156,14 +212,17 @@ fn run_live_inner<F>(
             }
             continue;
         }
-        if offline_reported {
+        // The probe answered: this is the only signal that proves a modem is
+        // there, so it is where both latches re-arm.
+        if latch.modem_answered() {
             log::info!("{}: modem started answering", port_name);
-            offline_reported = false;
         }
 
         // PDU mode lets us read the UDH of concatenated (long) SMS so fragments
         // can be joined into one complete message instead of truncated pieces.
-        let pdu_ok = ch.send("ATE0;+CMGF=0", 4000).contains("OK");
+        // Shared with the scan path (`modem::read_port`) so the text-mode
+        // fallback can't drift between the two again.
+        let pdu_ok = crate::core::modem::setup_sms_mode(&mut ch);
         ch.send("AT+CNMI=2,1,0,0,0", 3000);
         let stale = ch.take_notifications();
         if !stale.is_empty() {
@@ -183,6 +242,8 @@ fn run_live_inner<F>(
             collect_parts(&r, port_name, &mut asm)
         } else {
             // Text-mode fallback: no UDH available; fragments appear as-is.
+            // `setup_sms_mode` has already put the modem *into* text mode — this
+            // branch used to assume it was there already.
             let r = ch.send("AT+CMGL=\"ALL\"", 15000);
             if r.contains("+CMGL:") {
                 decoder::parse_text_mode_list(&r, port_name)
@@ -249,7 +310,7 @@ fn run_live_inner<F>(
                     .map(|r| format!("Port lost: {r}"))
                     .unwrap_or_else(|| "Port lost".into()),
             });
-            was_down = true;
+            latch.mark_down();
             if !sleep_stop_aware(stop, backoff) {
                 break;
             }
@@ -314,9 +375,10 @@ fn run_live_inner<F>(
         // keeps the join supervisor from waiting forever.
         ch.send("AT+CNMI=1,0,0,1,0", 1500);
         ch.send("AT+CSCS=\"GSM\"", 1000);
-        if pdu_ok {
-            ch.send("AT+CMGF=1", 1500);
-        }
+        // Unconditional: text mode is the app's resting state, and the text-mode
+        // fallback now switches the character set to UCS2 as well, so both
+        // branches leave something to restore.
+        ch.send("AT+CMGF=1", 1500);
 
         if !died {
             // Clean stop — exit entirely.
@@ -337,7 +399,7 @@ fn run_live_inner<F>(
             port: port_name.to_string(),
             error: reason,
         });
-        was_down = true;
+        latch.mark_down();
         if !sleep_stop_aware(stop, backoff) {
             on_event(LiveEvent::Closed {
                 port: port_name.to_string(),
@@ -582,5 +644,89 @@ mod tests {
         assert_eq!(sweep_expired(&mut ch, "ttyUSB0", true, cutoff), 0);
         // Only the list command — nothing was deleted.
         assert_eq!(*sent.lock().unwrap(), vec!["AT+CMGL=4"]);
+    }
+
+    // ── Outage reporting latches ──
+    //
+    // `run_live_inner` itself cannot be driven from a unit test: it calls
+    // `AtChannel::open(port_name)` on a real device node (there is no transport
+    // injection on that path, unlike `AtChannel::with_transport`) and each
+    // iteration sleeps for a 2–60 s backoff. The decision the bug lives in is
+    // therefore tested directly.
+
+    #[test]
+    fn silence_is_announced_once_per_outage_not_once_per_probe() {
+        let mut latch = OutageLatch::default();
+        assert!(latch.report_offline(), "first silence must reach the UI");
+        assert!(!latch.report_offline(), "re-probes must stay quiet");
+        assert!(!latch.report_offline());
+    }
+
+    #[test]
+    fn a_modem_answering_re_arms_the_offline_latch() {
+        let mut latch = OutageLatch::default();
+        assert!(latch.report_offline());
+        assert!(
+            latch.modem_answered(),
+            "recovery from silence is worth a log"
+        );
+        assert!(
+            latch.report_offline(),
+            "a second outage must be reported again — a silently offline stick \
+             is indistinguishable from a healthy one"
+        );
+    }
+
+    #[test]
+    fn a_port_that_opens_but_stays_silent_does_not_count_as_back() {
+        let mut latch = OutageLatch::default();
+        assert!(latch.report_down());
+        // The port opens again but nothing answers `AT` — news of its own, since
+        // an empty slot opens cleanly...
+        assert!(latch.report_offline());
+        // ...but not proof it is back, or a stick flapping between absent and
+        // silent would emit a Reconnecting event on every cycle.
+        assert!(!latch.report_down());
+    }
+
+    #[test]
+    fn an_outage_after_a_confirmed_recovery_is_announced_again() {
+        let mut latch = OutageLatch::default();
+        assert!(latch.report_down(), "first failure to open");
+        assert!(
+            !latch.report_down(),
+            "retries of the same outage stay quiet"
+        );
+        latch.modem_answered();
+        assert!(latch.report_down(), "the next real outage is announced");
+    }
+
+    #[test]
+    fn a_vanished_port_re_arms_the_silence_verdict_but_stays_bounded() {
+        let mut latch = OutageLatch::default();
+        // Empty slot → Offline. Then the node disappears → Reconnecting, which
+        // overwrites the port's error text in the command layer.
+        assert!(latch.report_offline());
+        assert!(latch.report_down());
+        // Back, still silent: the "Modem not responding" label has to be
+        // restored, so this reports again.
+        assert!(latch.report_offline());
+        // ...but a port flapping between absent and silent forever cannot keep
+        // emitting: the down latch is still set, so nothing further escapes.
+        assert!(!latch.report_down());
+        assert!(!latch.report_offline());
+    }
+
+    #[test]
+    fn a_port_lost_mid_session_marks_down_without_consuming_a_report() {
+        // `mark_down` is used where the event is emitted unconditionally (the
+        // port died while we held it — always a real transition).
+        let mut latch = OutageLatch::default();
+        latch.mark_down();
+        assert!(!latch.report_down(), "the outage is already reported");
+        assert!(
+            latch.report_offline(),
+            "if it comes back silent, that is news"
+        );
     }
 }
