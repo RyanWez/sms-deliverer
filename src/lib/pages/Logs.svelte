@@ -220,7 +220,7 @@
   <div
     bind:this={logContainerEl}
     onscroll={handleScroll}
-    class="flex-1 overflow-y-auto p-4 font-mono text-xs leading-relaxed bg-[#0d1117] text-[#e6edf3] select-text"
+    class="flex-1 overflow-y-auto p-4 font-mono text-xs leading-relaxed bg-[rgb(var(--console-bg))] text-[rgb(var(--console-fg))] select-text"
   >
     {#if logsStore.filtered.length === 0}
       <div class="flex flex-col items-center justify-center h-full text-center text-muted-foreground/60 py-16">
@@ -239,7 +239,7 @@
         {#each logsStore.filtered as entry (entry.id)}
           {@const meta = levelPill(entry.level)}
           <div
-            class="flex items-start gap-2.5 py-1 px-2 rounded hover:bg-white/[0.04] transition-colors border-l-2
+            class="flex items-start gap-2.5 py-1 px-2 rounded hover:bg-[rgb(var(--console-row-hover))] transition-colors border-l-2
                    {entry.level.toUpperCase() === 'ERROR' ? 'border-danger bg-danger/[0.06]' : ''}
                    {entry.level.toUpperCase() === 'WARN' ? 'border-warning bg-warning/[0.04]' : ''}
                    {entry.level.toUpperCase() === 'INFO' ? 'border-primary/40' : ''}

@@ -1,15 +1,64 @@
 <!DOCTYPE html>
-<html lang="en" class="dark" style="background-color: #171717; color-scheme: dark;">
+<html lang="en" class="dark" style="color-scheme: dark;">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#171717" />
-    <meta name="color-scheme" content="dark" />
     <title>SIM Bank SMS Reader</title>
+    <!--
+      Flash guard. Runs synchronously before any stylesheet or module so the very
+      first paint already uses the saved theme: without it the window shows a
+      frame of the <html> default before the bundle boots.
+
+      Must stay tiny and dependency-free — it executes before the bundle exists.
+      It duplicates the resolution logic in src/lib/stores/settings.svelte.ts
+      (storage key, JSON shape, class names, color-scheme); keep the two in sync.
+      Anything unexpected (no profile, corrupt JSON, blocked storage) leaves the
+      dark default already declared on the element.
+    -->
+    <script>
+      (function () {
+        try {
+          var theme = 'system';
+          var raw = window.localStorage.getItem('sms-reader-settings');
+          if (raw) {
+            var saved = JSON.parse(raw);
+            var candidate = saved && saved.appearance && saved.appearance.theme;
+            if (candidate === 'dark' || candidate === 'light' || candidate === 'system') {
+              theme = candidate;
+            }
+          }
+          var dark = true;
+          if (theme === 'light') {
+            dark = false;
+          } else if (theme === 'system' && typeof window.matchMedia === 'function') {
+            dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          }
+          var root = document.documentElement;
+          root.classList.toggle('dark', dark);
+          root.classList.toggle('light', !dark);
+          root.style.colorScheme = dark ? 'dark' : 'light';
+        } catch (e) {
+          /* keep the dark default already declared on <html> */
+        }
+      })();
+    </script>
     <style>
-      html, body, #app {
-        background-color: #171717 !important;
+      /*
+        Pre-stylesheet paint colours, keyed off the class the guard above just
+        set rather than a fixed hex, and without !important so app.css's
+        token-driven `body` rule takes over once it loads. Values mirror
+        --background / --foreground for each state.
+      */
+      html {
+        background-color: #171717;
         color: #e4e4e4;
+      }
+      html.light {
+        background-color: #f9f9f9;
+        color: #18181b;
+      }
+      html, body, #app {
         margin: 0;
         padding: 0;
         height: 100%;
@@ -18,7 +67,7 @@
       }
     </style>
   </head>
-  <body class="bg-background text-foreground antialiased" style="background-color: #171717;">
+  <body class="bg-background text-foreground antialiased">
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

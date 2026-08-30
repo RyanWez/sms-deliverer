@@ -117,29 +117,74 @@ export function createSettingsStore() {
   };
 }
 
-function applyTheme(theme: 'system' | 'dark' | 'light') {
-  const root = document.documentElement;
-  if (theme === 'dark') {
-    root.classList.add('dark');
-  } else if (theme === 'light') {
-    root.classList.remove('dark');
-  } else {
-    if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-    }
+type Theme = SettingsState['appearance']['theme'];
+
+const DARK_QUERY = '(prefers-color-scheme: dark)';
+
+/**
+ * The live `(prefers-color-scheme: dark)` subscription, held only while the
+ * theme is "system".
+ *
+ * Kept in module scope (rather than added once at startup) so it can be torn
+ * down when the user pins Dark or Light — otherwise the OS flipping at sunset
+ * would repaint an explicitly pinned theme. Detaching before every (re)attach
+ * also makes `applyTheme` idempotent: calling it twice cannot stack listeners.
+ */
+let systemQuery: MediaQueryList | null = null;
+let systemListener: (() => void) | null = null;
+
+function detachSystemListener() {
+  if (systemQuery && systemListener) {
+    systemQuery.removeEventListener('change', systemListener);
   }
+  systemQuery = null;
+  systemListener = null;
+}
+
+/**
+ * Write the resolved theme onto <html>.
+ *
+ * Both classes are set explicitly instead of only adding/removing `dark`: the
+ * palette in app.css is keyed on `.dark` / `.light`, and an element carrying
+ * neither would fall back to the bare `:root` (dark) rule — which is what made
+ * "Light" a no-op before. `colorScheme` is set alongside so the browser-native
+ * chrome we cannot style (scrollbar gutters, <select> popups, number spinners,
+ * form control defaults) follows the app instead of staying dark.
+ */
+function setResolved(resolved: 'dark' | 'light') {
+  const root = document.documentElement;
+  root.classList.toggle('dark', resolved === 'dark');
+  root.classList.toggle('light', resolved === 'light');
+  root.style.colorScheme = resolved;
+}
+
+function applyTheme(theme: Theme) {
+  if (typeof document === 'undefined') return;
+
+  detachSystemListener();
+
+  if (theme !== 'system') {
+    setResolved(theme);
+    return;
+  }
+
+  // matchMedia is missing in some embedded webviews; dark is the shipped
+  // default, so fall back to it rather than to the OS-less light branch.
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    setResolved('dark');
+    return;
+  }
+
+  const query = window.matchMedia(DARK_QUERY);
+  const listener = () => setResolved(query.matches ? 'dark' : 'light');
+  query.addEventListener('change', listener);
+  systemQuery = query;
+  systemListener = listener;
+  listener();
 }
 
 export const settingsStore = createSettingsStore();
 
 if (typeof window !== 'undefined') {
-  const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-  mediaQuery.addEventListener('change', () => {
-    if (settingsStore.appearance.theme === 'system') {
-      applyTheme('system');
-    }
-  });
   applyTheme(settingsStore.appearance.theme);
 }

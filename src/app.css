@@ -2,7 +2,24 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
+/*
+ * Palette.
+ *
+ * The active theme is picked purely by a class on <html> — never by
+ * `prefers-color-scheme`. The OS preference is consulted in exactly two places
+ * (the flash guard in index.html and `applyTheme` in stores/settings) to decide
+ * *which class* to put on the element when the theme is "system"; the values
+ * themselves never depend on it. That is what makes "Light" work on a machine
+ * whose OS is dark.
+ *
+ * Both states define every variable in full — no partial overrides — so
+ * switching classes can never leave a stale value from the other theme behind.
+ * Dark is the shipped default and doubles as the bare `:root` fallback, so a
+ * document that somehow carries neither class still renders dark rather than
+ * flashing white.
+ */
+:root,
+:root.dark {
   color-scheme: dark;
   --background: 23 23 23;
   --surface: 30 30 30;
@@ -21,39 +38,35 @@
   --otp-foreground: 0 0 0;
   --muted: 64 64 64;
   --muted-foreground: 161 161 161;
+  /* Log console — a deliberately "terminal" surface that does not track
+     --surface. GitHub's dark canvas / light canvas-subtle pair. */
+  --console-bg: 13 17 23;
+  --console-fg: 230 237 243;
+  --console-row-hover: 255 255 255 / 0.04;
 }
 
-@media (prefers-color-scheme: light) {
-  :root:not(.dark) {
-    color-scheme: light;
-    --background: 249 249 249;
-    --surface: 255 255 255;
-    --elevated: 243 244 245;
-    --border: 228 228 231;
-    --foreground: 24 24 27;
-    --primary: 2 132 199;
-    --primary-foreground: 255 255 255;
-    --success: 5 150 105;
-    --success-foreground: 255 255 255;
-    --danger: 220 38 38;
-    --danger-foreground: 255 255 255;
-    --warning: 217 119 6;
-    --warning-foreground: 255 255 255;
-    --otp: 234 88 12;
-    --otp-foreground: 255 255 255;
-    --muted: 228 228 231;
-    --muted-foreground: 82 82 91;
-  }
-}
-
-.dark {
-  --background: 23 23 23;
-  --surface: 30 30 30;
-  --elevated: 45 45 45;
-  --border: 64 64 64;
-  --foreground: 228 228 228;
-  --muted: 64 64 64;
-  --muted-foreground: 161 161 161;
+:root.light {
+  color-scheme: light;
+  --background: 249 249 249;
+  --surface: 255 255 255;
+  --elevated: 243 244 245;
+  --border: 228 228 231;
+  --foreground: 24 24 27;
+  --primary: 2 132 199;
+  --primary-foreground: 255 255 255;
+  --success: 5 150 105;
+  --success-foreground: 255 255 255;
+  --danger: 220 38 38;
+  --danger-foreground: 255 255 255;
+  --warning: 217 119 6;
+  --warning-foreground: 255 255 255;
+  --otp: 234 88 12;
+  --otp-foreground: 255 255 255;
+  --muted: 228 228 231;
+  --muted-foreground: 82 82 91;
+  --console-bg: 246 248 250;
+  --console-fg: 36 41 47;
+  --console-row-hover: 0 0 0 / 0.06;
 }
 
 * {
