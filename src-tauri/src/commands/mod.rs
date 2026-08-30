@@ -1,6 +1,7 @@
 use crate::core::decoder;
 use crate::core::models::*;
 use crate::core::sim_directory::SimDirectory;
+use std::collections::{HashMap, HashSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -40,9 +41,19 @@ impl AppStateInner {
 
     /// True while any operation owns the serial ports. Every port-touching
     /// command checks this, so the list must stay in one place.
+    ///
+    /// `live_stop` is part of the answer even though `live_on` is already here:
+    /// `stop_live` clears `live_on` the instant the user asks, but the live
+    /// workers keep their ports open until the supervisor has joined them — and a
+    /// worker parked in `AT+CMGL=4` holds its port for up to 15 s more. Reporting
+    /// idle during that window let scan / SIM numbers / delete / SIM cleanup
+    /// through the gate (including the unattended 10-minute cleanup timer), and
+    /// every port came back "device or resource busy". The flag means "the ports
+    /// are held", not "an operation is nominally running".
     fn port_busy(&self) -> bool {
         self.scan_busy
             || self.live_on
+            || self.live_stop.is_some()
             || self.ussd_busy
             || self.delete_busy
             || self.cleanup_busy
@@ -646,7 +657,7 @@ fn ussd_one_port(
     }
     if let Some(ref n) = num {
         found.fetch_add(1, Ordering::Relaxed);
-        log::info!("USSD {} -> {}", port, n);
+        log::info!("USSD {} -> {}", port, crate::logging::mask_number(n));
         let ports_snapshot;
         {
             let mut st = lock_state(state);
@@ -660,7 +671,7 @@ fn ussd_one_port(
                 None => log::warn!(
                     "{}: number {} not saved — the modem would not report its ICCID",
                     port,
-                    n
+                    crate::logging::mask_number(n)
                 ),
             }
             if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
@@ -733,7 +744,13 @@ pub fn start_live(
     let retention = retention_from_hours(retention_hours);
     let ports = {
         let mut st = lock_state(&state);
-        if st.live_stop.is_some() || st.port_busy() {
+        // `live_stop` still set with `live_on` already cleared is the shutdown
+        // window: port_busy() covers it now, but a bare "Busy" right after the
+        // user pressed Stop reads as a bug rather than as "wait a moment".
+        if st.live_stop.is_some() && !st.live_on {
+            return Err("Live mode is still stopping — try again in a moment.".into());
+        }
+        if st.port_busy() {
             return Err("Busy".into());
         }
         for p in &mut st.ports {
@@ -893,7 +910,16 @@ pub fn start_live(
                     } => {
                         let mut st = lock_state(&st2);
                         let otp = crate::core::decoder::extract_otp(&message.text);
-                        log::info!("NEW SMS on {}: from={:?} OTP={:?}", port, message.from, otp);
+                        // Sender masked and the OTP reduced to "found (n digits)":
+                        // the log file rotates on size only and the ring buffer is
+                        // shown verbatim on the Logs page, so a code written here
+                        // would outlive the inbox retention window.
+                        log::info!(
+                            "NEW SMS on {}: from={} otp={}",
+                            port,
+                            crate::logging::mask_number(&message.from),
+                            crate::logging::otp_summary(otp.as_deref())
+                        );
 
                         // A completed concatenated message often supersedes a
                         // partial fragment row already shown from the initial
@@ -1018,6 +1044,45 @@ pub fn stop_live(app: tauri::AppHandle, state: tauri::State<'_, SharedState>) {
     );
 }
 
+/// SIM slots one inbox row occupies. An assembled long SMS spans one slot per
+/// fragment; a single-part message only has `index`.
+fn message_slots(m: &SmsMessage) -> Vec<i32> {
+    let mut idxs = m.part_indices.clone();
+    if idxs.is_empty() || idxs.len() == 1 && !idxs.contains(&m.index) {
+        idxs = vec![m.index];
+    }
+    idxs
+}
+
+/// Which requested rows may actually leave the inbox.
+///
+/// `slots` maps each requested message id to the port and SIM slots it occupies
+/// (captured before the delete, since the row is what we are deciding about);
+/// `freed` is what each port's modem *confirmed* is gone, i.e. `OpResult.indices`
+/// from `confirm_delete`, which re-reads the SIM rather than trusting per-command
+/// replies. Everything else stays.
+///
+/// A row is removed only when every slot it occupies is confirmed gone: a
+/// concatenated SMS holds one slot per fragment, and dropping the row while
+/// fragments are still on the card made them come back at the next scan or live
+/// reconnect looking like duplicates — the status line said "Deleted 2/6" while
+/// all six rows vanished.
+fn confirmed_removals(
+    slots: &HashMap<u64, (String, Vec<i32>)>,
+    freed: &HashMap<String, HashSet<i32>>,
+) -> HashSet<u64> {
+    let none = HashSet::new();
+    slots
+        .iter()
+        .filter(|(_, (port, idxs))| {
+            let gone = freed.get(port).unwrap_or(&none);
+            // No slots recorded means no evidence at all — keep the row.
+            !idxs.is_empty() && idxs.iter().all(|i| gone.contains(i))
+        })
+        .map(|(id, _)| *id)
+        .collect()
+}
+
 #[tauri::command]
 pub fn delete_selected(
     app: tauri::AppHandle,
@@ -1030,24 +1095,25 @@ pub fn delete_selected(
             return Err("Busy".into());
         }
     }
+    // Slots per port to hand the modems, plus the per-id slot map the removal
+    // decision needs once the modems have answered.
     let to_delete: Vec<(String, Vec<i32>)>;
+    let slots: HashMap<u64, (String, Vec<i32>)>;
     {
         let st = lock_state(&state);
-        let mut map: std::collections::HashMap<String, Vec<i32>> = std::collections::HashMap::new();
-        for id in &ids {
-            if let Some(item) = st.messages.iter().find(|m| m.id == *id) {
-                // Assembled long SMS span multiple SIM indices: remove them all.
-                let mut idxs = item.message.part_indices.clone();
-                if idxs.is_empty()
-                    || idxs.len() == 1 && !item.message.part_indices.contains(&item.message.index)
-                {
-                    idxs = vec![item.message.index];
-                }
-                map.entry(item.message.port.clone())
-                    .or_default()
-                    .extend(idxs);
-            }
+        let requested: HashSet<u64> = ids.iter().copied().collect();
+        let mut map: HashMap<String, Vec<i32>> = HashMap::new();
+        let mut per_id: HashMap<u64, (String, Vec<i32>)> = HashMap::new();
+        // One pass over the inbox against a set, rather than a linear find per
+        // requested id — a bulk delete of a full inbox was quadratic.
+        for item in st.messages.iter().filter(|m| requested.contains(&m.id)) {
+            let idxs = message_slots(&item.message);
+            map.entry(item.message.port.clone())
+                .or_default()
+                .extend(idxs.iter().copied());
+            per_id.insert(item.id, (item.message.port.clone(), idxs));
         }
+        slots = per_id;
         to_delete = map
             .into_iter()
             .map(|(port, mut idxs)| {
@@ -1077,13 +1143,21 @@ pub fn delete_selected(
         let mut fail = 0usize;
         let mut wanted = 0usize;
         let mut gone = 0usize;
+        // SIM slots the modems confirmed are gone, per port. This — not the
+        // request — decides which rows leave the inbox.
+        let mut freed: HashMap<String, HashSet<i32>> = HashMap::new();
         // A panic mid-delete would otherwise leave delete_busy set and the
-        // toolbar spinner stuck; the flag is cleared below either way.
+        // toolbar spinner stuck; the flag is cleared below either way. Whatever
+        // was confirmed before the panic still counts.
         let counted = catch_unwind(AssertUnwindSafe(|| {
             for (port, indices) in &to_delete {
                 let r = crate::core::modem::delete_messages(port, Some(indices.as_slice()));
                 wanted += indices.len();
                 gone += r.deleted;
+                freed
+                    .entry(port.clone())
+                    .or_default()
+                    .extend(r.indices.iter().copied());
                 if r.ok {
                     log::info!("Deleted {} msg(s) from {}", r.deleted, port);
                 } else {
@@ -1099,31 +1173,45 @@ pub fn delete_selected(
         if counted.is_err() {
             log::error!("Delete worker panicked");
         }
+        let removed = confirmed_removals(&slots, &freed);
+        let kept = slots.len().saturating_sub(removed.len());
         let text;
         {
             let mut st = lock_state(&state_clone);
             st.delete_busy = false;
-            st.messages.retain(|m| !ids.contains(&m.id));
+            st.messages.retain(|m| !removed.contains(&m.id));
             // Count SIM slots, not ports. One port can free some of its indices
             // and leave others behind, and a "1 ok" per port would hide it. The
             // slot count can exceed the message count: a concatenated SMS
-            // occupies one slot per part.
-            st.status_text = if fail == 0 && gone >= wanted {
+            // occupies one slot per part. Rows whose slots survived stay in the
+            // list, so the message count is reported separately.
+            st.status_text = if fail == 0 && kept == 0 && gone >= wanted {
                 format!(
                     "Deleted {} message(s) ({} SIM slot(s) freed)",
-                    ids.len(),
+                    removed.len(),
                     gone
                 )
             } else {
                 format!(
-                    "Deleted {}/{} SIM slot(s)  |  FAILED: {} port(s)",
-                    gone, wanted, fail
+                    "Deleted {}/{} SIM slot(s)  |  {} message(s) removed, {} kept  |  FAILED: {} port(s)",
+                    gone,
+                    wanted,
+                    removed.len(),
+                    kept,
+                    fail
                 )
             };
             log::info!("{}", st.status_text);
             text = st.status_text.clone();
         }
-        let _ = app2.emit("messages:removed", &serde_json::json!({ "ids": &ids }));
+        // Only the ids that really went away — the frontend drops exactly these
+        // rows, so anything extra here is the data loss we are preventing.
+        let mut removed_ids: Vec<u64> = removed.into_iter().collect();
+        removed_ids.sort_unstable();
+        let _ = app2.emit(
+            "messages:removed",
+            &serde_json::json!({ "ids": removed_ids }),
+        );
         let _ = app2.emit("delete:done", &serde_json::json!({}));
         let _ = app2.emit("status:update", &serde_json::json!({ "text": text }));
     });
@@ -1424,9 +1512,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn port_busy_covers_every_operation_that_owns_a_port() {
-        let idle = || AppStateInner {
+    /// A state where nothing owns a port.
+    fn idle_state() -> AppStateInner {
+        AppStateInner {
             sim_dir: SimDirectory::default(),
             next_id: 1,
             ports: Vec::new(),
@@ -1444,8 +1532,12 @@ mod tests {
             detect_busy: false,
             status_text: String::new(),
             failed_notes: Vec::new(),
-        };
-        assert!(!idle().port_busy());
+        }
+    }
+
+    #[test]
+    fn port_busy_covers_every_operation_that_owns_a_port() {
+        assert!(!idle_state().port_busy());
 
         let setters: [fn(&mut AppStateInner); 6] = [
             |st| st.scan_busy = true,
@@ -1456,10 +1548,24 @@ mod tests {
             |st| st.detect_busy = true,
         ];
         for set in setters {
-            let mut st = idle();
+            let mut st = idle_state();
             set(&mut st);
             assert!(st.port_busy());
         }
+    }
+
+    #[test]
+    fn port_busy_still_holds_while_live_workers_wind_down() {
+        // stop_live clears live_on immediately, but the workers own their ports
+        // until the supervisor joins them (up to 15 s in AT+CMGL=4). Every busy
+        // boolean is false here and the ports are still held.
+        let mut st = idle_state();
+        assert!(!st.port_busy());
+        st.live_stop = Some(Arc::new(AtomicBool::new(true)));
+        assert!(st.port_busy());
+        // Only the supervisor's final clear releases the gate.
+        st.live_stop = None;
+        assert!(!st.port_busy());
     }
 
     fn live_state(ready: usize, offline: usize) -> AppStateInner {
@@ -1506,5 +1612,98 @@ mod tests {
     #[test]
     fn live_status_is_clean_when_every_port_is_ready() {
         assert_eq!(live_status(&live_state(3, 0), 3), "Live 3/3 ready");
+    }
+
+    fn row(id: u64, port: &str, index: i32, parts: &[i32]) -> SmsItem {
+        SmsItem {
+            id,
+            message: SmsMessage {
+                port: port.into(),
+                index,
+                from: "MYTEL".into(),
+                received: chrono::Utc::now(),
+                status: "REC READ".into(),
+                text: "x".into(),
+                part_indices: parts.to_vec(),
+            },
+            otp: None,
+            is_new: false,
+        }
+    }
+
+    fn slot_map(rows: &[SmsItem]) -> HashMap<u64, (String, Vec<i32>)> {
+        rows.iter()
+            .map(|r| (r.id, (r.message.port.clone(), message_slots(&r.message))))
+            .collect()
+    }
+
+    fn freed(entries: &[(&str, &[i32])]) -> HashMap<String, HashSet<i32>> {
+        entries
+            .iter()
+            .map(|(port, idxs)| (port.to_string(), idxs.iter().copied().collect()))
+            .collect()
+    }
+
+    #[test]
+    fn single_part_slots_fall_back_to_the_row_index() {
+        assert_eq!(message_slots(&row(1, "ttyUSB0", 4, &[]).message), vec![4]);
+        assert_eq!(
+            message_slots(&row(1, "ttyUSB0", 4, &[2, 3, 4]).message),
+            vec![2, 3, 4]
+        );
+    }
+
+    #[test]
+    fn full_success_removes_every_requested_row() {
+        let rows = vec![row(1, "ttyUSB0", 1, &[]), row(2, "ttyUSB0", 2, &[])];
+        let removed = confirmed_removals(&slot_map(&rows), &freed(&[("ttyUSB0", &[1, 2])]));
+        assert_eq!(removed, HashSet::from([1, 2]));
+    }
+
+    #[test]
+    fn partial_failure_removes_only_the_confirmed_rows() {
+        // The SIM refused 4 of 6 slots. The rows behind those slots have to stay,
+        // or they reappear at the next scan looking like duplicates.
+        let rows = vec![
+            row(1, "ttyUSB0", 1, &[]),
+            row(2, "ttyUSB0", 2, &[]),
+            row(3, "ttyUSB0", 3, &[]),
+            row(4, "ttyUSB1", 4, &[]),
+        ];
+        let removed = confirmed_removals(&slot_map(&rows), &freed(&[("ttyUSB0", &[1, 3])]));
+        assert_eq!(removed, HashSet::from([1, 3]));
+    }
+
+    #[test]
+    fn total_failure_removes_nothing() {
+        let rows = vec![row(1, "ttyUSB0", 1, &[]), row(2, "ttyUSB1", 2, &[])];
+        assert!(confirmed_removals(&slot_map(&rows), &HashMap::new()).is_empty());
+        // A port that answered but confirmed no slot is the same story.
+        assert!(
+            confirmed_removals(&slot_map(&rows), &freed(&[("ttyUSB0", &[])])).is_empty()
+        );
+    }
+
+    #[test]
+    fn a_concat_row_stays_until_every_fragment_is_confirmed_gone() {
+        let rows = vec![row(9, "ttyUSB0", 3, &[3, 4, 5])];
+        // Two of three fragments freed: the message is still readable from the
+        // SIM, so the row must not disappear.
+        assert!(confirmed_removals(&slot_map(&rows), &freed(&[("ttyUSB0", &[3, 4])])).is_empty());
+        assert_eq!(
+            confirmed_removals(&slot_map(&rows), &freed(&[("ttyUSB0", &[3, 4, 5])])),
+            HashSet::from([9])
+        );
+    }
+
+    #[test]
+    fn slots_are_matched_per_port_not_globally() {
+        // Same slot numbers on two sticks: freeing index 1 on ttyUSB0 says
+        // nothing about index 1 on ttyUSB1.
+        let rows = vec![row(1, "ttyUSB0", 1, &[]), row(2, "ttyUSB1", 1, &[])];
+        assert_eq!(
+            confirmed_removals(&slot_map(&rows), &freed(&[("ttyUSB0", &[1])])),
+            HashSet::from([1])
+        );
     }
 }
