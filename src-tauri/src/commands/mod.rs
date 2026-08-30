@@ -810,11 +810,18 @@ pub fn start_live(
                         let _ = app2.emit("sms:ready", &serde_json::json!({ "port": port }));
                     }
                     crate::core::live::LiveEvent::Offline { port, error } => {
+                        // Same rule as the scan and USSD paths: only the probe's
+                        // own silence means "no modem". A host-side I/O failure
+                        // proves nothing about the slot, and marking it empty
+                        // would style a working stick as an unused one.
+                        let silent = error == crate::core::modem::NOT_RESPONDING;
                         let (text, ports_snapshot);
                         {
                             let mut st = lock_state(&st2);
                             if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
-                                p.alive = Some(false);
+                                if silent {
+                                    p.alive = Some(false);
+                                }
                                 p.live_ready = false;
                                 p.live_error = Some(error.clone());
                             }

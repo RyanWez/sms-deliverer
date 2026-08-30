@@ -56,7 +56,7 @@ By leveraging **Tauri v2** and **Rust** on the backend paired with **Svelte 5** 
 
 ## ✨ Key Features
 
-- **Modem Detection Before Work**: A one-shot `AT` liveness probe (800 ms timeout, two attempts) identifies which serial ports actually have a modem behind them. A SIM bank publishes one serial device per channel whether or not a SIM is inserted, so on a partly-filled bank this is the difference between a scan that finishes in seconds and one that spends its full timeout chain on every empty slot. Ports that do not answer are deselected automatically and skipped by scan, live mode, USSD and SIM cleanup.
+- **Modem Detection Before Work**: A one-shot `AT` liveness probe (800 ms timeout, two attempts) identifies which serial ports actually have a modem behind them. A SIM bank publishes one serial device per channel whether or not a SIM is inserted, so on a partly-filled bank this is the difference between a scan that finishes in seconds and one that spends its full timeout chain on every empty slot. Ports that do not answer are deselected automatically and skipped by scan, live mode, USSD and SIM cleanup. Ports are opened with DTR/RTS asserted so both platforms present the same lines to the modem. A probe cannot wait out a bank that is still powering up, so re-run Detect a minute after connecting it rather than treating the first result as final.
 - **Concurrent Multi-Port Scanning**: Parallel asynchronous workers read SMS across all connected serial ports (`COM1..N` on Windows, `/dev/ttyUSB*` / `/dev/ttyACM*` on Linux) simultaneously without UI freezing.
 - **Live SMS Monitoring Mode**: Real-time asynchronous polling and unsolicited event listener (+CMTI notifications) that triggers instant desktop alerts and sounds on incoming SMS. A port is reported `LIVE` only after a modem answers; empty slots are labelled `NO MODEM` and excluded from the ready total instead of showing green.
 - **Advanced SMS Decoding & Concatenation**:
@@ -288,10 +288,28 @@ device node existing says nothing about a modem being present:
      state is still worth talking to. No answer after both attempts and the port
      is reported `Modem not responding` immediately, in about a second, instead
      of running the sequences below against silence.
+   - A failed write is reported as `Serial I/O failed: …`, never as
+     `Modem not responding`. Windows applies the port timeout to writes as well
+     as reads, so a stalled bridge sends nothing; blaming the modem for not
+     answering a command that never left the host sends you looking for a missing
+     SIM. Only the probe's own silence marks a slot as empty.
+   - Every port is opened with DTR and RTS asserted, so that both platforms
+     present the same lines to the modem. Linux raises them in the USB-serial
+     driver, Windows drives them low until told otherwise, and a module whose
+     stored profile has hardware flow control on (`AT&K3`) reads low RTS as "the
+     host cannot accept data" and withholds every reply. No bank here has been
+     shown to need this — it is hardening against a platform difference, not a fix
+     for a diagnosed fault.
    - `AT+CCID` (then `AT+ICCID`, `AT^ICCID` for vendors that spell it their own
      way): identifies the card while the port is already open. A slot that stays
      silent is recorded as holding no card, so its previous tenant's number stops
      being displayed there.
+   - **The probe cannot wait out a bank that is still powering up.** A module that
+     has not finished booting stays silent for minutes; on Linux its `/dev/ttyUSB*`
+     node may not exist yet at all, while on Windows the `COM` port persists in the
+     registry and opens cleanly without anything answering behind it. Give the bank
+     a minute after connecting it and run Detect Modems again rather than reading
+     the first result as the final one.
 
 1. **Initialization**:
    - `ATE0`: Disable command echo.

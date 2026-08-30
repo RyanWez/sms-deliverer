@@ -37,6 +37,9 @@ pub(crate) struct FakeTransport {
     pos: usize,
     bytes_per_read: usize,
     fail_reads: bool,
+    /// Report every write as having sent nothing, the way Windows `WriteFile`
+    /// behaves when the port's write timeout expires against a stalled bridge.
+    fail_writes: bool,
     /// Withhold the script until this many commands have been written. Models a
     /// modem that swallows the first `AT` while it finishes booting.
     reply_after_writes: usize,
@@ -51,6 +54,7 @@ impl FakeTransport {
             pos: 0,
             bytes_per_read,
             fail_reads: false,
+            fail_writes: false,
             reply_after_writes: 0,
             writes: 0,
         }
@@ -68,6 +72,16 @@ impl FakeTransport {
         Self {
             fail_reads: true,
             ..Self::new("", 1024)
+        }
+    }
+
+    /// Reads fine, but nothing can be sent. The script would answer if the
+    /// command ever reached the modem, so a probe that reports this port alive is
+    /// reporting a reply to a command it never managed to write.
+    pub(crate) fn write_failing(script: &str) -> Self {
+        Self {
+            fail_writes: true,
+            ..Self::new(script, 1024)
         }
     }
 }
@@ -92,6 +106,9 @@ impl Transport for FakeTransport {
     }
 
     fn write_all(&mut self, _data: &[u8]) -> io::Result<()> {
+        if self.fail_writes {
+            return Err(io::Error::new(io::ErrorKind::WriteZero, "write timed out"));
+        }
         self.writes += 1;
         Ok(())
     }
@@ -181,9 +198,20 @@ impl AtChannel {
     /// Sends a command and returns the accumulated response text.
     /// Completes on the final result code (OK/ERROR/+CXE ERROR) or on timeout.
     /// Unsolicited lines are routed to the notification queue, never mixed in.
+    ///
+    /// A failed write kills the channel instead of being ignored. Windows applies
+    /// the port timeout to writes as well as reads, so a stalled bridge makes
+    /// `WriteFile` come back having sent nothing; swallowing that meant the
+    /// command never left the host and the caller still spent the full read
+    /// timeout before blaming the modem for not answering.
     pub fn send(&mut self, cmd: &str, timeout_ms: u64) -> String {
         log::debug!(">> {}", cmd);
-        let _ = self.t.write_all(format!("{}\r", cmd).as_bytes());
+        if let Err(e) = self.t.write_all(format!("{}\r", cmd).as_bytes()) {
+            self.dead = true;
+            self.dead_reason = Some(e.to_string());
+            log::warn!("{}: serial write failed: {}", self.name, e);
+            return String::new();
+        }
         self.response.clear();
         self.partial.clear();
         self.done = false;
@@ -347,6 +375,28 @@ mod tests {
         assert_eq!(resp, "");
         assert!(ch.is_dead());
         assert_eq!(ch.wait_notification(50), None);
+    }
+
+    #[test]
+    fn failed_write_marks_channel_dead_without_waiting_for_a_reply() {
+        // The script would answer, so returning "" proves we never fell through to
+        // the read loop: the command did not leave the host, and reporting that as
+        // a silent modem is what made a stalled Windows bridge look like an empty
+        // SIM slot.
+        let mut ch = AtChannel::with_transport(
+            "COM1",
+            Box::new(FakeTransport::write_failing("\r\nOK\r\n")),
+        );
+        let start = Instant::now();
+        let resp = ch.send("AT", 5000);
+        assert_eq!(resp, "");
+        assert!(ch.is_dead());
+        assert!(ch.death_reason().is_some());
+        assert!(
+            start.elapsed() < Duration::from_millis(500),
+            "send waited on a command it never wrote: {:?}",
+            start.elapsed()
+        );
     }
 
     #[test]

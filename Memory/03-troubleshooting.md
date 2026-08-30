@@ -1,4 +1,4 @@
-# 03 — Troubleshooting Casebook (တကယ်ဖြစ်ခဲ့တဲ့ ၁၂ ခု)
+# 03 — Troubleshooting Casebook (တကယ်ဖြစ်ခဲ့တဲ့ ၁၃ ခု)
 
 > Format: Symptom → Root Cause → Fix → Preventive Rule. Debug ခင် ဒီထဲ အရင်ရှာပါ။
 
@@ -158,6 +158,40 @@
   (`stable_id_resolves_a_by_path_symlink` က tmpdir symlink နဲ့ စစ်တယ်)။ Cache key ရွေးတဲ့အခါ
   **hardware ကိုယ်တိုင် ပြောပြတဲ့ identity** ကို ရွေး (ICCID)၊ OS က ပေးတဲ့ နာမည် မဟုတ်။
   Legacy fallback key ဆိုတာ silent data corruption ရဲ့ လမ်း — migrate မရရင် ဖယ်ပစ်တာ ပိုကောင်း။
+
+## 1️⃣3️⃣ Windows မှာ modem 32/64 ပဲ တွေ့တာ — bank က boot မပြီးသေးတာ (misdiagnosis case)
+
+- **Symptom:** Windows session (18:00–18:08) မှာ `Modem not responding (no reply to AT)` 32 ခု၊
+  `Found: 31/64` → `34/64`။ Linux session (18:47–18:52) မှာ `63/64` + number 62။
+  Windows log မှာ **`Cannot open` တစ်ခုမှ မရှိ** — port အားလုံး ပွင့်ပြီး တစ်ဝက်က `AT` ကို မပြန်။
+  မပြန်တဲ့ set က ၈ မိနစ်လုံး ထပ်တူ (COM3–18, COM26–29, COM39–50)
+- **ကျွန်တော် ပထမ လွဲမှားခဲ့တဲ့ conclusion:** "ထပ်တူ set + ၁၀၀% open success" ကို ကြည့်ပြီး
+  static config fault (DTR/RTS low) လို့ ဖြေခဲ့တယ်။ `serialport` crate ရဲ့ platform asymmetry က
+  တကယ် ရှိတယ် (အောက်တွင်) ဆိုတော့ ပိုပြီး ယုံလောက်စရာ ဖြစ်နေတယ်
+- **တကယ့် Root Cause:** bank က **power-up/enumeration မပြီးသေးတာ**။ သက်သေ ၄ ချက်:
+  1. **တူတူ Windows machine၊ တူတူ version၊ ၅၀ မိနစ် အကြာ session (18:56–19:24) မှာ
+     `Modems OK: 62/64`, `Found: 57/64`, `Live ready 63`** — code မပြောင်းဘဲ အလိုလို ကောင်းသွားတာ
+  2. 18:00 session ထဲမှာ COM10 က 18:03၊ COM18 က 18:04 မှာ **အလိုလို ပြန်လာတယ်** (staggered boot)
+  3. Linux log မှာ node တွေ တဆင့်ချင်း ပေါ်တာ တိုက်ရိုက် တွေ့တယ်: 52 port → 32 node missing → 64
+  4. DTR/RTS low ဆိုရင် ငါတို့ DCB က session တိုင်း တူတူ ဆိုတော့ **deterministic ပျက်ရမယ်** —
+     မပျက်ဘူး။ ဒါက theory ကို ဖြတ်ပစ်တဲ့ အချက်
+- **Windows က Linux ထက် ဆိုးပုံရတဲ့ အကြောင်း:** Linux မှာ module မပြင်ဆင်ရသေးရင် `/dev/ttyUSB*`
+  node ကို မရှိ → `Cannot open` လို့ ရိုးသားစွာ ပြောတယ်။ Windows မှာ `COM` port က registry ထဲ
+  အမြဲ ရှိတာကြောင့် ပွင့်တယ်၊ ဘာမှ မပြန်ဘူး → "modem မရှိ" လို့ မှားထင်စေတယ်
+- **Fix (hardening ပဲ၊ diagnosed fault အတွက် မဟုတ်):** `open_port` မှာ `.flow_control(None)`
+  explicit + `raise_modem_lines()` (DTR/RTS assert; Linux မှာ no-op)။ `at.rs::send` က write error
+  ကို channel dead မှတ်ပြီး `Serial I/O failed: …` လို့ ပြောတယ် — `NOT_RESPONDING` နဲ့ ခွဲထားလို့
+  scan/USSD/live သုံးခုလုံး alive=false မမှတ်တော့ဘူး (`windows/com.rs` က port timeout ကို
+  `WriteTotalTimeoutConstant` အဖြစ်လည်း ထည့်လို့ TX stall မှာ AT မထွက်ဘဲ "modem မပြန်ဘူး" လို့ လိမ်တာ)။
+  **`AT&K0` nudge ကို ထည့်ခဲ့ပြီး ပြန်ဖျက်တယ်** — မှားတဲ့ theory အပေါ် တည်ထားတာ၊ ပြီးတော့ boot
+  မပြီးသေးတဲ့ module ပေါ် flow control ကို ပိတ်ပစ်တာက PDU dump ကြီးတွေမှာ FIFO overrun ဖြစ်နိုင်တယ်
+- **Rule ၁:** **ကိုယ်တိုင် ပြန်ကောင်းသွားတဲ့ fault ဟာ static config fault မဟုတ်ဘူး။**
+  Root cause ဖြေတဲ့အခါ "ဒီ theory မှန်ရင် ဘယ်လို ပျက်ရမလဲ" ကို အရင် စစ်ပါ — deterministic
+  ဖြစ်ရမယ့် theory က intermittent symptom ကို မဖြေဆိုနိုင်ဘူး
+- **Rule ၂:** Log ဖိုင် အသစ်ဆုံးကို **အရင်** ရှာပါ။ ကျွန်တော် 18:00 (ဆိုးတာ) နဲ့ Linux ကို
+  နှိုင်းယှဉ်ခဲ့တယ်၊ 18:56 Windows log က တစ်ခုတည်း ဖြေရှင်းပေးမယ့် ဟာ ဖြစ်ပေမဲ့ မသုံးခဲ့ဘူး
+- **Rule ၃:** "device မပြန်ဘူး" နဲ့ "ငါ ပို့လို့ မရဘူး" ကို ဘယ်တော့မှ တစ်ခုတည်း error အဖြစ်
+  မဖေါ်ပါ — ပေါင်းထားတာက host bug ကို SIM ပြဿနာလို့ လိုက်ရှာစေတယ်
 
 ## Bonus UX Notes
 

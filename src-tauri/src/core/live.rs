@@ -144,13 +144,11 @@ fn run_live_inner<F>(
         if !crate::core::modem::probe_channel(&mut ch) {
             if !offline_reported {
                 offline_reported = true;
-                log::warn!(
-                    "{}: no modem answering — live monitoring idle for this port",
-                    port_name
-                );
+                let why = crate::core::modem::probe_failure_reason(&ch);
+                log::warn!("{}: {} — live monitoring idle for this port", port_name, why);
                 on_event(LiveEvent::Offline {
                     port: port_name.to_string(),
-                    error: crate::core::modem::NOT_RESPONDING.into(),
+                    error: why,
                 });
             }
             if !sleep_stop_aware(stop, OFFLINE_RETRY) {

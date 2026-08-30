@@ -20,6 +20,11 @@ pub const PROBE_TIMEOUT_MS: u64 = 800;
 
 /// Probe attempts before declaring a port dead. Two, because the first `AT`
 /// after opening can be swallowed while the modem drains its own boot chatter.
+///
+/// This does not stretch to cover a bank that is still powering up: a stick whose
+/// module has not finished booting stays silent for minutes, not milliseconds, and
+/// no probe budget worth paying on 64 ports will wait that out. Re-running Detect
+/// once the bank has settled is the answer, not a longer timeout here.
 pub const PROBE_ATTEMPTS: usize = 2;
 
 pub type Port = Box<dyn serialport::SerialPort>;
@@ -122,10 +127,15 @@ pub fn open_port(name: &str) -> Result<Port, String> {
         .data_bits(serialport::DataBits::Eight)
         .parity(serialport::Parity::None)
         .stop_bits(serialport::StopBits::One)
+        // Stated rather than left to the default, because the two platforms take
+        // it in opposite directions: on POSIX it only clears `CRTSCTS`, on
+        // Windows it also drives RTS low for the lifetime of the handle.
+        .flow_control(serialport::FlowControl::None)
         .timeout(Duration::from_millis(100))
         .open()
     {
-        Ok(sp) => {
+        Ok(mut sp) => {
+            raise_modem_lines(&mut sp, name);
             log::debug!("Port opened: {}", name);
             Ok(sp)
         }
@@ -134,6 +144,34 @@ pub fn open_port(name: &str) -> Result<Port, String> {
             log::warn!("{}", msg);
             Err(msg)
         }
+    }
+}
+
+/// Assert DTR and RTS on a freshly opened port.
+///
+/// Linux raises both in the USB-serial driver when the tty is opened; Windows
+/// does the opposite — `SetCommState` is given `fDtrControl = DTR_CONTROL_DISABLE`
+/// and, for `FlowControl::None`, `fRtsControl = RTS_CONTROL_DISABLE`, so both
+/// lines sit low until something explicitly raises them. A module whose stored
+/// profile has hardware flow control on (`AT&K3`) reads low RTS as "the host
+/// cannot accept data" and withholds every reply; `AT&D2` treats low DTR as
+/// hang-up. Either way the port opens, the command goes out and nothing comes
+/// back, which is indistinguishable from an empty slot.
+///
+/// This is hardening, not a fix for a diagnosed fault: no bank in this
+/// deployment has been shown to need it, and on Linux both calls are no-ops
+/// because the driver has already raised the lines. It is here so that the two
+/// platforms present the same electrical state to the modem, since a difference
+/// nobody can see is the expensive kind.
+///
+/// Failures are logged and swallowed: a bridge that does not expose these lines
+/// is not a reason to refuse the port.
+fn raise_modem_lines(sp: &mut Port, name: &str) {
+    if let Err(e) = sp.write_data_terminal_ready(true) {
+        log::debug!("{}: could not assert DTR: {}", name, e);
+    }
+    if let Err(e) = sp.write_request_to_send(true) {
+        log::debug!("{}: could not assert RTS: {}", name, e);
     }
 }
 
@@ -204,6 +242,31 @@ fn read_iccid(ch: &mut at::AtChannel) -> Option<String> {
     None
 }
 
+/// What to tell the operator when a probe found nothing.
+///
+/// Silence is an empty slot, and the frontend keys its "empty slot" styling off
+/// [`NOT_RESPONDING`] verbatim, so that string has to survive untouched. A dead
+/// channel is a different fault — the host's own read or write failed — and
+/// filing it under "no modem" is what sent us hunting for missing SIMs when the
+/// command had never left the machine.
+pub fn probe_failure_reason(ch: &at::AtChannel) -> String {
+    match ch.death_reason() {
+        Some(reason) => format!("Serial I/O failed: {reason}"),
+        None => NOT_RESPONDING.to_string(),
+    }
+}
+
+/// The same reason, logged. Silence earns the extra "(no reply to AT)" note,
+/// which belongs in a log line and not in the UI.
+fn probe_failure(port_name: &str, ch: &at::AtChannel) -> String {
+    let msg = probe_failure_reason(ch);
+    match ch.death_reason() {
+        Some(_) => log::warn!("{}: {}", port_name, msg),
+        None => log::warn!("{}: {} (no reply to AT)", port_name, msg),
+    }
+    msg
+}
+
 pub fn read_port(port_name: &str) -> ReadResult {
     let mut ch = match at::AtChannel::open(port_name) {
         Ok(ch) => ch,
@@ -216,11 +279,10 @@ pub fn read_port(port_name: &str) -> ReadResult {
         }
     };
     if !probe_channel(&mut ch) {
-        log::warn!("{}: {} (no reply to AT)", port_name, NOT_RESPONDING);
         return ReadResult {
             ok: false,
             messages: vec![],
-            error: Some(NOT_RESPONDING.into()),
+            error: Some(probe_failure(port_name, &ch)),
         };
     }
 
@@ -401,10 +463,9 @@ pub fn delete_messages(port_name: &str, indices: Option<&[i32]>) -> OpResult {
     };
 
     if !probe_channel(&mut ch) {
-        log::warn!("{}: {} (no reply to AT)", port_name, NOT_RESPONDING);
         return OpResult {
             ok: false,
-            error: Some(NOT_RESPONDING.into()),
+            error: Some(probe_failure(port_name, &ch)),
             deleted: 0,
             indices: vec![],
         };
@@ -476,8 +537,8 @@ pub fn get_sim_number(port_name: &str) -> SimIdentity {
     // them first would hand every empty slot a 6 s bill before we even learn
     // there is nothing there.
     if !probe_channel(&mut ch) {
-        log::warn!("{}: {} (no reply to AT)", port_name, NOT_RESPONDING);
-        return SimIdentity::failed(None, NOT_RESPONDING);
+        let why = probe_failure(port_name, &ch);
+        return SimIdentity::failed(None, why);
     }
 
     ch.send("ATE0", 3000);
@@ -895,6 +956,18 @@ mod tests {
             Box::new(FakeTransport::silent_for_writes("\r\nOK\r\n", 2)),
         );
         assert!(probe_channel_with(&mut ch, 50, 2));
+    }
+
+    #[test]
+    fn probe_reports_an_unwritable_port_as_io_failure_not_an_empty_slot() {
+        let mut ch = AtChannel::with_transport(
+            "COM31",
+            Box::new(crate::core::at::FakeTransport::write_failing("\r\nOK\r\n")),
+        );
+        assert!(!probe_channel_with(&mut ch, 50, 2));
+        let why = probe_failure("COM31", &ch);
+        assert!(why.starts_with("Serial I/O failed:"), "got {why:?}");
+        assert_ne!(why, NOT_RESPONDING);
     }
 
     #[test]
