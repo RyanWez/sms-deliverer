@@ -61,18 +61,31 @@
   Releases/tags ဘယ်ဟာတွေကျန်လဲ: `gh api repos/<o>/<r>/releases` , `git ls-remote --tags origin`
 - **Rule:** Full purge (delete releases → delete tags w/ branch cleanup) လုပ်ပြီး run history stale ဖြစ်နိုင် — panic မလုပ်၊ API/state machine verify ဦး။
 
-## 8️⃣ Release PR tests fail: `cargo test --locked` — Cargo.lock out of sync
+## 8️⃣ Release PR tests fail: `cargo test --locked` — Cargo.lock out of sync (ယခု auto-fix)
 
 - **Symptom:** PR #7 (release 1.2.0) မှာ ubuntu + windows cargo-test jobs နှစ်ခုလုံး fail —
   `error: cannot update the lock file … because --locked was passed`
 - **Root Cause:** release-please က `Cargo.toml` ရဲ့ `version` ကို bump ပေးပေမယ့် `Cargo.lock` ထဲက
   `sms-tauri` package version ကို ထိတ်လုပ်မပေးဘူး (doc 02 §2 မှာ extra-files က lock မပါ)။
-  CI က `--locked` နဲ့ run လို့ lock mismatch ကို error ပြတယ်။
-- **Fix:** release branch checkout → `cargo check` (lock regenerate) →
-  `chore: sync Cargo.lock with version X.Y.Z` commit → PR branch push → CI auto re-run → green → merge
-- **Rule:** Release PR ဖွင့်တာနဲ့ test jobs က fail ရင် log ကို အရင်ကြည့် —
-  `--locked` error ဖြစ်နေရင် lock sync commit နဲ့ fix လုပ်လို့ရတယ်၊ PR ကို close/reopen မလုပ်နဲ့။
-  (v1.2.0, 2026-08-28 မှာ verified)
+  lockfile version ကို cargo ကိုယ်တိုင်ပဲ ရေးနိုင်တယ်၊ CI က `--locked` နဲ့ run လို့ mismatch ကို error ပြတယ်။
+- **အရင် လက်နဲ့ လုပ်ခဲ့တာ (context အတွက် ကျန်ထား):** release branch checkout → `cargo check`
+  (lock regenerate) → `chore: sync Cargo.lock with version X.Y.Z` commit → PR branch push →
+  CI auto re-run → green → merge (commits `2d32e01` / `49a489a`)
+- **ယခု အလိုအလျောက် ဖြစ်တာ:** `.github/workflows/release-please.yml` ထဲ `sync-cargo-lock` job
+  ထည့်ထားပြီ။ release-please ရဲ့ `prs_created` / `pr` output ကို ကြည့်ပြီး
+  `fromJSON(...).headBranchName` branch ကို `secrets.PAT` နဲ့ checkout →
+  `cargo update --workspace --manifest-path src-tauri/Cargo.toml` →
+  `cargo metadata --locked` နဲ့ verify → `git diff --quiet -- src-tauri/Cargo.lock` က
+  ပြောင်းလဲမှု ရှိတဲ့အခါမှသာ `chore: sync Cargo.lock with version X.Y.Z` commit + push
+  (loop guard — release-please က main push တိုင်း re-run လုပ်တာမို့)။ PAT နဲ့ push လုပ်တာက
+  PR ရဲ့ checks ကို ပြန် trigger ဖြစ်စေတယ် (default `GITHUB_TOKEN` ဆိုရင် မဖြစ်ဘူး)။
+- **Rule:** Release PR မှာ `--locked` error ထပ်တွေ့ရင် lockfile ကို **လက်နဲ့ အရင် မဖြေနဲ့** —
+  (a) `sync-cargo-lock` job run ဖြစ်ခဲ့လား (release-please job က `prs_created=true` ထွက်ခဲ့လား)၊
+  (b) `secrets.PAT` သက်တမ်း/scope ကျန်နေလား — ဒီနှစ်ခုကို အရင်စစ်။ PR ကို close/reopen မလုပ်နဲ့။
+- **Unverified (2026-08-30):** ဒီ automation ကို ဒီ branch
+  (`fix/reliability-and-privacy-hardening`) မှာ ထည့်ထားတာ ဖြစ်ပြီး တကယ့် release PR တစ်ခုမှ
+  ဖြတ်သွားတာ **မရှိသေးဘူး**။ ဒါကြောင့် အထက်က manual procedure က fallback အဖြစ် ကျန်တယ်။
+  (Original manual fix က v1.2.0, 2026-08-28 မှာ verified)
 
 ## 9️⃣ Scan / Live / Get SIM အရမ်းကြာ — 64 port ရှိပေမယ့် SIM ၇ ခုပဲ
 
