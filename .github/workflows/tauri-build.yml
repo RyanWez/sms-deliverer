@@ -24,13 +24,13 @@ jobs:
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Pinned to 22 to match test.yml: the frontend scripts rely on Node 22's
       # --experimental-strip-types, so publishing on lts/* could build with a
       # Node version the tests never ran under.
       - name: setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: npm
