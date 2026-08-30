@@ -133,35 +133,76 @@ pub fn new_shared_state() -> SharedState {
     }))
 }
 
-#[tauri::command]
-pub fn refresh_ports(state: tauri::State<'_, SharedState>) -> Vec<PortInfo> {
-    let names = crate::core::modem::get_port_names();
-    let mut st = lock_state(&state);
+/// Rebuild the port list from a fresh enumeration, carrying session state over
+/// from `old`.
+///
+/// `enumerated` is `(tty name, stable path)` per port, resolved by the caller so
+/// this can be tested without a real `/dev/serial/by-path`. `live_session` says
+/// whether live mode still has workers running — the same "the ports are held"
+/// window `port_busy()` covers, not just `live_on`.
+fn merge_ports(
+    enumerated: Vec<(String, String)>,
+    old: Vec<PortInfo>,
+    sim_dir: &SimDirectory,
+    live_session: bool,
+) -> Vec<PortInfo> {
     // Carry state over by stable path, never by tty name: the name is precisely
     // what a replug reshuffles, so matching on it moves one stick's liveness and
     // card onto a different stick.
-    let old_map: std::collections::HashMap<String, PortInfo> =
-        st.ports.drain(..).map(|p| (p.path.clone(), p)).collect();
-    let ports: Vec<PortInfo> = names
+    let old_map: HashMap<String, PortInfo> =
+        old.into_iter().map(|p| (p.path.clone(), p)).collect();
+    enumerated
         .into_iter()
-        .map(|n| {
-            let path = crate::core::modem::stable_id(&n);
+        .map(|(name, path)| {
             let old = old_map.get(&path);
             let iccid = old
                 .and_then(|p| p.iccid.clone())
-                .or_else(|| st.sim_dir.iccid_of(&path));
+                .or_else(|| sim_dir.iccid_of(&path));
+            // A LIVE badge means "a worker is sitting on this port right now", so
+            // it survives a refresh only while that is still true. Re-enumerating
+            // does not touch the workers, and clearing the flag unconditionally
+            // made the badges of a running bank go dark on every Refresh — worse
+            // now that a background timer refreshes on its own.
+            //
+            // Three things have to hold, because a worker is bound to the tty
+            // *name* it was spawned with for its whole life (`live::run_live`
+            // reopens that exact name after an outage):
+            //   - a live session is still running, else there is no worker at all;
+            //   - the port is still enumerated (a vanished port has no entry here,
+            //     so when it comes back it starts from a fresh `false`);
+            //   - the name behind the stable path has not changed. If it has, the
+            //     stick was replugged and renumbered: the old worker is stuck
+            //     retrying a name that no longer exists and will never turn this
+            //     entry green again, so a carried-over badge would be a lie.
+            let live_ready = live_session
+                && old.map(|p| p.live_ready && p.name == name).unwrap_or(false);
             PortInfo {
-                name: n,
-                sim_number: st.sim_dir.number_of(&path, iccid.as_deref()),
+                name,
+                sim_number: sim_dir.number_of(&path, iccid.as_deref()),
                 checked: old.map(|p| p.checked).unwrap_or(true),
                 alive: old.and_then(|p| p.alive),
                 iccid,
                 path,
-                live_ready: false,
+                live_ready,
                 live_error: None,
             }
         })
+        .collect()
+}
+
+#[tauri::command]
+pub fn refresh_ports(state: tauri::State<'_, SharedState>) -> Vec<PortInfo> {
+    let enumerated: Vec<(String, String)> = crate::core::modem::get_port_names()
+        .into_iter()
+        .map(|n| {
+            let path = crate::core::modem::stable_id(&n);
+            (n, path)
+        })
         .collect();
+    let mut st = lock_state(&state);
+    let live_session = st.live_on || st.live_stop.is_some();
+    let old = std::mem::take(&mut st.ports);
+    let ports = merge_ports(enumerated, old, &st.sim_dir, live_session);
     st.ports = ports.clone();
     log::debug!("Ports refreshed: {}", ports.len());
     ports
@@ -1612,6 +1653,142 @@ mod tests {
     #[test]
     fn live_status_is_clean_when_every_port_is_ready() {
         assert_eq!(live_status(&live_state(3, 0), 3), "Live 3/3 ready");
+    }
+
+    /// One enumerated port. `path` is the stable by-path id, `name` the tty name.
+    fn port_row(name: &str, path: &str, live_ready: bool) -> PortInfo {
+        PortInfo {
+            name: name.into(),
+            path: path.into(),
+            checked: true,
+            sim_number: "09651995803".into(),
+            iccid: Some("8995010912345678901".into()),
+            alive: Some(true),
+            live_ready,
+            live_error: None,
+        }
+    }
+
+    const SLOT_A: &str = "pci-0000:03:00.3-usb-0:4.1:1.0-port0";
+    const SLOT_B: &str = "pci-0000:03:00.3-usb-0:4.2:1.0-port0";
+
+    #[test]
+    fn refresh_keeps_the_live_badge_of_a_port_that_is_still_there() {
+        // The Refresh-blanks-every-badge bug: re-enumerating does not stop the
+        // workers, so a port that is still present stays LIVE. Its selection,
+        // liveness and card have to survive too.
+        let old = vec![port_row("/dev/ttyUSB3", SLOT_A, true)];
+        let merged = merge_ports(
+            vec![("/dev/ttyUSB3".into(), SLOT_A.into())],
+            old,
+            &SimDirectory::default(),
+            true,
+        );
+        assert_eq!(merged.len(), 1);
+        assert!(merged[0].live_ready);
+        assert!(merged[0].checked);
+        assert_eq!(merged[0].alive, Some(true));
+        assert_eq!(merged[0].iccid.as_deref(), Some("8995010912345678901"));
+    }
+
+    #[test]
+    fn no_live_session_means_no_live_badge_can_survive() {
+        // Without a worker the flag cannot be true, whatever the old list said —
+        // this is the invariant that keeps a background refresh from resurrecting
+        // badges after live mode has wound down.
+        let enumerated = vec![("/dev/ttyUSB3".to_string(), SLOT_A.to_string())];
+        let merged = merge_ports(
+            enumerated,
+            vec![port_row("/dev/ttyUSB3", SLOT_A, true)],
+            &SimDirectory::default(),
+            false,
+        );
+        assert!(!merged[0].live_ready);
+    }
+
+    #[test]
+    fn a_port_that_disappeared_and_came_back_is_not_live_again() {
+        // Unplugged: the port drops out of the enumeration entirely.
+        let gone = merge_ports(
+            vec![("/dev/ttyUSB4".into(), SLOT_B.into())],
+            vec![
+                port_row("/dev/ttyUSB3", SLOT_A, true),
+                port_row("/dev/ttyUSB4", SLOT_B, true),
+            ],
+            &SimDirectory::default(),
+            true,
+        );
+        assert_eq!(gone.len(), 1);
+        assert_eq!(gone[0].path, SLOT_B);
+        // Replugged into the same slot under the same name: there is no longer an
+        // old entry to carry anything from, and no worker was spawned for it, so
+        // it must come back dark rather than green.
+        let back = merge_ports(
+            vec![
+                ("/dev/ttyUSB3".into(), SLOT_A.into()),
+                ("/dev/ttyUSB4".into(), SLOT_B.into()),
+            ],
+            gone,
+            &SimDirectory::default(),
+            true,
+        );
+        let revived = back.iter().find(|p| p.path == SLOT_A).unwrap();
+        assert!(!revived.live_ready);
+        assert!(revived.alive.is_none());
+    }
+
+    #[test]
+    fn a_stick_renumbered_in_the_same_slot_does_not_inherit_the_badge() {
+        // Same USB slot, new tty name — a replug within one refresh interval, or a
+        // different stick pushed into that slot. The worker is bound to the old
+        // name for life, so nothing will ever refresh this entry's badge.
+        let merged = merge_ports(
+            vec![("/dev/ttyUSB70".into(), SLOT_A.into())],
+            vec![port_row("/dev/ttyUSB3", SLOT_A, true)],
+            &SimDirectory::default(),
+            true,
+        );
+        assert!(!merged[0].live_ready);
+        // Everything the old code already carried by path still carries — this
+        // change is about the badge only.
+        assert!(merged[0].checked);
+        assert_eq!(merged[0].alive, Some(true));
+    }
+
+    #[test]
+    fn a_slot_hint_filling_in_an_unknown_iccid_leaves_the_badge_alone() {
+        // refresh_ports never probes, so the only ICCID change it can see at a
+        // path is the directory hint filling in a card it had not recorded. That
+        // hint is "last seen here", possibly from an earlier session, so it is no
+        // evidence that the stick under the running worker changed — the tty-name
+        // check is what covers a real swap.
+        let mut dir = SimDirectory::default();
+        dir.set_slot(SLOT_A, "8995010999999999999");
+        let mut old = port_row("/dev/ttyUSB3", SLOT_A, true);
+        old.iccid = None;
+        let merged = merge_ports(
+            vec![("/dev/ttyUSB3".into(), SLOT_A.into())],
+            vec![old],
+            &dir,
+            true,
+        );
+        assert_eq!(merged[0].iccid.as_deref(), Some("8995010999999999999"));
+        assert!(merged[0].live_ready);
+    }
+
+    #[test]
+    fn a_new_port_defaults_to_selected_with_nothing_known_about_it() {
+        let merged = merge_ports(
+            vec![("/dev/ttyUSB9".into(), SLOT_B.into())],
+            Vec::new(),
+            &SimDirectory::default(),
+            true,
+        );
+        assert!(merged[0].checked);
+        assert!(!merged[0].live_ready);
+        assert!(merged[0].alive.is_none());
+        assert!(merged[0].iccid.is_none());
+        assert_eq!(merged[0].sim_number, "");
     }
 
     fn row(id: u64, port: &str, index: i32, parts: &[i32]) -> SmsItem {
