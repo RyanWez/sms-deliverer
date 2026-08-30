@@ -4,7 +4,7 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 const KW_KODE: &str = "\u{1000}\u{102F}\u{1012}\u{103A}";
-const KW_CONFIRM: &str = "\u{1021}\u{1010}\u{1014}\u{103A}\u{1015}\u{103C}\u{102F}";
+const KW_CONFIRM: &str = "\u{1021}\u{1010}\u{100A}\u{103A}\u{1015}\u{103C}\u{102F}";
 const KW_SECURE: &str = "\u{101C}\u{102F}\u{1036}\u{1001}\u{103C}\u{102F}\u{1036}";
 const KW_IS: &str = "\u{1016}\u{103C}\u{1005}\u{103A}";
 
@@ -909,6 +909,20 @@ mod tests {
         assert_eq!(extract_otp("ထောက်ပံ့ငွေ ကုဒ် ၅၅၂၂၁၁"), Some("552211".into()));
         let msg = "\u{101E}\u{102D}\u{1015}\u{103A}\u{1001}\u{102F}\u{1016}\u{103A}\u{1010}\u{1032}\u{1037} \u{1000}\u{102F}\u{1012}\u{103A} \u{1045}\u{1045}\u{1042}\u{1042}\u{1041}\u{1041}";
         assert_eq!(extract_otp(msg), Some("552211".into()));
+    }
+
+    /// အတည်ပြု ("confirm") used to be misspelled အတန်ပြု in the keyword gate, so
+    /// a Myanmar OTP whose only trigger word is အတည်ပြု never reached the
+    /// patterns and silently came back as None. The body below carries no other
+    /// keyword — no ကုဒ်, no လုံခြုံ, no ဖြစ်, no English trigger — so it only
+    /// passes once the constant is spelled correctly.
+    #[test]
+    fn otp_myanmar_confirm_keyword() {
+        let msg = "\u{1021}\u{1010}\u{100A}\u{103A}\u{1015}\u{103C}\u{102F}\u{1014}\u{1036}\u{1015}\u{102B}\u{1010}\u{103A} \u{1044}\u{1048}\u{1042}\u{1049}\u{1043}\u{1041} \u{1000}\u{102D}\u{102F} \u{1019}\u{100A}\u{103A}\u{101E}\u{1030}\u{1037}\u{1000}\u{102D}\u{102F}\u{1019}\u{103E} \u{1019}\u{1015}\u{103C}\u{1031}\u{102C}\u{1015}\u{102B}\u{1014}\u{103E}\u{1004}\u{1037}\u{103A}\u{104B}";
+        assert_eq!(extract_otp(msg), Some("482931".into()));
+        // Same body minus the keyword: proves အတည်ပြု is what opened the gate.
+        let no_keyword = "\u{1014}\u{1036}\u{1015}\u{102B}\u{1010}\u{103A} \u{1044}\u{1048}\u{1042}\u{1049}\u{1043}\u{1041} \u{1000}\u{102D}\u{102F} \u{1019}\u{100A}\u{103A}\u{101E}\u{1030}\u{1037}\u{1000}\u{102D}\u{102F}\u{1019}\u{103E} \u{1019}\u{1015}\u{103C}\u{1031}\u{102C}\u{1015}\u{102B}\u{1014}\u{103E}\u{1004}\u{1037}\u{103A}\u{104B}";
+        assert_eq!(extract_otp(no_keyword), None);
     }
 
     #[test]
