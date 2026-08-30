@@ -267,6 +267,50 @@ fn probe_failure(port_name: &str, ch: &at::AtChannel) -> String {
     msg
 }
 
+/// Put the modem into the SMS format the caller will read with, returning `true`
+/// when PDU mode is available.
+///
+/// PDU mode is preferred everywhere because it exposes the UDH needed to
+/// reassemble long (concatenated) SMS instead of showing truncated fragments.
+///
+/// Shared by [`read_port`] and the live worker (`live::run_live_inner`). They had
+/// separate copies and the copies drifted: the live worker's text-mode fallback
+/// was taught to retry one command at a time while the scan path kept the
+/// concatenated-only form, so on firmware that refuses `AT+CMGF=1;+CSCS="UCS2"`
+/// the scan listed messages in whatever mode the modem happened to be in. It
+/// lives here rather than in `at.rs` because `at.rs` is the framing layer — it
+/// knows about lines, notifications and final result codes, not about SMS
+/// formats — and because `live.rs` already reaches into this module for
+/// `probe_channel`.
+pub fn setup_sms_mode(ch: &mut at::AtChannel) -> bool {
+    if ch.send("ATE0;+CMGF=0", 4000).contains("OK") {
+        return true;
+    }
+    enter_text_mode(ch);
+    false
+}
+
+/// Switch to text mode with a UCS2 character set, retrying one command at a time
+/// if the concatenated line is refused.
+///
+/// Both call sites want the same character set here, so this is not
+/// parameterized: PDU mode is hex either way, and the text path needs UCS2 to get
+/// non-ASCII bodies and senders out of the modem. Restoring `AT+CSCS="GSM"` is
+/// left to the callers, which genuinely differ — `read_port` restores per branch
+/// as it returns, the live worker only on shutdown.
+///
+/// The per-command retry exists because firmware that rejects one concatenated
+/// line rejects them all: a stick that refused `ATE0;+CMGF=0` refuses
+/// `AT+CMGF=1;+CSCS="UCS2"` for the same reason, and then nothing has actually
+/// changed the modem's mode.
+pub fn enter_text_mode(ch: &mut at::AtChannel) {
+    if !ch.send("AT+CMGF=1;+CSCS=\"UCS2\"", 4000).contains("OK") {
+        ch.send("ATE0", 2000);
+        ch.send("AT+CMGF=1", 3000);
+        ch.send("AT+CSCS=\"UCS2\"", 2000);
+    }
+}
+
 pub fn read_port(port_name: &str) -> ReadResult {
     let mut ch = match at::AtChannel::open(port_name) {
         Ok(ch) => ch,
@@ -288,7 +332,7 @@ pub fn read_port(port_name: &str) -> ReadResult {
 
     // PDU mode first: it exposes the UDH needed to reassemble long
     // (concatenated) SMS instead of showing truncated fragments.
-    if ch.send("ATE0;+CMGF=0", 4000).contains("OK") {
+    if setup_sms_mode(&mut ch) {
         let r = ch.send("AT+CMGL=4", 15000);
         if r.contains("+CMGL:") || r.contains("OK") {
             let mut msgs: Vec<SmsMessage> = Vec::new();
@@ -313,10 +357,14 @@ pub fn read_port(port_name: &str) -> ReadResult {
                 error: None,
             };
         }
+        // PDU mode was accepted but the list was unusable: drop to text mode.
+        // (When `setup_sms_mode` returned false it has already done this.)
+        log::debug!("{}: PDU list unusable, falling back to text mode", port_name);
+        enter_text_mode(&mut ch);
+    } else {
+        log::debug!("{}: falling back to text mode", port_name);
     }
 
-    log::debug!("{}: falling back to text mode", port_name);
-    ch.send("AT+CMGF=1;+CSCS=\"UCS2\"", 4000);
     let r = ch.send("AT+CMGL=\"ALL\"", 15000);
 
     if r.contains("+CMGL:") {
@@ -561,7 +609,11 @@ pub fn get_sim_number(port_name: &str) -> SimIdentity {
     let cnum_resp = ch.send("AT+CNUM", 2000);
     if let Some(n) = decoder::extract_number_from_cnum(&cnum_resp) {
         let normalized = decoder::normalize_number(&n);
-        log::info!("{}: SIM number {} (AT+CNUM)", port_name, normalized);
+        log::info!(
+            "{}: SIM number {} (AT+CNUM)",
+            port_name,
+            crate::logging::mask_number(&normalized)
+        );
         return SimIdentity {
             number: Some(normalized),
             iccid,
@@ -606,7 +658,11 @@ pub fn get_sim_number(port_name: &str) -> SimIdentity {
     match num {
         Some(n) => {
             let normalized = decoder::normalize_number(&n);
-            log::info!("{}: SIM number {}", port_name, normalized);
+            log::info!(
+                "{}: SIM number {}",
+                port_name,
+                crate::logging::mask_number(&normalized)
+            );
             SimIdentity {
                 number: Some(normalized),
                 iccid,
@@ -726,8 +782,13 @@ fn ussd_attempt(ch: &mut at::AtChannel, command: &str, code: &str, timeout_ms: u
                 match decoder::extract_number_from_ussd(&note) {
                     Some(n) => return UssdOutcome::Number(n),
                     None => {
-                        log::warn!(
-                            "{}: USSD {} replied without a number: {}",
+                        // The body stays at debug: a USSD reply we could not parse
+                        // still often carries the subscriber's own number in a shape
+                        // the extractor did not recognise, and debug never reaches a
+                        // sink (logging.rs gates at Info).
+                        log::warn!("{}: USSD {} replied without a number", ch.name, code);
+                        log::debug!(
+                            "{}: USSD {} reply: {}",
                             ch.name,
                             code,
                             at::preview(&note, 100)
@@ -1114,5 +1175,111 @@ mod tests {
     fn read_iccid_gives_up_quietly_when_nothing_answers() {
         let mut ch = channel("\r\nOK\r\n");
         assert_eq!(read_iccid(&mut ch), None);
+    }
+
+    // ── SMS mode setup (shared by read_port and the live worker) ──
+
+    /// Answers `ERROR` to every command containing `reject` and `OK` to the rest,
+    /// recording what it was asked. Models firmware that refuses one particular
+    /// setup command (or every concatenated one).
+    struct RejectingTransport {
+        reject: &'static str,
+        pending: Vec<u8>,
+        sent: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Transport for RejectingTransport {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.pending.is_empty() {
+                return Err(io::ErrorKind::TimedOut.into());
+            }
+            let n = self.pending.len().min(buf.len());
+            buf[..n].copy_from_slice(&self.pending[..n]);
+            self.pending.drain(..n);
+            Ok(n)
+        }
+
+        fn write_all(&mut self, data: &[u8]) -> io::Result<()> {
+            let cmd = String::from_utf8_lossy(data).trim().to_string();
+            let reply: &[u8] = if cmd.contains(self.reject) {
+                b"\r\nERROR\r\n"
+            } else {
+                b"\r\nOK\r\n"
+            };
+            self.sent.lock().unwrap().push(cmd);
+            self.pending.extend_from_slice(reply);
+            Ok(())
+        }
+    }
+
+    fn rejecting_channel(reject: &'static str) -> (AtChannel, Arc<Mutex<Vec<String>>>) {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let ch = AtChannel::with_transport(
+            "ttyUSB0",
+            Box::new(RejectingTransport {
+                reject,
+                pending: Vec::new(),
+                sent: Arc::clone(&sent),
+            }),
+        );
+        (ch, sent)
+    }
+
+    #[test]
+    fn text_mode_fallback_enters_text_mode_before_listing() {
+        let (mut ch, sent) = rejecting_channel("+CMGF=0");
+        assert!(!setup_sms_mode(&mut ch), "PDU mode was refused");
+        // Both callers' very next step on this branch.
+        ch.send("AT+CMGL=\"ALL\"", 100);
+
+        let log = sent.lock().unwrap().clone();
+        let cmgf1 = log
+            .iter()
+            .position(|c| c.contains("+CMGF=1"))
+            .unwrap_or_else(|| panic!("text mode never requested: {log:?}"));
+        let cmgl = log
+            .iter()
+            .position(|c| c == "AT+CMGL=\"ALL\"")
+            .unwrap_or_else(|| panic!("no list command: {log:?}"));
+        assert!(cmgf1 < cmgl, "listed before entering text mode: {log:?}");
+        assert!(
+            log.iter().any(|c| c.contains("+CSCS=")),
+            "character set never set: {log:?}"
+        );
+    }
+
+    #[test]
+    fn text_mode_fallback_retries_one_command_at_a_time() {
+        // Firmware that refuses every concatenated line: the combined
+        // `AT+CMGF=1;+CSCS="UCS2"` fails exactly like `ATE0;+CMGF=0` did, so the
+        // modem would still be left in PDU mode without the per-command retry.
+        // This is the case the scan path missed while only the live worker had
+        // the retry.
+        let (mut ch, sent) = rejecting_channel(";");
+        assert!(!setup_sms_mode(&mut ch));
+        assert_eq!(
+            *sent.lock().unwrap(),
+            vec![
+                "ATE0;+CMGF=0",
+                "AT+CMGF=1;+CSCS=\"UCS2\"",
+                "ATE0",
+                "AT+CMGF=1",
+                "AT+CSCS=\"UCS2\"",
+            ]
+        );
+    }
+
+    #[test]
+    fn pdu_mode_setup_stops_at_the_first_command() {
+        let (mut ch, sent) = rejecting_channel("nothing-is-rejected");
+        assert!(setup_sms_mode(&mut ch));
+        assert_eq!(*sent.lock().unwrap(), vec!["ATE0;+CMGF=0"]);
+    }
+
+    #[test]
+    fn enter_text_mode_takes_the_concatenated_form_when_it_is_accepted() {
+        let (mut ch, sent) = rejecting_channel("nothing-is-rejected");
+        enter_text_mode(&mut ch);
+        assert_eq!(*sent.lock().unwrap(), vec!["AT+CMGF=1;+CSCS=\"UCS2\""]);
     }
 }

@@ -163,7 +163,9 @@ fn run_live_inner<F>(
 
         // PDU mode lets us read the UDH of concatenated (long) SMS so fragments
         // can be joined into one complete message instead of truncated pieces.
-        let pdu_ok = ch.send("ATE0;+CMGF=0", 4000).contains("OK");
+        // Shared with the scan path (`modem::read_port`) so the text-mode
+        // fallback can't drift between the two again.
+        let pdu_ok = crate::core::modem::setup_sms_mode(&mut ch);
         ch.send("AT+CNMI=2,1,0,0,0", 3000);
         let stale = ch.take_notifications();
         if !stale.is_empty() {
@@ -183,6 +185,8 @@ fn run_live_inner<F>(
             collect_parts(&r, port_name, &mut asm)
         } else {
             // Text-mode fallback: no UDH available; fragments appear as-is.
+            // `setup_sms_mode` has already put the modem *into* text mode — this
+            // branch used to assume it was there already.
             let r = ch.send("AT+CMGL=\"ALL\"", 15000);
             if r.contains("+CMGL:") {
                 decoder::parse_text_mode_list(&r, port_name)
@@ -314,9 +318,10 @@ fn run_live_inner<F>(
         // keeps the join supervisor from waiting forever.
         ch.send("AT+CNMI=1,0,0,1,0", 1500);
         ch.send("AT+CSCS=\"GSM\"", 1000);
-        if pdu_ok {
-            ch.send("AT+CMGF=1", 1500);
-        }
+        // Unconditional: text mode is the app's resting state, and the text-mode
+        // fallback now switches the character set to UCS2 as well, so both
+        // branches leave something to restore.
+        ch.send("AT+CMGF=1", 1500);
 
         if !died {
             // Clean stop — exit entirely.
