@@ -508,7 +508,7 @@ where
     let resp = ch.send(&format!("AT+CMGR={idx}"), 6000);
 
     let completed: Option<SmsMessage> = if pdu_mode {
-        match decoder::parse_pdu_cmgr(&resp, port_name) {
+        match decoder::parse_pdu_cmgr(&resp, port_name, idx) {
             Some(info) => {
                 log::info!(
                     "{}: live SMS read (idx {}){}",
@@ -527,7 +527,7 @@ where
             }
         }
     } else {
-        match decoder::parse_cmgr(&resp, port_name) {
+        match decoder::parse_cmgr(&resp, port_name, idx) {
             Some(msg) => {
                 log::info!("{}: live SMS read (idx {})", port_name, idx);
                 Some(msg)

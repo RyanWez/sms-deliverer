@@ -1,4 +1,4 @@
-# 03 — Troubleshooting Casebook (တကယ်ဖြစ်ခဲ့တဲ့ ၁၃ ခု)
+# 03 — Troubleshooting Casebook (တကယ်ဖြစ်ခဲ့တဲ့ ၁၄ ခု)
 
 > Format: Symptom → Root Cause → Fix → Preventive Rule. Debug ခင် ဒီထဲ အရင်ရှာပါ။
 
@@ -205,6 +205,48 @@
   နှိုင်းယှဉ်ခဲ့တယ်၊ 18:56 Windows log က တစ်ခုတည်း ဖြေရှင်းပေးမယ့် ဟာ ဖြစ်ပေမဲ့ မသုံးခဲ့ဘူး
 - **Rule ၃:** "device မပြန်ဘူး" နဲ့ "ငါ ပို့လို့ မရဘူး" ကို ဘယ်တော့မှ တစ်ခုတည်း error အဖြစ်
   မဖေါ်ပါ — ပေါင်းထားတာက host bug ကို SIM ပြဿနာလို့ လိုက်ရှာစေတယ်
+
+## 1️⃣4️⃣ Live mode message ကို Delete → "Deleted 1 message(s) (1 SIM slot(s) freed)" ပြပေမယ့် SIM ပေါ် ကျန်နေတာ
+
+- **Symptom:** Live mode ပြေးနေစဉ် ရောက်လာတဲ့ SMS ကို Inbox ကနေ Delete လုပ်ရင် row က ပျောက်တယ်၊
+  status line က `Deleted 1 message(s) (1 SIM slot(s) freed)` ဆိုတဲ့ **clean success** လိုင်း တင်တယ်။
+  ဒါပေမယ့် message က SIM ပေါ်မှာ ကျန်နေတယ်။ `live::seen` က fingerprint မှတ်ထားတာမို့ အဲ့ session
+  အတွင်း ပြန်မပေါ်လာဘူး — slot က **မမြင်ရဘဲ ပိတ်နေတယ်**။ SIM slot ၂၀–၅၀ ပဲရှိတဲ့ card မှာ
+  တဖြည်းဖြည်း ပြည့်လာပြီး modem က SMS အသစ် လက်ခံရာမှာ တိတ်တဆိတ် ငြင်းလာမယ်
+- **Root Cause:** `decoder::parse_cmgr` နဲ့ `parse_pdu_cmgr` နှစ်ခုလုံး `index: 0` ကို **hardcode**
+  ထားတယ်။ `+CMGR` header က status ပါပေမယ့် index မပါဘူး — slot ကို သိတာ `AT+CMGR={idx}` ပို့တဲ့
+  caller (`live::handle_cmgr`) တစ်ခုတည်းပဲ၊ ဒါပေမယ့် parse ပြီးတဲ့ message ထဲ ပြန်မရေးထားဘူး။
+  ဒါကြောင့် live mode ကာလအတွင်း ရောက်လာတဲ့ SMS တိုင်း `index == 0`၊ concat ဆိုရင်
+  `part_indices == [0]` (`Reassembler` က fragment ရဲ့ slot ကို `msg.index` ကနေ ယူတာမို့)
+- **`confirmed_removals` invariant ကို ဘယ်လို ဖြတ်သွားလဲ** — ဒါက အရေးကြီးဆုံး အပိုင်း:
+  1. `message_slots` က `[0]` ပြန်ပေး → `delete_each` က `AT+CMGD=0` ပို့
+  2. SIM slot က **1 ကနေ** စတာမို့ modem က ငြင်း
+  3. `slots_still_present` က `AT+CMGL="ALL"` ပြန်ဖတ်တယ် — slot 0 က list ထဲ **မပါဘူး**၊
+     ဘာလို့လဲဆိုတော့ **ဒါ မရှိတဲ့ slot ဖြစ်တာမို့**
+  4. "list ထဲ မပါဘူး" ကို `confirm_delete` က "ပျက်သွားပြီ" ဆိုတဲ့ **သက်သေ** အဖြစ် ဖတ်တယ်
+  → `ok: true, deleted: 1, indices: [0]` → `confirmed_removals` က row ကို ခွင့်ပြု။
+  SIM ပြန်ဖတ်တဲ့ confirmation တစ်ခုလုံး **အလုပ်လုပ်ပေမယ့် အဖြေ လွဲတယ်** — မရှိတဲ့ slot ရဲ့ absence
+  က ဘာမှ မသက်သေဘူး
+- **Blast radius (တိတိကျကျ):** live mode ကနေ ရလာတဲ့ row ကို **manual delete** လုပ်တဲ့ path
+  တစ်ခုတည်းပဲ။ Scan path (`parse_pdu_list`/`parse_text_mode_list`) က `+CMGL` header ကနေ slot
+  မှန်မှန် ထည့်တယ်။ Retention sweep (`live::sweep_expired`, `modem::expire_old`) က SIM ကို
+  **ကိုယ်တိုင် ပြန်ဖတ်ပြီး** list parser သုံးတာမို့ မထိခိုက်ဘူး
+- **Fix:** `parse_cmgr(resp, port, idx)` / `parse_pdu_cmgr(resp, port, idx)` — slot ကို parameter
+  အဖြစ် သွင်း၊ default မထား။ `live::handle_cmgr` က `idx` ကို `asm.push` **မတိုင်မီ** ပေးတာမို့
+  `finish()` ရဲ့ `part_indices` က တကယ့် slot တွေ စုမယ်။ `decode_deliver` ရဲ့ `index: 0` က
+  ကျန်ထားပေမယ့် "raw PDU မှာ slot မပါဘူး၊ caller နှစ်ခုလုံး overwrite လုပ်တယ်" ဆိုတဲ့ comment ထည့်
+- **Second line of defence:** `message_slots` နဲ့ `models::expired_indices` နှစ်ခုလုံး
+  non-positive index ကို ဖယ်ပစ်တယ်။ `confirmed_removals` က `!idxs.is_empty()` စစ်ပြီးသားမို့
+  slot မရှိတဲ့ row က **KEPT** ဖြစ်မယ် — အနာဂတ်မှာ ဘယ် path ကနေ 0 ရောက်လာလာ တိတ်တဆိတ်
+  ဖျက်ခြင်း မဖြစ်တော့ဘူး
+- **Rule ၁:** **"မရှိတာကို သက်သေ အဖြစ် သုံးရင် sentinel တွေကို အရင် ဖယ်ပါ။"** Absence-based
+  confirmation (`slots_still_present`) က ရှာနေတဲ့ key ဟာ တကယ် ရှိနိုင်တဲ့ key ဖြစ်မှ အလုပ်လုပ်တယ်။
+  မရှိနိုင်တဲ့ key ဆိုရင် အဖြေက အမြဲ "ပျက်သွားပြီ" ဖြစ်တယ်
+- **Rule ၂:** `0` ကို "မသိဘူး" အဖြစ် double meaning **မပေးပါ**။ `index: Option<i32>` ဆိုရင်
+  ဒီ bug က compile error ဖြစ်နေမှာ။ `i32` + hardcoded `0` က တိတ်တဆိတ် လွဲသွားတယ်
+- **Rule ၃:** Test က `text`/`from` ကို စစ်တာ မလုံလောက်ဘူး။ `pdumgr_single_read` က ရှိပြီးသား
+  ဖြစ်ပေမယ့် `index` ကို မစစ်ခဲ့တာမို့ bug က ဖမ်းမမိခဲ့ဘူး — **delete/cleanup ရဲ့ input ဖြစ်တဲ့
+  field တိုင်းကို assert လုပ်ပါ**
 
 ## ⚠️ Latent Traps (မဖြစ်သေးဘူး၊ ဒါပေမဲ့ ချောင်းနေတာ)
 

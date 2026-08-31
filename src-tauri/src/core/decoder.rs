@@ -453,7 +453,14 @@ pub fn parse_indices(resp: &str) -> Vec<i32> {
 
 // ── Single AT+CMGR ──
 
-pub fn parse_cmgr(resp: &str, port: &str) -> Option<SmsMessage> {
+/// Parse a text-mode `AT+CMGR=<idx>` response.
+///
+/// `idx` is the slot the read was issued against. A `+CMGR` header carries a
+/// status but no index, so the caller is the only one that knows which SIM slot
+/// the message occupies, and it has to be threaded in rather than defaulted:
+/// slot 0 does not exist on a SIM, is therefore absent from every `AT+CMGL`
+/// listing, and `confirm_delete` reads that absence as "already gone".
+pub fn parse_cmgr(resp: &str, port: &str, idx: i32) -> Option<SmsMessage> {
     let mut found = false;
     let mut status = String::new();
     let mut from = String::new();
@@ -488,7 +495,7 @@ pub fn parse_cmgr(resp: &str, port: &str) -> Option<SmsMessage> {
     }
     Some(SmsMessage {
         port: port.to_string(),
-        index: 0,
+        index: idx,
         status,
         from,
         received,
@@ -534,7 +541,10 @@ pub fn parse_pdu_list(resp: &str, port: &str) -> Vec<DeliverInfo> {
 /// Parse an `AT+CMGR` response while the modem is in PDU mode
 /// (`AT+CMGF=0`). Response looks like:
 /// `+CMGR: <stat>,...,<length>\n<pdu hex>\nOK`
-pub fn parse_pdu_cmgr(resp: &str, port: &str) -> Option<DeliverInfo> {
+///
+/// `idx` is the slot the read was issued against — see `parse_cmgr` for why it
+/// cannot be defaulted.
+pub fn parse_pdu_cmgr(resp: &str, port: &str, idx: i32) -> Option<DeliverInfo> {
     let mut stat: Option<String> = None;
     for raw in resp.replace("\r\n", "\n").lines() {
         let line = raw.trim();
@@ -554,7 +564,7 @@ pub fn parse_pdu_cmgr(resp: &str, port: &str) -> Option<DeliverInfo> {
             let info = decode_deliver(line, port)?;
             return Some(DeliverInfo {
                 message: SmsMessage {
-                    index: 0,
+                    index: idx,
                     status: normalize_pdu_stat(stat.as_deref().unwrap_or("")),
                     ..info.message
                 },
@@ -738,6 +748,8 @@ fn decode_deliver(pdu_hex: &str, port: &str) -> Option<DeliverInfo> {
     Some(DeliverInfo {
         message: SmsMessage {
             port: port.to_string(),
+            // A raw PDU carries no SIM slot: it is `+CMGL`/`+CMGR` framing that
+            // names the slot, so both callers overwrite this. Never read it.
             index: 0,
             from,
             received: ts,
@@ -1536,7 +1548,7 @@ mod tests {
                 let resp =
                     format!("+CMGL: 3,\"REC UNREAD\",\"\",26/08/29,08:54:06+26\n{head}\nOK\n");
                 let _ = parse_pdu_list(&resp, "COM1");
-                let _ = parse_pdu_cmgr(&format!("+CMGR: 0,,{}\n{head}\nOK\n", cut / 2), "COM1");
+                let _ = parse_pdu_cmgr(&format!("+CMGR: 0,,{}\n{head}\nOK\n", cut / 2), "COM1", 3);
             }
         }
     }
@@ -1546,13 +1558,60 @@ mod tests {
         let payload = utf16be_bytes("Hi there");
         let pdu = build_deliver_pdu("959123456789", 0x08, &payload, None);
         let resp = format!("+CMGR: 0,,{0}\n{1}\nOK\n", pdu.len() / 2, pdu);
-        let d = parse_pdu_cmgr(&resp, "COM7");
+        let d = parse_pdu_cmgr(&resp, "COM7", 4);
         assert!(d.is_some());
         let d = d.unwrap();
         assert_eq!(d.message.text, "Hi there");
         assert_eq!(d.message.status, "REC UNREAD");
         assert_eq!(d.message.port, "COM7");
         assert!(d.concat.is_none());
+    }
+
+    /// A live-mode read is the only path that learns a message's SIM slot from
+    /// the command it issued rather than from a list header. Losing it there
+    /// meant `delete_selected` sent `AT+CMGD=0`, the modem refused, slot 0 was
+    /// missing from the confirming `AT+CMGL` (it does not exist), and the row
+    /// was dropped from the inbox while the SMS stayed on the card.
+    #[test]
+    fn pdu_cmgr_carries_the_slot_it_was_read_from() {
+        let payload = utf16be_bytes("code 471928");
+        let pdu = build_deliver_pdu("959123456789", 0x08, &payload, None);
+        let resp = format!("+CMGR: 0,,{0}\n{1}\nOK\n", pdu.len() / 2, pdu);
+        let d = parse_pdu_cmgr(&resp, "COM7", 17).expect("decodes");
+        assert_eq!(d.message.index, 17);
+    }
+
+    #[test]
+    fn text_mode_cmgr_carries_the_slot_it_was_read_from() {
+        let resp = "+CMGR: \"REC UNREAD\",\"959123456789\",,\"26/08/29,08:54:06+26\"\n\
+                    code 471928\nOK\n";
+        let m = parse_cmgr(resp, "COM7", 9).expect("decodes");
+        assert_eq!(m.index, 9);
+        assert_eq!(m.text, "code 471928");
+    }
+
+    /// The reassembler takes each fragment's slot from `SmsMessage::index`, so a
+    /// long SMS read fragment-by-fragment over `AT+CMGR` only lands every real
+    /// slot in `part_indices` if the CMGR parser recorded them.
+    #[test]
+    fn concat_from_cmgr_reads_keeps_every_real_fragment_slot() {
+        let mut asm = crate::core::reassemble::Reassembler::default();
+        let mut assembled = None;
+        for (seq, slot) in [(1u8, 5i32), (2, 6)] {
+            let pdu = build_deliver_pdu_udh(
+                "959123456789",
+                0x08,
+                &[0x00, 3, 0x42, 2, seq],
+                &utf16be_bytes("part"),
+            );
+            let resp = format!("+CMGR: 0,,{0}\n{1}\nOK\n", pdu.len() / 2, pdu);
+            let info = parse_pdu_cmgr(&resp, "COM7", slot).expect("decodes");
+            let c = info.concat.expect("has a UDH");
+            assembled = asm.push(&info.message, c);
+        }
+        let done = assembled.expect("both fragments arrived");
+        assert_eq!(done.part_indices, vec![5, 6]);
+        assert_eq!(done.index, 5);
     }
 
     #[test]
