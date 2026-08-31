@@ -1,4 +1,4 @@
-# 03 — Troubleshooting Casebook (တကယ်ဖြစ်ခဲ့တဲ့ ၁၄ ခု)
+# 03 — Troubleshooting Casebook (တကယ်ဖြစ်ခဲ့တဲ့ ၁၅ ခု)
 
 > Format: Symptom → Root Cause → Fix → Preventive Rule. Debug ခင် ဒီထဲ အရင်ရှာပါ။
 
@@ -247,6 +247,52 @@
 - **Rule ၃:** Test က `text`/`from` ကို စစ်တာ မလုံလောက်ဘူး။ `pdumgr_single_read` က ရှိပြီးသား
   ဖြစ်ပေမယ့် `index` ကို မစစ်ခဲ့တာမို့ bug က ဖမ်းမမိခဲ့ဘူး — **delete/cleanup ရဲ့ input ဖြစ်တဲ့
   field တိုင်းကို assert လုပ်ပါ**
+
+## 1️⃣5️⃣ Inbox Search box က ရိုက်လိုက်တဲ့ စာကို ဖျက်ပစ်တာ — search က လုံးဝ အလုပ်မလုပ်ဘူး
+
+- **Symptom:** Inbox ရဲ့ Search messages ကွက်လပ်ထဲ ရိုက်ရင် စာ မတည်ဘူး။ Browser preview
+  (localhost:1420) မှာ တကယ် စမ်းကြည့်တာ — `+469602294397` (၁၃ လုံး) ကို တစ်လုံးချင်း ရိုက်ပြီးတဲ့အခါ
+  **field က ဗလာ**၊ message count က `35 msgs` အတိုင်း ကျန်၊ filter က တစ်ခါမှ မသက်ဝင်ဘူး။
+  "အက္ခရာ တစ်ချို့ ကျော်သွားတာ" မဟုတ်ဘူး — **search feature တစ်ခုလုံး အလုပ်မလုပ်တာ**
+- **Root Cause:** `FilterBar.svelte` ရဲ့ sync `$effect`:
+
+  ```js
+  if (messagesStore.query === '' && localQuery !== '') {
+    localQuery = '';                       // ← debounceTimer guard မပါ
+  } else if (messagesStore.query !== localQuery && debounceTimer === null) {
+  ```
+
+  Branch ၂ က typing အတွင်း clobber မဖြစ်အောင် `debounceTimer === null` နဲ့ ကာထားတယ်။
+  **Branch ၁ မကာဘူး**။ `debounceTimer` က `$state` မဟုတ်တာမို့ effect က မ track ဘူး —
+  dependency က `messagesStore.query` နဲ့ `localQuery` ပဲ။ ဆိုတော့ keystroke တိုင်းက
+  `localQuery` ကို ပြောင်းတယ် → effect ပြန်ပြေးတယ် → `query` က `''` ရှိသေးတာမို့
+  `localQuery = ''` → `value={localQuery}` က DOM ကို ပြန်ရေးတယ်။ ဒါဟာ `query` က `''`
+  ဖြစ်နေတဲ့ အချိန်တိုင်း (= စရိုက်တဲ့အခါ၊ clear လုပ်ပြီးတဲ့အခါ) ဖြစ်တယ်
+- **ဒီ effect က မဖြစ်နိုင်တဲ့ ကိစ္စကို ကာနေတာ:** comment က "store is cleared externally"
+  လို့ ဆိုပေမယ့် `messagesStore.query` ကို ရေးတဲ့သူ က `FilterBar` **တစ်ခုတည်း** ပဲ
+  (`onSearchInput` နဲ့ `clearSearch` — repo တစ်ခုလုံး grep ပြီး အတည်ပြုတယ်)။
+  ဆိုတော့ mirror လုပ်ရမယ့် external update ဆိုတာ မရှိဘူး။ Page navigation ကို
+  `let localQuery = $state(messagesStore.query)` initialiser ကိုယ်တိုင် ဖြေရှင်းပေးပြီးသား
+  (Inbox က remount ဖြစ်တဲ့အခါ store က query ကို ကျန်ထားတယ်)
+- **Fix:** effect ကို ဖျက်လိုက်တယ်။ Input က `localQuery` ကို ပိုင်တယ်၊ debounce က
+  store ကို ရေးတယ် — one-way။ `src/lib/pages/Ports.svelte:28-42` က ဒီပုံစံ မှန်မှန်
+  ရေးထားပြီးသား (`rawQuery`/`debouncedQuery`, sync effect မထား)
+- **အတည်ပြုမှု (A/B, browser preview):** effect ရှိတဲ့အခါ — field ဗလာ၊ `35 msgs` အတိုင်း။
+  ဖျက်ပြီးတဲ့အခါ — field က `+469602294397` အပြည့် ကိုင်တယ်၊ `1 msgs` ဆီ ကျဆင်းတယ်၊
+  ကျန်တဲ့ row က အဲ့ sender ကိုယ်တိုင်။ Clear button ပြီးရင် `35 msgs` ပြန်လာတယ်၊
+  clear လုပ်ပြီး ပြန်ရိုက်တာလည် အလုပ်လုပ်တယ် (effect အဆိုးဆုံး ဖြစ်တဲ့ ကိစ္စ)
+- **Rule ၁:** **Runes မှာ plain `let` က effect ရဲ့ guard မဖြစ်နိုင်ဘူး။** `debounceTimer` က
+  reactive မဟုတ်တာမို့ effect က သူ့ကို မ track ဘူး — ဒါပေမယ့် effect **အထဲမှာ** သူ့ကို
+  ဖတ်တာက "ကာထားပြီ" ဆိုတဲ့ အမြင် ပေးတယ်။ Branch တစ်ခုမှာ guard ရေးပြီး နောက်တစ်ခုမှာ
+  မရေးထားတာက ဒီ bug ရဲ့ တိကျတဲ့ ပုံစံ
+- **Rule ၂:** **DOM ရဲ့ value ကို source of truth နှစ်ခု မထားပါ။** `value={localQuery}` က
+  binding ဖြစ်ပြီး input event က `localQuery` ကို ရေးတယ် — ဒီအလယ်မှာ ဝင်ပြီး `localQuery`
+  ကို ရေးတဲ့ effect တိုင်းက user ရဲ့ လက်ကို ယှဉ်ပြိုင်တယ်
+- **Rule ၃:** "external update ကို sync လုပ်တဲ့ effect" ရေးမယ်ဆိုရင် **external writer
+  တကယ် ရှိလား grep လုပ်ပါ**။ မရှိရင် အဲ့ effect က ကာကွယ်မှု မဟုတ်ဘဲ bug ဖြစ်တယ်
+- **Rule ၄:** Frontend ကို unit test မရသေးတဲ့ အလွှာ (component) ဖြစ်ရင် **browser preview
+  မှာ A/B စမ်းပါ** — fix ကို stash လုပ်ပြီး အရင်အခြေအနေ ပြန်ပြေးခိုင်းတာက "ပြင်ပြီး
+  အလုပ်လုပ်တယ်" နဲ့ "ဒါ တကယ် bug ဖြစ်ခဲ့တယ်" နှစ်ခုလုံးကို သက်သေပြတယ်
 
 ## ⚠️ Latent Traps (မဖြစ်သေးဘူး၊ ဒါပေမဲ့ ချောင်းနေတာ)
 
