@@ -1087,11 +1087,19 @@ pub fn stop_live(app: tauri::AppHandle, state: tauri::State<'_, SharedState>) {
 
 /// SIM slots one inbox row occupies. An assembled long SMS spans one slot per
 /// fragment; a single-part message only has `index`.
+///
+/// Slot numbering starts at 1, so a non-positive index is not a slot — it is a
+/// row whose origin never recorded one. Returning nothing for it is what makes
+/// `confirmed_removals` keep the row: a bogus `AT+CMGD=0` is refused by the
+/// modem, and slot 0 is then missing from the confirming `AT+CMGL` for the
+/// trivial reason that it cannot be there, which would otherwise be read as
+/// proof the message was deleted.
 fn message_slots(m: &SmsMessage) -> Vec<i32> {
     let mut idxs = m.part_indices.clone();
     if idxs.is_empty() || idxs.len() == 1 && !idxs.contains(&m.index) {
         idxs = vec![m.index];
     }
+    idxs.retain(|i| *i > 0);
     idxs
 }
 
@@ -1827,6 +1835,28 @@ mod tests {
         assert_eq!(
             message_slots(&row(1, "ttyUSB0", 4, &[2, 3, 4]).message),
             vec![2, 3, 4]
+        );
+    }
+
+    /// SIM slots are numbered from 1. A row carrying 0 never learned its slot,
+    /// and deleting it would be reported as a success it cannot have had: the
+    /// modem refuses `AT+CMGD=0`, and the confirming `AT+CMGL` cannot list a
+    /// slot that does not exist, so its absence proves nothing. No slots means
+    /// no evidence, and `confirmed_removals` keeps the row.
+    #[test]
+    fn slot_zero_is_never_a_real_sim_slot() {
+        let bare = row(1, "ttyUSB0", 0, &[]);
+        assert!(message_slots(&bare.message).is_empty());
+        assert!(confirmed_removals(&slot_map(&[bare]), &freed(&[("ttyUSB0", &[0])])).is_empty());
+
+        // A concat whose fragments never recorded slots either.
+        let concat = row(2, "ttyUSB0", 0, &[0]);
+        assert!(message_slots(&concat.message).is_empty());
+
+        // Real slots alongside a bogus one still delete the real ones.
+        assert_eq!(
+            message_slots(&row(3, "ttyUSB0", 0, &[0, 7, 8]).message),
+            vec![7, 8]
         );
     }
 

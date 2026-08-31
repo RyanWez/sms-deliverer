@@ -70,7 +70,9 @@ pub fn is_expired(m: &SmsMessage, cutoff_ms: i64) -> bool {
 
 /// Every SIM slot occupied by messages older than `cutoff_ms`, sorted and
 /// deduplicated. A concatenated message contributes all of its fragment slots,
-/// so nothing is left behind half-deleted.
+/// so nothing is left behind half-deleted. Non-positive indices are dropped:
+/// slot numbering starts at 1, so anything else is a row that never recorded a
+/// slot and would only make the sweep send an `AT+CMGD` the modem refuses.
 pub fn expired_indices(msgs: &[SmsMessage], cutoff_ms: i64) -> Vec<i32> {
     let mut idxs: Vec<i32> = Vec::new();
     for m in msgs.iter().filter(|m| is_expired(m, cutoff_ms)) {
@@ -80,6 +82,7 @@ pub fn expired_indices(msgs: &[SmsMessage], cutoff_ms: i64) -> Vec<i32> {
             idxs.push(m.index);
         }
     }
+    idxs.retain(|i| *i > 0);
     idxs.sort_unstable();
     idxs.dedup();
     idxs
