@@ -766,14 +766,28 @@ pub fn get_status_text(state: tauri::State<'_, SharedState>) -> String {
     lock_state(&state).status_text.clone()
 }
 
+/// Retention windows past this point are indistinguishable from "keep
+/// everything", so they are treated as off rather than converted. Ten years is
+/// far beyond any operational window for a SIM that holds 20-50 messages, and
+/// stopping here is what keeps `Duration::from_secs_f64` and the `chrono`
+/// arithmetic in `retention_cutoff_ms` inside their domains.
+const MAX_RETENTION_HOURS: f64 = 87_600.0;
+
 /// Convert the UI's retention setting into a duration, or `None` when the
 /// operator turned auto-cleanup off (0 or a nonsensical value).
+///
+/// The value arrives from `localStorage`, where an older profile or a hand edit
+/// can leave anything at all, so the bounds are checked here and not in the
+/// frontend. Out of range means "keep everything", which is the same answer as
+/// off — the alternative was a panicking `Duration::from_secs_f64`, and the
+/// worst caller is the live worker, where one panic per port turns into
+/// `Worker crashed` on the whole bank.
 fn retention_from_hours(hours: Option<f64>) -> Option<Duration> {
     let h = hours?;
-    if !h.is_finite() || h <= 0.0 {
+    if !h.is_finite() || h <= 0.0 || h > MAX_RETENTION_HOURS {
         return None;
     }
-    Some(Duration::from_secs_f64(h * 3600.0))
+    Duration::try_from_secs_f64(h * 3600.0).ok()
 }
 
 #[tauri::command]
@@ -1559,6 +1573,33 @@ mod tests {
             retention_from_hours(Some(0.5)),
             Some(Duration::from_secs(1800))
         );
+        // The largest window still treated as a real retention period.
+        assert_eq!(
+            retention_from_hours(Some(MAX_RETENTION_HOURS)),
+            Some(Duration::from_secs(87_600 * 3600))
+        );
+    }
+
+    /// The setting is rehydrated from `localStorage`, so an out-of-range value
+    /// is normal input, not an exceptional one. It used to panic:
+    /// `Duration::from_secs_f64` overflows past ~5.1e15 hours, and anything
+    /// surviving that panicked in `retention_cutoff_ms` once
+    /// `chrono::Duration::seconds` went out of bounds. The live worker calls
+    /// this per port, so one bad value meant `Worker crashed` on the whole bank.
+    #[test]
+    fn an_absurd_retention_window_is_off_not_a_panic() {
+        for h in [
+            1e13,
+            1e16,
+            f64::MAX,
+            MAX_RETENTION_HOURS + 1.0,
+            i64::MAX as f64,
+        ] {
+            assert!(
+                retention_from_hours(Some(h)).is_none(),
+                "{h} hours should read as \"keep everything\""
+            );
+        }
     }
 
     /// A state where nothing owns a port.

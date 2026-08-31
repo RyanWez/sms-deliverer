@@ -251,9 +251,9 @@
 ## ⚠️ Latent Traps (မဖြစ်သေးဘူး၊ ဒါပေမဲ့ ချောင်းနေတာ)
 
 Case မဟုတ်သေးပါ — 2026-08-30 settings cleanup (`fbd7b8b`) လုပ်ရင်း တွေ့ခဲ့တဲ့ ချောင်း ၃ ခု
-(T1–T2 settings layer၊ T3 decoder)။ Symptom မရှိသေးလို့ fix မလုပ်ခဲ့ဘူး၊ ဒါပေမဲ့ နောက်ဆို
-ရှင်းပြရ ခက်တဲ့ bug ဖြစ်လာနိုင်တယ်။
-**T3 က v1.4.0 မှာ ကုဒ် ပြင်ပြီးသွားပြီ** (အောက်တွင်) — T1/T2 က ပြင်ရသေး။
+(T1–T2 settings layer၊ T3 decoder)၊ ပြီးတော့ 2026-08-31 audit ကနေ T4 (retention layer)။
+Symptom မရှိသေးလို့ fix မလုပ်ခဲ့ဘူး၊ ဒါပေမဲ့ နောက်ဆို ရှင်းပြရ ခက်တဲ့ bug ဖြစ်လာနိုင်တယ်။
+**T3 က v1.4.0 မှာ၊ T4 က ဒီအောက်မှာ ကုဒ် ပြင်ပြီးသွားပြီ** — T1/T2 က ပြင်ရသေး။
 
 ### T1. `deepMerge` က **stored** key တွေကို iterate တာ — ဖျက်ထားတဲ့ setting က profile ထဲ မပျောက်
 
@@ -320,6 +320,41 @@ const KW_CONFIRM: &str = "\u{1021}\u{1010}\u{1014}\u{103A}\u{1015}\u{103C}\u{102
 - **Rule:** မြန်မာ (ဒါမှမဟုတ် non-ASCII) keyword constant အသစ် ထည့်တိုင်း **သူ့ကို match
   ဖြစ်ရမယ့် body တစ်ခု + မဖြစ်ရမယ့် body တစ်ခု** နဲ့ test ထည့်ပါ။ Constant တစ်ခုတည်းကို
   မှန်လား စစ်တာ မလုံလောက်ဘူး — gate တစ်ခုလုံးကို ပြေးခိုင်းပါ
+
+### T4. `retentionHours` က Rust ကို unclamped ရောက်ပြီး panic ဖြစ်တာ (**ပြင်ပြီး**)
+
+**Symptom (field မှာ မဖြစ်သေးဘူး — test နဲ့ reproduce လုပ်ခဲ့တာ):** `retentionHours` က
+`1e13` ဝန်းကျင် ဖြစ်ရင် `purge_expired_messages` / `cleanup_sim_storage` က panic တယ်။
+ပိုဆိုးတာက `start_live` — `live.rs:265`/`:361` မှာ port တစ်ခုချင်းစီ panic ဖြစ်ပြီး
+`catch_unwind` က `Closed { error: "Worker crashed" }` ပြောင်းပေးတာမို့ **live mode က
+port အားလုံးမှာ ရှင်းလင်းချက်မရှိဘဲ ရပ်သွားမယ်**။ Process က မသေဘူး (`panic = "abort"` မထားဘူး)၊
+feature ပဲ သေတယ်
+
+- **Root Cause ၂ ဆင့်:**
+  1. `retention_from_hours` က `!h.is_finite()` နဲ့ `h <= 0.0` ကို ကာထားပေမယ့် **အပေါ်ဘက်
+     မကာထားဘူး**။ `Duration::from_secs_f64` က overflow မှာ panic တယ် (`h` ≳ 5.1e15)
+  2. အဲ့ဒါ လွတ်လာရင် `models::retention_cutoff_ms` မှာ `chrono::Duration::seconds(i64::MAX)`
+     က "out of bounds" panic တယ် (`i64::MAX / 1000` စက္ကန့် ကျော်ရင်)
+- **ဘယ်လို ရောက်လာလဲ:** Settings UI က fixed-option `select` ဖြစ်တာမို့ UI ကနေ မရောက်ဘူး။
+  ဒါပေမယ့် store က `localStorage` ကနေ rehydrate ဖြစ်တယ် — profile အို၊ လက်ပြင်၊ corrupt entry
+  ကနေ ရောက်တယ်။ `api.ts` က `<= 0` ပဲ စစ်တယ်။ App ရဲ့ purge timer က **၆၀ စက္ကန့်တစ်ခါ**
+  ပြန်ခေါ်တာမို့ ဖြစ်ရင် ထပ်ခါထပ်ခါ ဖြစ်မယ်
+- **Fix:** `MAX_RETENTION_HOURS = 87_600.0` (၁၀ နှစ်) — အဲ့ဒါ ကျော်ရင် `None` ပြန်တယ်။
+  ၁၀ နှစ်ကျော် retention က "keep everything" နဲ့ **semantically အတူတူ** ဖြစ်တာမို့ ရှိပြီးသား
+  "0 = off" precedent နဲ့ တစ်ထပ်တည်း ကျတယ် — error ပြန်တာထက် ပိုကောင်းတယ်၊ ဘာလို့လဲဆိုတော့
+  မှားတဲ့ value ဟာ exception မဟုတ်ဘဲ **သာမာန်** input ဖြစ်တာမို့။ `Duration::try_from_secs_f64`
+  သုံးတယ်။ `retention_cutoff_ms` က backstop အနေနဲ့ `try_seconds` + `checked_sub_signed` နဲ့
+  `i64::MIN` ကို saturate တယ် — "ဘာမှ မအိုသေးဘူး" ဆိုတဲ့ လုံခြုံတဲ့ အဖြေ
+- **Test:** `an_absurd_retention_window_is_off_not_a_panic` (commands),
+  `an_absurd_retention_window_saturates_instead_of_panicking` (models)
+- **Rule ၁:** Numeric setting ကို ကာတဲ့အခါ **အောက်ဘက် တစ်ဖက်တည်း မကာပါ**။ `<= 0` စစ်ပြီးရင်
+  "ကာပြီး" လို့ ထင်လွယ်တယ် — ဒါပေမယ့် panic က အပေါ်ဘက်မှာ ရှိတယ်
+- **Rule ၂:** `localStorage` ကနေ လာတဲ့ value တိုင်းကို **Rust မှာ** clamp/reject ပါ။ Frontend က
+  validator မဟုတ်ဘူး: Settings ရဲ့ number input က `min`/`max` ကို DOM element ပေါ်ပဲ ထားတယ်၊
+  `onchange` က `parseInt` ရလာတာကို unclamped သိမ်းတယ်
+- **Rule ၃:** Worker thread ထဲက panic ကို `catch_unwind` နဲ့ ဖမ်းထားတာက **root cause ကို
+  ဖုံးတယ်**။ `Worker crashed` ဆိုတဲ့ message က operator အတွက် ဘာမှ မဖြေရှင်းပေးဘူး —
+  panic ဖြစ်နိုင်တဲ့ input ကို worker ထဲ မရောက်ခင် ဖယ်ပါ
 
 ## Bonus UX Notes
 
