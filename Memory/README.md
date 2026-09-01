@@ -15,7 +15,7 @@
 | [04-conventions.md](./04-conventions.md) | Commit စံနှုန်း၊ verification loop၊ security rules၊ command cheatsheet၊ hardware live-check၊ **§H Settings control wiring rule** |
 | [05-feature-roadmap.md](./05-feature-roadmap.md) | Feature backlog + **Settings Controls Decisions Ledger** (ဖျက်ခဲ့တာ ၁၁ ခု၊ hard refusal ၂ ခု၊ deferred order၊ desktop-notification feasibility) |
 | [06-git-workflow.md](./06-git-workflow.md) | Feature branch workflow — branch → commit → push → PR → squash merge, CI trigger matrix |
-| [07-next-release-plan.md](./07-next-release-plan.md) | v1.5.0 field test ရဲ့ အဖြေ → နောက် release ၂ ခု (v1.5.1 fix ၃ ခု၊ v1.6.0 live command mailbox) |
+| [07-next-release-plan.md](./07-next-release-plan.md) | v1.5.0 field test ရဲ့ အဖြေ → နောက် release ၂ ခု (v1.5.1 fix ၄ ခု၊ v1.6.0 live command mailbox) |
 
 ## ⚡ TL;DR — ဒီ Project ရဲ့ Golden Rules
 
