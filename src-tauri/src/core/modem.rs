@@ -451,6 +451,39 @@ fn delete_each(ch: &mut at::AtChannel, indices: &[i32]) -> Vec<i32> {
     order
 }
 
+/// The `AT+CMGL` form that lists every message in the mode the channel is in.
+///
+/// PDU mode takes the numeric status (`4` = all), text mode the quoted one.
+/// Sending the wrong form earns an `ERROR`, which for a confirming re-read means
+/// "the list was unusable" and drops the caller back onto per-command counts.
+pub(crate) fn list_all_cmd(pdu_mode: bool) -> &'static str {
+    if pdu_mode {
+        "AT+CMGL=4"
+    } else {
+        "AT+CMGL=\"ALL\""
+    }
+}
+
+/// Delete SIM slots over an already-open channel and report what the SIM itself
+/// confirms is gone.
+///
+/// The single entry point for deletion, shared by [`delete_messages`] (which
+/// opens its own port) and the live worker's retention sweep (which cannot).
+/// They had separate implementations and the copies drifted: the live one
+/// accepted any reply merely *containing* `OK` and did no confirming re-read at
+/// all, so it logged "SIM cleanup deleted N expired message(s)" for slots the
+/// SIM had refused — while the card filled up, which is the exact failure the
+/// sweep exists to prevent.
+pub(crate) fn delete_confirmed(
+    ch: &mut at::AtChannel,
+    port_name: &str,
+    indices: &[i32],
+    list_cmd: &str,
+) -> OpResult {
+    let confirmed = delete_each(ch, indices);
+    confirm_delete(ch, port_name, indices, confirmed, list_cmd)
+}
+
 /// Which of `wanted` are still occupied, re-read from the SIM.
 ///
 /// The per-command reply is not enough on its own: some modems drop every
@@ -459,8 +492,12 @@ fn delete_each(ch: &mut at::AtChannel, indices: &[i32]) -> Vec<i32> {
 /// refusal that means "already gone", not "still there". Absence from the list
 /// is the only evidence that distinguishes the two. `None` means the list itself
 /// was unusable, leaving the caller on its per-command count.
-fn slots_still_present(ch: &mut at::AtChannel, wanted: &[i32]) -> Option<Vec<i32>> {
-    let lst = ch.send("AT+CMGL=\"ALL\"", 15000);
+fn slots_still_present(
+    ch: &mut at::AtChannel,
+    wanted: &[i32],
+    list_cmd: &str,
+) -> Option<Vec<i32>> {
+    let lst = ch.send(list_cmd, 15000);
     if !lst.lines().any(|l| l.trim() == "OK") {
         return None;
     }
@@ -481,8 +518,9 @@ fn confirm_delete(
     port_name: &str,
     wanted: &[i32],
     confirmed: Vec<i32>,
+    list_cmd: &str,
 ) -> OpResult {
-    let Some(left) = slots_still_present(ch, wanted) else {
+    let Some(left) = slots_still_present(ch, wanted, list_cmd) else {
         log::warn!(
             "{}: deleted {} msg(s) — could not re-read the SIM to confirm",
             port_name,
@@ -563,7 +601,7 @@ pub fn delete_messages(port_name: &str, indices: Option<&[i32]>) -> OpResult {
                 };
             }
             ch.send("AT+CSCS=\"UCS2\"", 2000);
-            let lst = ch.send("AT+CMGL=\"ALL\"", 15000);
+            let lst = ch.send(list_all_cmd(false), 15000);
             let found = decoder::parse_indices(&lst);
             if found.is_empty() {
                 log::info!("{}: nothing left to delete", port_name);
@@ -574,13 +612,11 @@ pub fn delete_messages(port_name: &str, indices: Option<&[i32]>) -> OpResult {
                     indices: vec![],
                 };
             }
-            let confirmed = delete_each(&mut ch, &found);
-            confirm_delete(&mut ch, port_name, &found, confirmed)
+            delete_confirmed(&mut ch, port_name, &found, list_all_cmd(false))
         }
-        Some(idxs) => {
-            let confirmed = delete_each(&mut ch, idxs);
-            confirm_delete(&mut ch, port_name, idxs, confirmed)
-        }
+        // `AT+CMGF=1` above puts the channel in text mode, so the confirming
+        // re-read has to use the quoted list form.
+        Some(idxs) => delete_confirmed(&mut ch, port_name, idxs, list_all_cmd(false)),
     }
 }
 
@@ -987,7 +1023,7 @@ mod tests {
         let wanted = [1, 2, 3, 4, 5, 6];
         let confirmed = delete_each(&mut ch, &wanted);
         assert_eq!(confirmed.len(), 3);
-        let r = confirm_delete(&mut ch, "ttyUSBtest", &wanted, confirmed);
+        let r = confirm_delete(&mut ch, "ttyUSBtest", &wanted, confirmed, list_all_cmd(false));
         assert!(r.ok);
         assert_eq!(r.deleted, 6);
         assert!(r.error.is_none());
@@ -1000,7 +1036,7 @@ mod tests {
         // from the group delete above.
         let (mut ch, _) = sim_channel(&[1, 2, 9], &[]);
         let confirmed = delete_each(&mut ch, &[1, 2]);
-        let r = confirm_delete(&mut ch, "ttyUSBtest", &[1, 2, 9], confirmed);
+        let r = confirm_delete(&mut ch, "ttyUSBtest", &[1, 2, 9], confirmed, list_all_cmd(false));
         assert!(r.ok);
         assert_eq!(r.deleted, 2);
         assert_eq!(r.error.as_deref(), Some("Deleted 2/3 from SIM"));

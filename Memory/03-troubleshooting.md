@@ -1,4 +1,4 @@
-# 03 — Troubleshooting Casebook (တကယ်ဖြစ်ခဲ့တဲ့ ၁၆ ခု)
+# 03 — Troubleshooting Casebook (တကယ်ဖြစ်ခဲ့တဲ့ ၁၇ ခု)
 
 > Format: Symptom → Root Cause → Fix → Preventive Rule. Debug ခင် ဒီထဲ အရင်ရှာပါ။
 
@@ -346,6 +346,43 @@
   တိတ်တဆိတ် စားတယ်**။ `Err` variant တွေကို တစ်ခုချင်း ဖြေရှင်းပါ
 - **Rule ၃:** State ကို "ရှင်းလင်းတယ်" ဆိုတဲ့ code ရေးတဲ့အခါ **အဲ့ဒါ ပြန်လာမလား** ကို စစ်ပါ။
   Latch/one-shot event ကနေ လာတဲ့ state ကို ဖျက်တာက **အပြီးအပိုင် ဖျက်တာ** ဖြစ်တယ်
+
+## 1️⃣7️⃣ Live SIM sweep က "deleted N" လို့ log တင်ပေမယ့် SIM ပြည့်လာတာ — copy နှစ်ခု drift ဖြစ်တာ
+
+- **Symptom:** Live mode ဆက်တိုက် ပြေးနေတဲ့ bank မှာ log က `SIM cleanup deleted N expired
+  message(s)` လို့ ၁၀ မိနစ်တစ်ခါ (`SIM_SWEEP_EVERY`) တင်နေတယ်၊ ဒါပေမယ့် SIM က တဖြည်းဖြည်း
+  ပြည့်လာပြီး modem က SMS အသစ် လက်ခံရာမှာ တိတ်တဆိတ် ငြင်းလာတယ်။ **sweep ရှိတဲ့ အကြောင်းရင်း
+  အတိအကျ ဖြစ်တဲ့ failure**
+- **Root Cause — operation တစ်ခုကို implementation နှစ်ခု ရေးထားပြီး တစ်ခုက drift ဖြစ်ခဲ့တာ:**
+  | | `modem.rs` (scan path) | `live.rs::delete_indices` (drifted copy) |
+  |---|---|---|
+  | `AT+CMGD` ရလဒ် စစ်တာ | `l.trim() == "OK"` (line တစ်ခုလုံး) | `resp.contains("OK")` |
+  | SIM ပြန်ဖတ်ပြီး အတည်ပြုတာ | `slots_still_present` + `confirm_delete` | **ဘာမှ မရှိ** |
+
+  `contains("OK")` က `+CMS ERROR: 321 ... NOT OK` စတဲ့ စာသား၊ command echo၊ ဒါမှမဟုတ်
+  unsolicited line တစ်ခုထဲ ပါလာတဲ့ `OK` ကိုပါ ခံယူတယ်။ ပြီးတော့ confirmation မရှိတာမို့
+  ရေတွက်တာက modem ကို **ခိုင်းလိုက်တဲ့** အရေအတွက်၊ တကယ် **ပျက်သွားတဲ့** အရေအတွက် မဟုတ်ဘူး
+- **Fix — helper ကို ပေါင်းလိုက်တာ (structural)**: `modem::delete_confirmed(ch, port, indices,
+  list_cmd)` ကို `pub(crate)` ထုတ်ပြီး `live::delete_indices` ကို **ဖျက်**လိုက်တယ်။
+  `delete_messages` (port ကို ကိုယ်တိုင် ဖွင့်တယ်) နဲ့ live sweep (မဖွင့်နိုင်ဘူး) နှစ်ခုလုံး
+  အခု entry point တစ်ခုတည်း သုံးတယ် — **ထပ် drift ဖြစ်လို့ မရတော့ဘူး**
+- **`list_cmd` parameter ဘာလို့ လိုလဲ:** `confirm_delete` က `AT+CMGL="ALL"` (text mode form)
+  ကို hardcode ထားခဲ့တယ်။ Live worker က ရနိုင်သရွေ့ **PDU mode** ပြေးတယ် — အဲ့မှာ quoted form
+  က `ERROR` ပြန်တယ် → `slots_still_present` က `None` → per-command count ဆီ တိတ်တဆိတ်
+  ပြန်ကျမယ် (= ပြင်ချင်တဲ့ bug ကို ပြန်ရမယ်)။ `list_all_cmd(pdu_mode)` က `AT+CMGL=4` /
+  `AT+CMGL="ALL"` ရွေးပေးတယ်
+- **Test:** `the_sweep_deletes_high_slots_first_and_confirms_against_the_sim` (highest-first
+  order + **re-read က တကယ် ပို့တာ** — အရင် live loop က မပို့ခဲ့တာ),
+  `the_sweep_confirms_with_the_list_form_for_the_mode_it_is_in`
+- **Rule ၁:** **Operation တစ်ခုကို implementation နှစ်ခု မထားပါ။** ဒီ repo မှာ `setup_sms_mode`
+  ကို scan/live နှစ်ခု ခွဲရေးထားခဲ့တာ drift ဖြစ်ပြီး ပေါင်းခဲ့ရတယ် (`modem.rs` doc comment မှာ
+  မှတ်ထား) — ဒါက **တူတဲ့ သင်ခန်းစာ ဒုတိယအခေါက်**။ Channel-taking helper အဖြစ် ထုတ်ပြီး
+  ခေါ်ပါ၊ ကူးမရေးပါ
+- **Rule ၂:** AT reply ကို `contains("OK")` နဲ့ **ဘယ်တော့မှ** မစစ်ပါ။ `lines().any(|l| l.trim()
+  == "OK")` ပဲ သုံးပါ — `OK` က result code ဖြစ်ရမယ်၊ စာသား substring မဟုတ်
+- **Rule ၃:** Helper ကို ပေါင်းတဲ့အခါ **mode-dependent constant တွေ ဝှက်နေလား** စစ်ပါ။
+  `AT+CMGL="ALL"` က hardcode ဖြစ်နေတာမို့ ပေါင်းလိုက်တာနဲ့ PDU-mode caller ဆီမှာ တိတ်တဆိတ်
+  degrade ဖြစ်မယ် — parameter အဖြစ် ထုတ်လိုက်တာက အဲ့ဒါကို ဖြေရှင်းတယ်
 
 ## ⚠️ Latent Traps (မဖြစ်သေးဘူး၊ ဒါပေမဲ့ ချောင်းနေတာ)
 
