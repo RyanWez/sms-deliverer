@@ -95,3 +95,12 @@ jobs:
 
       - name: run frontend tests
         run: npm test
+
+      # svelte-check type-checks; it does not exercise rollup, PostCSS or
+      # Tailwind. A broken dynamic import path or a Tailwind config error passes
+      # `npm run check` and fails `vite build`. build-check.yml does catch it,
+      # because tauri's beforeBuildCommand runs this — but only on PRs into main
+      # and only seven minutes into a two-platform installer build. `npm ci` has
+      # already run here, so the marginal cost is about two seconds.
+      - name: build frontend
+        run: npm run build

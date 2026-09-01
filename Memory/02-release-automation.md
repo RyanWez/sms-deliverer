@@ -96,6 +96,40 @@ gh release create v1.0.1 --target main --title "v1.0.1" --notes-file notes.md
 - Old GitHub Releases = immutable snapshots — workflow/policy ပြောင်းလဲမှုက future releases
   ပေါ်မှာပဲ apply ဖြစ် (v1.0.1 assets untouched)။
 
+### 6️⃣ `sync-cargo-lock` race — `concurrency` + rebase-retry (2026-08-31 ပြင်ပြီး)
+
+- **အရင် ပြဿနာ:** `release-please.yml` မှာ `concurrency` block မရှိခဲ့ဘူး၊ `sync-cargo-lock` ရဲ့
+  push က ရိုးရိုး `git push origin "HEAD:${VERSION_REF}"` (force မဟုတ်၊ retry မရှိ) ဖြစ်ခဲ့တယ်။
+  `main` ကို ဆက်တိုက် push နှစ်ခု လုပ်ရင် run နှစ်ခု တစ်ပြိုင်နက် ပြေးတယ်: run A က release
+  branch ကို SHA₁ မှာ checkout လုပ်တယ် → run B ရဲ့ release-please က SHA₂ ကို force-push
+  တင်တယ် → run A ရဲ့ push က **non-fast-forward** fail ဖြစ်တယ်။ ရလဒ်က release PR ဟာ
+  unsynced `Cargo.lock` နဲ့ `--locked` check အနီ နဲ့ ကျန်တယ် (case #8 ရဲ့ ပြန်လာမှု)
+- **Fix ၂ ခု:** (၁) workflow-level `concurrency: { group: release-please-${{ github.ref }},
+  cancel-in-progress: false }` — **cancel မလုပ်ဘဲ တန်းစီ**၊ ဘာလို့လဲဆိုတော့ တစ်ဝက်တပျက်
+  release PR ဟာ တန်းစီနေတဲ့ PR ထက် ပိုဆိုးတာမို့။ (၂) push ကို attempt ၃ ခါ loop —
+  reject ဖြစ်ရင် `git fetch` + `git rebase origin/<branch>` နဲ့ branch tip ပေါ် replay လုပ်၊
+  release-please ကိုယ်တိုင် lockfile ကို ရေးထားပြီးရင် ရှင်းရှင်း exit
+- **`--force` ဘယ်တော့မှ မသုံးပါ** — အဲ့ branch ပေါ်မှာ release-please ရေးထားတာ က
+  authoritative ဖြစ်တယ်၊ ဖျက်လိုက်ရင် version bump ကိုယ်တိုင် ပျောက်နိုင်တယ်
+- **မလုပ်ရသေးတဲ့ အကြံပြုချက် ၂ ခု** (2026-08-31 pipeline audit — code မဟုတ်တာမို့ ဒီ PR
+  ထဲ မပါဘူး):
+  1. **`main` branch protection မရှိဘူး** (`gh api .../branches/main/protection` → 404,
+     rulesets → `[]`)။ Required status check မရှိတာမို့ `test.yml`/`build-check.yml` က
+     **advisory ပဲ** — red run က merge ကို မတားဘူး၊ direct push ကို ဘာမှ မတားဘူး။
+     ထည့်တဲ့အခါ သတိထား: `test.yml`/`build-check.yml` နှစ်ခုလုံးမှာ `paths-ignore` ရှိတယ်၊
+     skip ဖြစ်တဲ့ job က check report မလုပ်တာမို့ **docs-only PR က deadlock** ဖြစ်မယ်။
+     `paths-ignore` ဖျက်ရင် ဒါမှမဟုတ် no-op "skip" companion job ထည့်ရင် ဖြေရှင်းရမယ်
+  2. **Updater endpoint က artifact မရောက်ခင် 404 window ရှိတယ်။** v1.4.0 ရဲ့ metadata:
+     release `publishedAt` 11:36:40Z, အစောဆုံး asset `createdAt` 11:44:13Z — **7m33s**။
+     ပိုအရေးကြီးတာက `fail-fast: true` က "publish is all-or-nothing" လို့ comment
+     ရေးထားပေမယ့် **တကယ် မဟုတ်ဘူး** — matrix leg နှစ်ခု parallel ပြေးပြီး တစ်ခုချင်း
+     `latest.json` တင်တာမို့ Windows leg က Linux ပြီးမှ fail ရင် Linux ပဲ ကြေငြာတဲ့
+     "latest" release က အမြဲ ကျန်တယ်၊ `workflow_dispatch` လည်း မရှိဘူး။ ဖြေရှင်းချက်:
+     release-please ကို **draft** ဖန်တီးခိုင်း (`release-please-config.json` မှာ
+     `draft: true`) ပြီး `tauri-build.yml` မှာ leg နှစ်ခု အောင်မှ publish flip လုပ်တဲ့ job
+     ထည့် — `/releases/latest` က draft မပါတာမို့ window တစ်ခုလုံး အရင် release ကောင်း
+     ပေါ် ကျန်နေမယ်
+
 ## 🚀 Developer Step-by-Step Release Cheatsheet (အနာဂတ် Release လမ်းညွှန်ချက်)
 
 ကုဒ်များ အသစ်ရေးသား/ပြင်ဆင်ပြီးတိုင်း App Version အသစ် ထုတ်ရန်အတွက် အောက်ပါ အဆင့် ၃ ဆင့်ကို လုပ်ဆောင်ရုံသာ ဖြစ်သည်-
