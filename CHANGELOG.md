@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.5.0](https://github.com/RyanWez/sms-deliverer/compare/v1.4.0...v1.5.0) (2026-09-01)
+
+
+### Features
+
+* surface delete, export and reconnect outcomes to the operator ([#17](https://github.com/RyanWez/sms-deliverer/issues/17)) ([1c3c7a9](https://github.com/RyanWez/sms-deliverer/commit/1c3c7a9a6900738bf898930739f98e2c84b54591))
+
+
+### Bug Fixes
+
+* clear every busy flag on panic and report a crashed live worker ([#18](https://github.com/RyanWez/sms-deliverer/issues/18)) ([1263ca3](https://github.com/RyanWez/sms-deliverer/commit/1263ca30b5274ab39a294541646b362e3c05e79a))
+* confirm the live SIM sweep against the card, and bound the toast column ([#20](https://github.com/RyanWez/sms-deliverer/issues/20)) ([4f87921](https://github.com/RyanWez/sms-deliverer/commit/4f87921dde4f6ea590cdc005e9f449e86682fa7f))
+* give live-mode messages their real SIM slot index ([#12](https://github.com/RyanWez/sms-deliverer/issues/12)) ([492634e](https://github.com/RyanWez/sms-deliverer/commit/492634ea4471a790706ea95035b18b34fd3327aa))
+* stop the inbox search box from discarding what the operator types ([#15](https://github.com/RyanWez/sms-deliverer/issues/15)) ([56fd2c8](https://github.com/RyanWez/sms-deliverer/commit/56fd2c88fa5a492b100c7ad9776cbce3ecf02ca9))
+* tell a port that could not be probed apart from an empty SIM slot ([#19](https://github.com/RyanWez/sms-deliverer/issues/19)) ([3710a64](https://github.com/RyanWez/sms-deliverer/commit/3710a64ec3eb7b5d906251131db6c5e8aeb0edde))
+* treat an absurd retention window as "keep everything" instead of panicking ([#13](https://github.com/RyanWez/sms-deliverer/issues/13)) ([b37edb7](https://github.com/RyanWez/sms-deliverer/commit/b37edb77684a25f2e45c27f3f7e23b7c5a986191))
+
 ## [1.4.0](https://github.com/RyanWez/sms-deliverer/compare/v1.3.1...v1.4.0) (2026-08-30)
 
 
