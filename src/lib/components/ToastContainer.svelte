@@ -2,6 +2,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import type { IconName } from '$lib/icons';
   import { liveStore } from '$lib/stores/live.svelte';
+  import { countSuffix } from '$lib/utils/toast-queue';
   import type { ToastData } from '$lib/types';
 
   const toasts = $derived(liveStore.toasts);
@@ -23,7 +24,7 @@
     <div class={meta.cls}>
       <span class="toast-icon mt-0.5 shrink-0"><Icon name={meta.icon} size={16} /></span>
       <div class="toast-body">
-        <div class="toast-title">{t.title}</div>
+        <div class="toast-title">{t.title}{countSuffix(t)}</div>
         <div class="toast-text">{t.body}</div>
         {#if t.otp}
           <div class="toast-otp-value">{t.otp}</div>

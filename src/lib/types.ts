@@ -48,6 +48,11 @@ export interface ToastData {
   title: string;
   body: string;
   otp: string | null;
+  /**
+   * How many identical notices this card stands for, set by
+   * `utils/toast-queue.ts::pushToast` when repeats collapse. Absent means one.
+   */
+  count?: number;
 }
 
 export interface ScanStatus {

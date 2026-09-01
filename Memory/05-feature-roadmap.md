@@ -327,10 +327,39 @@ store ကို settings ကနေ **seed** လုပ်ရမယ်၊ ပြ�
 လုပ်တာမို့ counter နှစ်ခု ထပ်ရင် duplicate key က throw ဖြစ်တယ် (အခု counter ၃ ခု ရှိပြီးသား:
 `api.ts:22` က 1 ကနေ, `logs.svelte.ts:6` က 1000 ကနေ, `updater.ts:45`)။
 
-**ကျန်နေတဲ့ အလုပ် (ဒီ change ထဲ မပါ):** toast array က cap မရှိဘူး (`live.svelte.ts:13`)
-ပြီးတော့ coalesce မလုပ်ဘူး။ Port ၁၆ ခု flap ဖြစ်ရင် toast ၁၆ ခု စီပြီး viewport ကျော်တယ် —
-`live:reconnecting` toast ထည့်လိုက်တာက ဒီ ချောင်းကို **ပိုနီးစပ်စေတယ်**။ newest ~5 ပဲ ထားတာ
-ဒါမှမဟုတ် port အလိုက် coalesce လုပ်တာ နောက် change မှာ လုပ်ရမယ်။
+**ကျန်နေခဲ့တဲ့ အလုပ် — အခု ပြင်ပြီး (C.9 ကြည့်):** toast array က cap မရှိခဲ့ဘူး
+(`live.svelte.ts:13`) ပြီးတော့ coalesce မလုပ်ခဲ့ဘူး။ `live:reconnecting` toast ထည့်လိုက်တာက
+ဒီ ချောင်းကို **ပိုနီးစပ်စေခဲ့တယ်**။
+
+### C.9 ✅ **DONE:** Toast column ကို ဘောင်ခတ်တာ + တူတဲ့ notice တွေ ပေါင်းတာ
+
+**ပြဿနာ:** `addToast` က `toasts = [...toasts, t]` — cap မရှိ၊ dedupe မရှိ။ Toast တစ်ခုက
+၄ စက္ကန့် ရှင်ပြီး `.toast-container` က `max-height` မရှိတဲ့ fixed bottom-right column
+(`app.css:258`)။ ဆိုတော့ **port ၁၆ ခု တစ်ပြိုင်နက် ကျရင် card ၁၆ ခု viewport အပေါ်ကို
+ကျော်တက်ပြီး၊ အဲ့ failure ကို report နေတဲ့ UI ကိုယ်တိုင် ဖုံးတယ်**
+
+**Fix — `src/lib/utils/toast-queue.ts`** (rune-free, `$lib`-free မို့ Node runner က
+တိုက်ရိုက် import လုပ်နိုင်တယ် — `csv.ts`/`port-refresh.ts` precedent):
+- `MAX_TOASTS = 5`၊ `pushToast` က newest ကို ထားပြီး `slice(-MAX_TOASTS)`
+- `kind` + `title` တူရင် card တစ်ခုပေါ် ပေါင်းပြီး `count` တိုးတယ်၊ title က `Port lost (16)`
+  ဖြစ်လာတယ် (`countSuffix`)
+- **`otp` ပါတဲ့ toast ကို ဘယ်တော့မှ မပေါင်းဘူး** — code တစ်ခုချင်းစီက operator ဖတ်ရမယ့်
+  သီးသန့် အရာ ဖြစ်တာမို့၊ ပေါင်းလိုက်ရင် တစ်ခု တိတ်တဆိတ် ပျောက်မယ်
+- Body က **newest** ကို ယူတယ်၊ merge မလုပ်ဘူး — port ၁၆ ခုရဲ့ နာမည် ပေါင်းထားတဲ့ body ဟာ
+  ၄ စက္ကန့် card ထဲ ဖတ်လို့ မရဘူး၊ count က scale ကို ပြပြီးသား
+- Coalesced card ကို array အဆုံးကို ရွှေ့တယ် — repeat က မျက်လုံး ခွာသွားပြီးတဲ့ card ကို
+  update လုပ်တာထက် အောက်ဘက်မှာ ပြန်ကြေငြာတာ ပိုကောင်းတယ်
+
+**4 စက္ကန့် timer:** `setTimeout` က schedule လုပ်တဲ့ id ပေါ်မှာပဲ key လုပ်တယ်။ Coalesced card
+က id အသစ် ဖြစ်တာမို့ ကျော်သွားတဲ့ timer က ဖျက်စရာ မတွေ့ဘူး၊ merged card က သူ့ကိုယ်ပိုင်
+၄ စက္ကန့် အပြည့် ရတယ် — **flap ဖြစ်နေသေးတဲ့ port ရဲ့ notice က ဆက်ရှိနေတယ်**၊ ဒါ ရည်ရွယ်ချက်
+
+**Test ၁၃ ခု** (`toast-queue.test.ts`) — cap, coalesce, OTP မပေါင်းတာ, title/kind ကွာရင်
+မပေါင်းတာ, immutability, cap အောက်မှာ coalesce လုပ်တာက တခြား card မပျောက်တာ
+
+**Preview မှာ အတည်ပြုပြီး:** Refresh ၁၀ ခါ ဆက်တိုက် → card **၁** ခု `Refreshed (10)`,
+container height 127px မှာ ရပ်တယ် (အရင်က card ၁၀ ခု စီမယ်)။ Cap ကိုယ်တိုင်ကို preview မှာ
+မရောက်နိုင်ဘူး — synthetic app က distinct title ၂ ခုပဲ ထုတ်တာမို့၊ ဒါကို unit test က ဖမ်းတယ်
 
 ## D. Dropped — feature အဖြစ်ပါ **ပြန်မမွေးရ**
 

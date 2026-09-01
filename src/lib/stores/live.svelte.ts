@@ -1,4 +1,5 @@
 import type { ToastData } from '$lib/types';
+import { dismissToast, pushToast } from '$lib/utils/toast-queue';
 
 export function createLiveStore() {
   let on = $state(false);
@@ -10,15 +11,20 @@ export function createLiveStore() {
   let statusText = $state('');
   let toasts = $state<ToastData[]>([]);
 
+  // Bounded and coalescing — see utils/toast-queue.ts for why. The 4 s timer
+  // still keys on the id it was scheduled with: a coalesced card is a new id, so
+  // the superseded timer finds nothing to remove and the merged card gets its own
+  // full 4 s. A repeat therefore keeps the notice on screen, which is what you
+  // want from a port that is still flapping.
   function addToast(t: ToastData) {
-    toasts = [...toasts, t];
+    toasts = pushToast(toasts, t);
     setTimeout(() => {
-      toasts = toasts.filter(x => x.id !== t.id);
+      toasts = dismissToast(toasts, t.id);
     }, 4000);
   }
 
   function removeToast(id: number) {
-    toasts = toasts.filter(t => t.id !== id);
+    toasts = dismissToast(toasts, id);
   }
 
   return {

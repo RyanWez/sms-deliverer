@@ -274,7 +274,13 @@ fn run_live_inner<F>(
         if let Some(cutoff) = retention.map(models::retention_cutoff_ms) {
             let doomed = models::expired_indices(&initial, cutoff);
             if !doomed.is_empty() {
-                let n = delete_indices(&mut ch, &doomed);
+                let n = crate::core::modem::delete_confirmed(
+                    &mut ch,
+                    port_name,
+                    &doomed,
+                    crate::core::modem::list_all_cmd(pdu_ok),
+                )
+                .deleted;
                 log::info!("{}: SIM cleanup deleted {} expired message(s)", port_name, n);
             }
             initial.retain(|m| !models::is_expired(m, cutoff));
@@ -426,29 +432,17 @@ fn run_live_inner<F>(
     });
 }
 
-/// Delete SIM slots over an already-open channel. Highest index first so a
-/// modem that renumbers on delete can't shift slots we have not visited yet.
-fn delete_indices(ch: &mut AtChannel, indices: &[i32]) -> usize {
-    let mut deleted = 0usize;
-    for idx in indices.iter().rev() {
-        if ch.is_dead() {
-            break;
-        }
-        if ch.send(&format!("AT+CMGD={idx}"), 3000).contains("OK") {
-            deleted += 1;
-        }
-    }
-    deleted
-}
-
-/// Re-read the SIM and delete everything past retention. Used on the live
-/// worker's own channel, where reopening the port is not an option.
+/// Re-read the SIM and delete everything past retention, reporting only what the
+/// SIM itself confirms is gone.
+///
+/// Used on the live worker's own channel, where reopening the port is not an
+/// option — hence `modem::delete_confirmed` rather than `modem::delete_messages`.
+/// This used to have its own delete loop that accepted any reply containing `OK`
+/// and never re-read the card, so the count it logged was what the modem had been
+/// *asked* for, not what went.
 fn sweep_expired(ch: &mut AtChannel, port_name: &str, pdu_mode: bool, cutoff: i64) -> usize {
-    let resp = if pdu_mode {
-        ch.send("AT+CMGL=4", 15000)
-    } else {
-        ch.send("AT+CMGL=\"ALL\"", 15000)
-    };
+    let list_cmd = crate::core::modem::list_all_cmd(pdu_mode);
+    let resp = ch.send(list_cmd, 15000);
     if !resp.contains("+CMGL:") {
         return 0;
     }
@@ -466,7 +460,7 @@ fn sweep_expired(ch: &mut AtChannel, port_name: &str, pdu_mode: bool, cutoff: i6
     if doomed.is_empty() {
         return 0;
     }
-    delete_indices(ch, &doomed)
+    crate::core::modem::delete_confirmed(ch, port_name, &doomed, list_cmd).deleted
 }
 
 /// Sleep in small slices so a stop request wakes us immediately instead of
@@ -623,7 +617,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_indices_removes_high_slots_first_and_counts_them() {
+    fn the_sweep_deletes_high_slots_first_and_confirms_against_the_sim() {
         let sent = Arc::new(Mutex::new(Vec::new()));
         let mut ch = AtChannel::with_transport(
             "ttyUSB0",
@@ -632,11 +626,52 @@ mod tests {
                 sent: Arc::clone(&sent),
             }),
         );
-        assert_eq!(delete_indices(&mut ch, &[1, 4, 7]), 3);
+        // Every command answers a bare OK, so the confirming `AT+CMGL` lists
+        // nothing: the SIM says all three slots are gone.
+        let n = crate::core::modem::delete_confirmed(
+            &mut ch,
+            "ttyUSB0",
+            &[1, 4, 7],
+            crate::core::modem::list_all_cmd(false),
+        )
+        .deleted;
+        assert_eq!(n, 3);
         assert_eq!(
             *sent.lock().unwrap(),
-            vec!["AT+CMGD=7", "AT+CMGD=4", "AT+CMGD=1"]
+            vec![
+                "AT+CMGD=7",
+                "AT+CMGD=4",
+                "AT+CMGD=1",
+                // The re-read the old live-only loop never did.
+                "AT+CMGL=\"ALL\""
+            ]
         );
+    }
+
+    /// PDU mode takes the numeric list form. The live worker runs in PDU mode
+    /// whenever the modem allows it, and sending the quoted form there earns an
+    /// `ERROR` — which makes the confirming re-read unusable and silently drops
+    /// the sweep back onto the per-command count it used to trust blindly.
+    #[test]
+    fn the_sweep_confirms_with_the_list_form_for_the_mode_it_is_in() {
+        assert_eq!(crate::core::modem::list_all_cmd(true), "AT+CMGL=4");
+        assert_eq!(crate::core::modem::list_all_cmd(false), "AT+CMGL=\"ALL\"");
+
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let mut ch = AtChannel::with_transport(
+            "ttyUSB0",
+            Box::new(OkTransport {
+                pending: Vec::new(),
+                sent: Arc::clone(&sent),
+            }),
+        );
+        crate::core::modem::delete_confirmed(
+            &mut ch,
+            "ttyUSB0",
+            &[2],
+            crate::core::modem::list_all_cmd(true),
+        );
+        assert_eq!(*sent.lock().unwrap(), vec!["AT+CMGD=2", "AT+CMGL=4"]);
     }
 
     #[test]
