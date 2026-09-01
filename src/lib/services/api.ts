@@ -5,6 +5,7 @@ import { liveStore } from '$lib/stores/live.svelte';
 import { settingsStore } from '$lib/stores/settings.svelte';
 import { logsStore } from '$lib/stores/logs.svelte';
 import { describePortChanges, diffPorts } from '$lib/utils/port-refresh';
+import { portLabel } from '$lib/utils/port';
 import { toCsv } from '$lib/utils/csv';
 import type { CsvRow } from '$lib/utils/csv';
 import {
@@ -163,8 +164,31 @@ export const api = {
         messagesStore.deleteBusy = false;
       });
 
-      await listen('delete:done', () => {
+      await listen<{
+        requested: number;
+        freed: number;
+        removed: number;
+        kept: number;
+        failed_ports: number;
+      }>('delete:done', (event) => {
         messagesStore.deleteBusy = false;
+        const { requested, freed, removed, kept, failed_ports } = event.payload;
+        // A row is only dropped when every SIM slot it occupies is confirmed
+        // gone, so "kept" means the message is still on the card. Saying nothing
+        // about it made a partial delete look exactly like a clean one.
+        if (kept > 0 || failed_ports > 0) {
+          const parts = [`Freed ${freed} of ${requested} SIM slot(s).`];
+          if (removed > 0) parts.push(`${removed} message(s) removed.`);
+          if (kept > 0) parts.push(`${kept} still on the SIM and kept in the list.`);
+          if (failed_ports > 0) parts.push(`${failed_ports} port(s) failed.`);
+          toast('Warning', 'Delete incomplete', parts.join(' '));
+        } else if (removed > 0) {
+          toast(
+            'Success',
+            'Delete complete',
+            `${removed} message(s) removed, ${freed} SIM slot(s) freed.`
+          );
+        }
       });
 
       await listen<{ ports: PortInfo[] }>('ports:updated', (event) => {
@@ -181,7 +205,15 @@ export const api = {
 
       await listen<{ port: string; error: string }>('live:reconnecting', (event) => {
         liveStore.readyPorts = portsStore.items.filter((p) => p.live_ready).map((p) => p.name);
-        console.warn(`[api] Port ${event.payload.port} lost, reconnecting: ${event.payload.error}`);
+        // A port dropping out mid-shift is the event most worth interrupting for,
+        // and console.warn is invisible in a packaged build with devtools closed.
+        // Operational notices are deliberately not gated on notifications.enabled
+        // (see applyRefreshedPorts) — that switch is for OTP alerts.
+        toast(
+          'Warning',
+          'Port lost',
+          `${portLabel(event.payload.port)} stopped answering — reconnecting. ${event.payload.error}`
+        );
       });
 
       // A port live mode is holding open where no modem answers — an empty SIM
@@ -289,6 +321,28 @@ export const api = {
 
       await listen<{ error: string }>('export:failed', (event) => {
         toast('Danger', 'Export failed', event.payload.error);
+      });
+
+      // Without this the desktop app said nothing at all on success, so a
+      // written file and a cancelled dialog looked the same. The browser
+      // preview already toasted, so this is also a parity fix.
+      await listen<{ path: string }>('export:saved', (event) => {
+        toast('Success', 'Export complete', `Saved to ${event.payload.path}`);
+      });
+
+      // The idle SIM sweep runs on a timer with no operator involvement, so its
+      // outcome only ever reached the Ports page footer.
+      await listen<{ deleted: number; failed: number }>('sim_cleanup:done', (event) => {
+        const { deleted, failed } = event.payload;
+        if (failed > 0) {
+          toast(
+            'Warning',
+            'SIM cleanup incomplete',
+            `Freed ${deleted} expired SIM slot(s); ${failed} port(s) failed.`
+          );
+        } else if (deleted > 0) {
+          toast('Success', 'SIM cleanup', `Freed ${deleted} expired SIM slot(s).`);
+        }
       });
 
       if (settingsStore.general.autoStartLive && portsStore.items.some(p => p.checked)) {
@@ -451,9 +505,17 @@ export const api = {
         const { invoke } = await import('@tauri-apps/api/core');
         await invoke('delete_selected', { ids });
       } else {
+        // Preview parity: the desktop app reports the verdict through
+        // `delete:done`, so the synthetic path has to say something too. There
+        // is no SIM here, so every requested row is confirmed gone.
         setTimeout(() => {
           messagesStore.removeByIds(ids);
           messagesStore.deleteBusy = false;
+          toast(
+            'Success',
+            'Delete complete',
+            `${ids.length} message(s) removed, ${ids.length} SIM slot(s) freed.`
+          );
         }, 800);
       }
     } catch (e) {

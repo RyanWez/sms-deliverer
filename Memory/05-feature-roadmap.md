@@ -293,6 +293,45 @@ store ကို settings ကနေ **seed** လုပ်ရမယ်၊ ပြ�
   **probe က ကျရှုံးပြီးသား branch** အတွက်ပဲ (Offline latch ဝင်ပြီးသား port)၊ Ready
   ဖြစ်သွားပြီးသား port အတွက် မဟုတ်ဘူး
 
+### C.8 ✅ **DONE:** Backend outcome တွေ operator ဆီ ရောက်အောင် — event contract ရဲ့ ကျိုးနေတဲ့ အပိုင်း
+
+**ပြဿနာ:** Rust က event ၁၈ မျိုး emit တယ်၊ frontend က ၁၆ ခုပဲ နားစွင့်တယ် —
+`export:saved` နဲ့ `sim_cleanup:done` က listener **လုံးဝ မရှိ**။ ပြီးတော့ နားစွင့်ပေမယ့်
+**အဖြေကို ဖုံးထားတဲ့** ကိစ္စ ၂ ခု ရှိတယ်: `delete:done` က payload ဗလာ ဖြစ်ခဲ့တယ်၊
+`live:reconnecting` က `console.warn` ပဲ ဖြစ်ခဲ့တယ်။ ဆိုတော့:
+
+| ဖြစ်ရပ် | Operator မြင်တာ (အရင်) |
+|---|---|
+| Export အောင်မြင် | **ဘာမှ မမြင်** — "Choose a location…" toast ပဲ။ cancel နဲ့ ခွဲမရ |
+| Delete: slot ၁၀ ခုမှာ ၂ ခုပဲ ရ | **clean success နဲ့ ထပ်တူ**။ row ၈ ခု ပြန်ကျန်တာကိုပဲ ကိုယ်တိုင် သတိထားရ |
+| Port ၇ တိတ်သွား | `console.warn` — packaged build မှာ devtools ပိတ်ထားတာမို့ **မမြင်** |
+| SIM cleanup က port ၃ ခုမှာ fail | Ports page footer မှာပဲ။ Inbox မှာ ရှိရင် မမြင် |
+
+**အဓိက ဇစ်မြစ်:** `liveStore.statusText` က backend ရဲ့ long-running outcome အားလုံးကို
+ကိုင်ထားပေမယ့် render ဖြစ်တာ **`Ports.svelte:547` တစ်နေရာတည်း** — operator က ဒီ event
+အားလုံးအတွက် Inbox ပေါ် ရှိနေတယ်။
+
+**Fix:**
+- `delete:done` ကို payload ပါစေ: `{ requested, freed, removed, kept, failed_ports }`။
+  **display string ကို frontend မှာ ပြန် parse မလုပ်ဘူး** — contract ကို explicit လုပ်တာ။
+  `kept > 0 || failed_ports > 0` ဆိုရင် `Warning` toast, မဟုတ်ရင် `Success`
+- `export:saved` + `sim_cleanup:done` listener ထည့်
+- `live:reconnecting` ကို `Warning` toast (`detect:done` ပုံစံ)။ **`live:offline` က
+  console-only အတိုင်း** — SIM မရှိတဲ့ slot က incident မဟုတ်ဘူး၊ code comment နဲ့လည် ကိုက်တယ်
+- `Inbox.svelte` မှာ `page-footer` ထည့် (`Ports.svelte` markup ပြန်သုံး၊ token အသစ် မထည့်) —
+  message count + `statusText`
+- Preview parity: `deleteSelected` ရဲ့ non-Tauri branch လည် toast ပြရမယ်
+
+**Toast တိုင်းကို `api.ts` ရဲ့ ရှိပြီးသား `toast` wrapper ကနေ ပဲ ပို့ပါ** — id counter
+အသစ် မထည့်နဲ့။ `ToastContainer.svelte:21` က `{#each toasts as t (t.id)}` နဲ့ id ကို key
+လုပ်တာမို့ counter နှစ်ခု ထပ်ရင် duplicate key က throw ဖြစ်တယ် (အခု counter ၃ ခု ရှိပြီးသား:
+`api.ts:22` က 1 ကနေ, `logs.svelte.ts:6` က 1000 ကနေ, `updater.ts:45`)။
+
+**ကျန်နေတဲ့ အလုပ် (ဒီ change ထဲ မပါ):** toast array က cap မရှိဘူး (`live.svelte.ts:13`)
+ပြီးတော့ coalesce မလုပ်ဘူး။ Port ၁၆ ခု flap ဖြစ်ရင် toast ၁၆ ခု စီပြီး viewport ကျော်တယ် —
+`live:reconnecting` toast ထည့်လိုက်တာက ဒီ ချောင်းကို **ပိုနီးစပ်စေတယ်**။ newest ~5 ပဲ ထားတာ
+ဒါမှမဟုတ် port အလိုက် coalesce လုပ်တာ နောက် change မှာ လုပ်ရမယ်။
+
 ## D. Dropped — feature အဖြစ်ပါ **ပြန်မမွေးရ**
 
 | Item | ဆုံးဖြတ်ချက် |
