@@ -231,7 +231,7 @@
   တစ်ခုတည်းပဲ။ Scan path (`parse_pdu_list`/`parse_text_mode_list`) က `+CMGL` header ကနေ slot
   မှန်မှန် ထည့်တယ်။ Retention sweep (`live::sweep_expired`, `modem::expire_old`) က SIM ကို
   **ကိုယ်တိုင် ပြန်ဖတ်ပြီး** list parser သုံးတာမို့ မထိခိုက်ဘူး
-- **Fix:** `parse_cmgr(resp, port, idx)` / `parse_pdu_cmgr(resp, port, idx)` — slot ကို parameter
+- **Fix (v1.5.0):** `parse_cmgr(resp, port, idx)` / `parse_pdu_cmgr(resp, port, idx)` — slot ကို parameter
   အဖြစ် သွင်း၊ default မထား။ `live::handle_cmgr` က `idx` ကို `asm.push` **မတိုင်မီ** ပေးတာမို့
   `finish()` ရဲ့ `part_indices` က တကယ့် slot တွေ စုမယ်။ `decode_deliver` ရဲ့ `index: 0` က
   ကျန်ထားပေမယ့် "raw PDU မှာ slot မပါဘူး၊ caller နှစ်ခုလုံး overwrite လုပ်တယ်" ဆိုတဲ့ comment ထည့်
@@ -274,7 +274,7 @@
   ဆိုတော့ mirror လုပ်ရမယ့် external update ဆိုတာ မရှိဘူး။ Page navigation ကို
   `let localQuery = $state(messagesStore.query)` initialiser ကိုယ်တိုင် ဖြေရှင်းပေးပြီးသား
   (Inbox က remount ဖြစ်တဲ့အခါ store က query ကို ကျန်ထားတယ်)
-- **Fix:** effect ကို ဖျက်လိုက်တယ်။ Input က `localQuery` ကို ပိုင်တယ်၊ debounce က
+- **Fix (v1.5.0):** effect ကို ဖျက်လိုက်တယ်။ Input က `localQuery` ကို ပိုင်တယ်၊ debounce က
   store ကို ရေးတယ် — one-way။ `src/lib/pages/Ports.svelte:28-42` က ဒီပုံစံ မှန်မှန်
   ရေးထားပြီးသား (`rawQuery`/`debouncedQuery`, sync effect မထား)
 - **အတည်ပြုမှု (A/B, browser preview):** effect ရှိတဲ့အခါ — field ဗလာ၊ `35 msgs` အတိုင်း။
@@ -318,7 +318,7 @@
   `OutageLatch` က outage တစ်ခုအတွက် event တစ်ခုပဲ ပို့တာမို့ (ထပ်ခါထပ်ခါ မပို့ဘူး) ဖျက်လိုက်တာ
   **ပြန်မလာဘူး**။ `alive` ကို carry လုပ်ပြီးသားမို့ **silence တစ်ခုတည်း** သာ ကျန်ပြီး
   operator အလိုအရေးဆုံး ဖြစ်တဲ့ နှစ်ခု က ပျောက်တဲ့ နှစ်ခု ဖြစ်တယ်
-- **Fix (၁):** `ProbeResult` မှာ `failure: Option<String>` + `proved_empty()` ထည့်၊ ပြီးတော့
+- **Fix (၁) — v1.5.0:** `ProbeResult` မှာ `failure: Option<String>` + `proved_empty()` ထည့်၊ ပြီးတော့
   `ProbeVerdict` enum ၃ မျိုး:
   | Verdict | `alive` | `checked` | `iccid` | `sim_dir` | `live_error` |
   |---|---|---|---|---|---|
@@ -327,7 +327,7 @@
   | `Inconclusive(why)` | **မထိ** | **မထိ** | **မထိ** | **မထိ** | `Some(why)` |
 
   `Empty` က `alive = Some(false)` သတ်မှတ်ခွင့်ရှိတဲ့ **တစ်ခုတည်းသော** verdict
-- **Fix (၂):** `live_error` ကို refresh အတွင်း carry လုပ်တယ် — `live_ready` လိုပဲ **tty name
+- **Fix (၂) — v1.5.0:** `live_error` ကို refresh အတွင်း carry လုပ်တယ် — `live_ready` လိုပဲ **tty name
   တူမှ**။ Renumber ဖြစ်ပြီးရင် အဲ့ message က မရှိတော့တဲ့ name ရဲ့ worker အကြောင်း ဖြစ်တာမို့
   လွဲမှားစေတယ်။ **Expire လုပ်စရာ မလိုဘူး**: `start_live`/`stop_live` နှစ်ခုလုံး boundary မှာ
   `live_error` အားလုံး ရှင်းတယ်၊ `detect_ports` က port အလိုက် ကိုယ်တိုင် overwrite တယ်
@@ -362,7 +362,7 @@
   `contains("OK")` က `+CMS ERROR: 321 ... NOT OK` စတဲ့ စာသား၊ command echo၊ ဒါမှမဟုတ်
   unsolicited line တစ်ခုထဲ ပါလာတဲ့ `OK` ကိုပါ ခံယူတယ်။ ပြီးတော့ confirmation မရှိတာမို့
   ရေတွက်တာက modem ကို **ခိုင်းလိုက်တဲ့** အရေအတွက်၊ တကယ် **ပျက်သွားတဲ့** အရေအတွက် မဟုတ်ဘူး
-- **Fix — helper ကို ပေါင်းလိုက်တာ (structural)**: `modem::delete_confirmed(ch, port, indices,
+- **Fix (v1.5.0) — helper ကို ပေါင်းလိုက်တာ (structural)**: `modem::delete_confirmed(ch, port, indices,
   list_cmd)` ကို `pub(crate)` ထုတ်ပြီး `live::delete_indices` ကို **ဖျက်**လိုက်တယ်။
   `delete_messages` (port ကို ကိုယ်တိုင် ဖွင့်တယ်) နဲ့ live sweep (မဖွင့်နိုင်ဘူး) နှစ်ခုလုံး
   အခု entry point တစ်ခုတည်း သုံးတယ် — **ထပ် drift ဖြစ်လို့ မရတော့ဘူး**
@@ -390,7 +390,7 @@ Case မဟုတ်သေးပါ — 2026-08-30 settings cleanup (`fbd7b8b`) 
 (T1–T2 settings layer၊ T3 decoder)၊ ပြီးတော့ 2026-08-31 audit ကနေ T4 (retention layer) နဲ့
 T5 (busy-flag layer)။
 Symptom မရှိသေးလို့ fix မလုပ်ခဲ့ဘူး၊ ဒါပေမဲ့ နောက်ဆို ရှင်းပြရ ခက်တဲ့ bug ဖြစ်လာနိုင်တယ်။
-**T3 က v1.4.0 မှာ၊ T4/T5 က ဒီအောက်မှာ ကုဒ် ပြင်ပြီးသွားပြီ** — T1/T2 က ပြင်ရသေး။
+**T3 က v1.4.0 မှာ၊ T4/T5 က v1.5.0 မှာ ကုဒ် ပြင်ပြီးသွားပြီ** — T1/T2 က ပြင်ရသေး။
 
 ### T1. `deepMerge` က **stored** key တွေကို iterate တာ — ဖျက်ထားတဲ့ setting က profile ထဲ မပျောက်
 
@@ -458,7 +458,7 @@ const KW_CONFIRM: &str = "\u{1021}\u{1010}\u{1014}\u{103A}\u{1015}\u{103C}\u{102
   ဖြစ်ရမယ့် body တစ်ခု + မဖြစ်ရမယ့် body တစ်ခု** နဲ့ test ထည့်ပါ။ Constant တစ်ခုတည်းကို
   မှန်လား စစ်တာ မလုံလောက်ဘူး — gate တစ်ခုလုံးကို ပြေးခိုင်းပါ
 
-### T4. `retentionHours` က Rust ကို unclamped ရောက်ပြီး panic ဖြစ်တာ (**ပြင်ပြီး**)
+### T4. `retentionHours` က Rust ကို unclamped ရောက်ပြီး panic ဖြစ်တာ (retention layer — **v1.5.0 မှာ ပြင်ပြီး**)
 
 **Symptom (field မှာ မဖြစ်သေးဘူး — test နဲ့ reproduce လုပ်ခဲ့တာ):** `retentionHours` က
 `1e13` ဝန်းကျင် ဖြစ်ရင် `purge_expired_messages` / `cleanup_sim_storage` က panic တယ်။
@@ -476,7 +476,7 @@ feature ပဲ သေတယ်
   ဒါပေမယ့် store က `localStorage` ကနေ rehydrate ဖြစ်တယ် — profile အို၊ လက်ပြင်၊ corrupt entry
   ကနေ ရောက်တယ်။ `api.ts` က `<= 0` ပဲ စစ်တယ်။ App ရဲ့ purge timer က **၆၀ စက္ကန့်တစ်ခါ**
   ပြန်ခေါ်တာမို့ ဖြစ်ရင် ထပ်ခါထပ်ခါ ဖြစ်မယ်
-- **Fix:** `MAX_RETENTION_HOURS = 87_600.0` (၁၀ နှစ်) — အဲ့ဒါ ကျော်ရင် `None` ပြန်တယ်။
+- **Fix (v1.5.0):** `MAX_RETENTION_HOURS = 87_600.0` (၁၀ နှစ်) — အဲ့ဒါ ကျော်ရင် `None` ပြန်တယ်။
   ၁၀ နှစ်ကျော် retention က "keep everything" နဲ့ **semantically အတူတူ** ဖြစ်တာမို့ ရှိပြီးသား
   "0 = off" precedent နဲ့ တစ်ထပ်တည်း ကျတယ် — error ပြန်တာထက် ပိုကောင်းတယ်၊ ဘာလို့လဲဆိုတော့
   မှားတဲ့ value ဟာ exception မဟုတ်ဘဲ **သာမာန်** input ဖြစ်တာမို့။ `Duration::try_from_secs_f64`
@@ -493,7 +493,7 @@ feature ပဲ သေတယ်
   ဖုံးတယ်**။ `Worker crashed` ဆိုတဲ့ message က operator အတွက် ဘာမှ မဖြေရှင်းပေးဘူး —
   panic ဖြစ်နိုင်တဲ့ input ကို worker ထဲ မရောက်ခင် ဖယ်ပါ
 
-### T5. Busy flag က panic path မှာ မရှင်းတာ — restart မလုပ်မချင်း "Busy" (**ပြင်ပြီး**)
+### T5. Busy flag က panic path မှာ မရှင်းတာ — restart မလုပ်မချင်း "Busy" (busy-flag layer — **v1.5.0 မှာ ပြင်ပြီး**)
 
 **Symptom (field မှာ မဖြစ်သေးဘူး):** operation တစ်ခု panic ဖြစ်ရင် `port_busy()` က ထာဝရ
 `true` ကျန်တယ် → Scan / Live / Get SIM / Delete / Cleanup / Detect **အားလုံး** `Busy` ပြန်တယ်၊
@@ -512,7 +512,7 @@ UI မှာ ဘာမှ မပြဘူး
   3. Live per-port worker မှာလည် `catch_unwind` မရှိခဲ့ဘူး — panic ဖြစ်ရင် `join()` က
      တိတ်တဆိတ် စားလိုက်တယ်၊ port ကို failed လို့ မမှတ်ဘူး၊ **LIVE badge က အစိမ်း ကျန်ပြီး
      message တစ်ခုမှ မဖမ်းဘူး**
-- **Fix — `BusyGuard` (Drop guard):** `{ state: SharedState, clear: fn(&mut AppStateInner) }`။
+- **Fix (v1.5.0) — `BusyGuard` (Drop guard):** `{ state: SharedState, clear: fn(&mut AppStateInner) }`။
   `lock_state` က poison-recovering ဖြစ်တာမို့ panic ပြီးလည် lock ရတယ် (ဒါက guard ကို
   အလုပ်လုပ်စေတဲ့ အချက်)။ **Repo ရဲ့ ပထမဆုံး `impl Drop`** ဖြစ်တယ်
 - **အရေးကြီး — happy path ကို မထိဘူး:** ရှိပြီးသား inline clear တွေ အတိုင်း ထားတယ်။
@@ -541,9 +541,11 @@ UI မှာ ဘာမှ မပြဘူး
 - **Rule ၃:** **Scope မဟုတ်တာကို scope မဟုတ်ဘူးလို့ ရေးထားပါ။** Supervisor ၄ ခုကို
   `run_port_pool` အဖြစ် ပေါင်းတာ ဒီ change ထဲ မပါဘူး: panic policy **၄ မျိုး မတူ**တယ်
   (scan: `failed_notes` push + `done` တိုး · ussd: `done` ပဲ တိုး, ဆိုတော့ panic ဖြစ်တဲ့ port က
-  "မတွေ့ဘူး" လို့ ဖတ်တယ် · cleanup: failure counter တိုး · detect: **dead လို့ သတ်မှတ်ပြီး
-  `sim_dir` slot ရှင်းပစ်တယ်**)။ ပေါင်းရင် policy တစ်ခု ရွေးရမယ် ဒါမှမဟုတ် per-port
-  on-panic callback ထည့်ရမယ် — ဒါက behaviour-normalising refactor ဖြစ်တာမို့ သီးသန့် change
+  "မတွေ့ဘူး" လို့ ဖတ်တယ် · cleanup: failure counter တိုး · detect: **v1.5.0 (#19) ကတည်းက
+  `ProbeVerdict::Inconclusive` — `alive`/`checked`/`iccid`/`sim_dir` မထိဘူး**; အရင်က dead လို့
+  သတ်မှတ်ပြီး `sim_dir` slot ရှင်းခဲ့တာ ဒီ case §16 ကိုယ်တိုင်)။ ပေါင်းရင် policy တစ်ခု ရွေးရမယ်
+  ဒါမှမဟုတ် per-port on-panic callback ထည့်ရမယ် — ဒါက behaviour-normalising refactor ဖြစ်တာမို့
+  သီးသန့် change။ **တမင် ရွှေ့ထားတာ၊ entry က doc 05 §C.10**
 
 ## Bonus UX Notes
 
