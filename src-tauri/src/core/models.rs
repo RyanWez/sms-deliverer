@@ -56,9 +56,18 @@ pub struct PortInfo {
 
 /// Wall-clock cutoff (epoch millis) for a retention window: anything received
 /// before this point has outlived its keep period.
+///
+/// Saturating rather than panicking on an absurd window: `chrono::Duration`
+/// tops out near `i64::MAX / 1000` seconds and its subtraction panics on
+/// overflow, and the window originates in a `localStorage` value. `commands`
+/// clamps it before it reaches here; this is the backstop, and a saturated
+/// cutoff of `i64::MIN` means "nothing is old enough", which is the safe answer.
 pub fn retention_cutoff_ms(retention: Duration) -> i64 {
     let secs = i64::try_from(retention.as_secs()).unwrap_or(i64::MAX);
-    (Utc::now() - chrono::Duration::seconds(secs)).timestamp_millis()
+    chrono::Duration::try_seconds(secs)
+        .and_then(|d| Utc::now().checked_sub_signed(d))
+        .map(|t| t.timestamp_millis())
+        .unwrap_or(i64::MIN)
 }
 
 /// A missing/zero SCTS means the modem gave us no timestamp. Never treat that
@@ -109,6 +118,26 @@ mod tests {
         let mut m = msg(1, 0, vec![]);
         m.received = DateTime::UNIX_EPOCH;
         assert!(!is_expired(&m, retention_cutoff_ms(Duration::from_secs(60))));
+    }
+
+    /// `chrono::Duration::seconds` used to panic here for any window past about
+    /// `i64::MAX / 1000` seconds, and so did the subtraction that followed.
+    /// Saturating to `i64::MIN` means "nothing is old enough", so an absurd
+    /// window keeps everything instead of taking down the caller.
+    #[test]
+    fn an_absurd_retention_window_saturates_instead_of_panicking() {
+        for d in [
+            Duration::from_secs(u64::MAX),
+            Duration::from_secs(i64::MAX as u64),
+            Duration::from_secs(i64::MAX as u64 / 1000 + 1),
+        ] {
+            assert_eq!(retention_cutoff_ms(d), i64::MIN);
+        }
+        let fresh = msg(1, 60, vec![]);
+        assert!(!is_expired(
+            &fresh,
+            retention_cutoff_ms(Duration::from_secs(u64::MAX))
+        ));
     }
 
     #[test]
