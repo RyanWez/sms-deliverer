@@ -202,14 +202,21 @@ fn probe_channel_with(ch: &mut at::AtChannel, timeout_ms: u64, attempts: usize) 
     false
 }
 
-/// Open `port_name` and report whether a modem answers on it.
-///
-/// `Ok(false)` means the node exists but nothing replied (empty slot, unpowered
-/// stick); `Err` means the device could not be opened at all (unplugged,
-/// permissions, already held by another process).
 /// What a single probe learned about a port.
 pub struct ProbeResult {
+    /// A modem answered `AT`.
     pub alive: bool,
+    /// Why nothing answered, when `alive` is false: [`NOT_RESPONDING`] for an
+    /// empty slot, or a `Serial I/O failed: …` string when the host's own read or
+    /// write broke.
+    ///
+    /// The two are not interchangeable and callers must not collapse them.
+    /// Silence is evidence about the slot; a transport failure is evidence about
+    /// this machine and says nothing about whether a SIM is present. `detect_ports`
+    /// used to fold both into `alive = false`, which deselected a port that was
+    /// merely held by ModemManager for a moment and erased its ICCID mapping from
+    /// disk. `None` when `alive`.
+    pub failure: Option<String>,
     /// The SIM's own serial number, when the modem would give it up. This is the
     /// only identity that survives both ttyUSB renumbering and a SIM being moved
     /// to another slot, so it — not the port — is what a phone number is filed
@@ -217,6 +224,18 @@ pub struct ProbeResult {
     pub iccid: Option<String>,
 }
 
+impl ProbeResult {
+    /// True when the probe proved the slot is empty, as opposed to failing to
+    /// find out. Only this may set `PortInfo::alive = Some(false)`.
+    pub fn proved_empty(&self) -> bool {
+        !self.alive && self.failure.as_deref() == Some(NOT_RESPONDING)
+    }
+}
+
+/// Open `port_name` and report whether a modem answers on it.
+///
+/// `Err` means the device could not be opened at all (unplugged, permissions,
+/// already held by another process) — inconclusive, not empty.
 pub fn probe_port(port_name: &str) -> Result<ProbeResult, String> {
     let mut ch = at::AtChannel::open(port_name)?;
     let alive = probe_channel(&mut ch);
@@ -226,7 +245,16 @@ pub fn probe_port(port_name: &str) -> Result<ProbeResult, String> {
         if alive { "alive" } else { "silent" }
     );
     let iccid = if alive { read_iccid(&mut ch) } else { None };
-    Ok(ProbeResult { alive, iccid })
+    let failure = if alive {
+        None
+    } else {
+        Some(probe_failure(port_name, &ch))
+    };
+    Ok(ProbeResult {
+        alive,
+        failure,
+        iccid,
+    })
 }
 
 /// Read the SIM's ICCID. Cheap (a file on the card, no network) but not

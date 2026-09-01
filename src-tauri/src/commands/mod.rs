@@ -220,6 +220,22 @@ fn merge_ports(
             //     entry green again, so a carried-over badge would be a lie.
             let live_ready = live_session
                 && old.map(|p| p.live_ready && p.name == name).unwrap_or(false);
+            // The error text survives a refresh, gated on the tty name for the
+            // same reason as the badge above. Clearing it unconditionally meant a
+            // port stuck in "Reconnecting: Port lost: EIO" or "Serial I/O failed:
+            // …" went back to looking like an ordinary idle row within one
+            // refresh interval — and it never came back, because `OutageLatch`
+            // emits one event per outage rather than repeating. `alive` was
+            // already carried over, so silence was the one failure the operator
+            // could still see and the two that need explaining were the two that
+            // got erased.
+            //
+            // Nothing here has to expire it: `start_live` and `stop_live` both
+            // clear every `live_error` at their boundaries, and `detect_ports`
+            // overwrites it per port with its own verdict.
+            let live_error = old
+                .filter(|p| p.name == name)
+                .and_then(|p| p.live_error.clone());
             PortInfo {
                 name,
                 sim_number: sim_dir.number_of(&path, iccid.as_deref()),
@@ -228,7 +244,7 @@ fn merge_ports(
                 iccid,
                 path,
                 live_ready,
-                live_error: None,
+                live_error,
             }
         })
         .collect()
@@ -278,6 +294,48 @@ pub fn set_all_ports_checked(state: tauri::State<'_, SharedState>, checked: bool
     }
 }
 
+/// What a detect probe concluded about one port.
+///
+/// The distinction the two-state version lost: "nothing is in this slot" and "I
+/// could not find out" are different answers, and only the first is evidence.
+/// `detect_ports` folded an unopenable port, a host-side serial failure and a
+/// panicking probe all into `alive = false`, which then deselected the port,
+/// cleared its `iccid` and erased its slot→ICCID mapping from disk. A port held
+/// by ModemManager for a moment, or one that hit EBUSY, was labelled `NO MODEM`
+/// and lost its card's number permanently.
+enum ProbeVerdict {
+    /// A modem answered, with its ICCID if it would give one up.
+    Alive(Option<String>),
+    /// The probe's own silence — the only verdict allowed to set
+    /// `PortInfo::alive = Some(false)`.
+    Empty,
+    /// The probe never got an answer either way. Nothing about the port's
+    /// recorded state may change; the reason is shown so the row is not silently
+    /// indistinguishable from a healthy one.
+    Inconclusive(String),
+}
+
+impl ProbeVerdict {
+    fn of(
+        port: &str,
+        probed: std::thread::Result<Result<crate::core::modem::ProbeResult, String>>,
+    ) -> Self {
+        match probed {
+            Ok(Ok(r)) if r.alive => ProbeVerdict::Alive(r.iccid),
+            Ok(Ok(r)) if r.proved_empty() => ProbeVerdict::Empty,
+            Ok(Ok(r)) => ProbeVerdict::Inconclusive(
+                r.failure
+                    .unwrap_or_else(|| "Probe failed for an unknown reason".into()),
+            ),
+            Ok(Err(e)) => ProbeVerdict::Inconclusive(format!("Cannot open port: {e}")),
+            Err(_) => {
+                log::error!("Detect probe panicked on {}", port);
+                ProbeVerdict::Inconclusive("Probe crashed — see the log".into())
+            }
+        }
+    }
+}
+
 /// Probe every port once and record which ones actually have a modem behind
 /// them, then leave only those selected.
 ///
@@ -320,6 +378,7 @@ pub fn detect_ports(
         let work = Arc::new(Mutex::new(names));
         let done = Arc::new(AtomicUsize::new(0));
         let alive_count = Arc::new(AtomicUsize::new(0));
+        let unknown_count = Arc::new(AtomicUsize::new(0));
         let workers = total.min(MAX_CONCURRENT_PROBES);
         let mut handles = Vec::with_capacity(workers);
         for _ in 0..workers {
@@ -328,19 +387,18 @@ pub fn detect_ports(
             let app3 = app2.clone();
             let done2 = Arc::clone(&done);
             let alive2 = Arc::clone(&alive_count);
+            let unknown2 = Arc::clone(&unknown_count);
             handles.push(thread::spawn(move || {
                 while let Some(port) = take_port(&work2) {
                     let probed = catch_unwind(AssertUnwindSafe(|| {
                         crate::core::modem::probe_port(&port)
                     }));
-                    // An unopenable port is not the same as a silent one, but
-                    // either way there is nothing to talk to right now.
-                    let (alive, iccid) = match probed {
-                        Ok(Ok(r)) => (r.alive, r.iccid),
-                        _ => (false, None),
-                    };
-                    if alive {
+                    let verdict = ProbeVerdict::of(&port, probed);
+                    if matches!(verdict, ProbeVerdict::Alive(_)) {
                         alive2.fetch_add(1, Ordering::Relaxed);
+                    }
+                    if let ProbeVerdict::Inconclusive(_) = &verdict {
+                        unknown2.fetch_add(1, Ordering::Relaxed);
                     }
                     let n = done2.fetch_add(1, Ordering::Relaxed) + 1;
                     let text;
@@ -355,30 +413,49 @@ pub fn detect_ports(
                             .find(|p| p.name == port)
                             .map(|p| p.path.clone());
                         if let Some(path) = path {
-                            match iccid.as_deref() {
-                                Some(id) => st.sim_dir.set_slot(&path, id),
-                                // Nothing answered, so nothing is in this slot.
-                                // The card's number stays on file under its own
-                                // ICCID for whenever it shows up again.
-                                None if !alive => st.sim_dir.clear_slot(&path),
+                            match &verdict {
+                                ProbeVerdict::Alive(Some(id)) => st.sim_dir.set_slot(&path, id),
                                 // Answered but would not give up its ICCID —
                                 // a transient refusal shouldn't erase what we
                                 // already know about the slot.
-                                None => {}
+                                ProbeVerdict::Alive(None) => {}
+                                // Silence proved the slot is empty. The card's
+                                // number stays on file under its own ICCID for
+                                // whenever it shows up again.
+                                ProbeVerdict::Empty => st.sim_dir.clear_slot(&path),
+                                // We never got to ask. Erasing the mapping here
+                                // is what lost a bank's slot→card hints to one
+                                // momentary EBUSY.
+                                ProbeVerdict::Inconclusive(_) => {}
                             }
                         }
                         if let Some(p) = st.ports.iter_mut().find(|p| p.name == port) {
-                            p.alive = Some(alive);
-                            // Leaving dead ports selected is what made every
-                            // later action pay their timeouts, so the sweep
-                            // owns the selection: alive ports on, others off.
-                            p.checked = alive;
-                            p.live_error = None;
                             p.live_ready = false;
-                            if iccid.is_some() {
-                                p.iccid = iccid.clone();
-                            } else if !alive {
-                                p.iccid = None;
+                            match &verdict {
+                                ProbeVerdict::Alive(iccid) => {
+                                    p.alive = Some(true);
+                                    // Leaving dead ports selected is what made
+                                    // every later action pay their timeouts, so
+                                    // the sweep owns the selection.
+                                    p.checked = true;
+                                    p.live_error = None;
+                                    if iccid.is_some() {
+                                        p.iccid = iccid.clone();
+                                    }
+                                }
+                                ProbeVerdict::Empty => {
+                                    p.alive = Some(false);
+                                    p.checked = false;
+                                    p.live_error = None;
+                                    p.iccid = None;
+                                }
+                                // Selection, liveness and ICCID all keep their
+                                // previous values: the probe failed, the port
+                                // did not. The reason is surfaced so the row
+                                // says why instead of quietly looking normal.
+                                ProbeVerdict::Inconclusive(reason) => {
+                                    p.live_error = Some(reason.clone());
+                                }
                             }
                         }
                         let resolved = st
@@ -407,6 +484,7 @@ pub fn detect_ports(
             let _ = h.join();
         }
         let found = alive_count.load(Ordering::Relaxed);
+        let unknown = unknown_count.load(Ordering::Relaxed);
         let (text, ports_snapshot);
         {
             let mut st = lock_state(&state_clone);
@@ -414,12 +492,7 @@ pub fn detect_ports(
             // The slot→card map changed, so persist it: the next launch can then
             // show numbers before anything has been probed.
             st.sim_dir.save();
-            st.status_text = format!(
-                "Detect done. Modems found: {}/{}  |  {} port(s) with no modem deselected",
-                found,
-                total,
-                total - found
-            );
+            st.status_text = detect_done_status(found, total, unknown);
             text = st.status_text.clone();
             ports_snapshot = st.ports.clone();
         }
@@ -428,11 +501,29 @@ pub fn detect_ports(
         let _ = app2.emit("ports:updated", &serde_json::json!({ "ports": ports_snapshot }));
         let _ = app2.emit(
             "detect:done",
-            &serde_json::json!({ "found": found, "total": total }),
+            &serde_json::json!({ "found": found, "total": total, "unknown": unknown }),
         );
     });
 
     Ok("Detect started".into())
+}
+
+/// Detect's closing line. Ports the probe could not reach are counted
+/// separately: they were left selected and keep whatever liveness they had, so
+/// reporting them as "no modem, deselected" would be two lies at once.
+fn detect_done_status(found: usize, total: usize, unknown: usize) -> String {
+    let empty = total.saturating_sub(found).saturating_sub(unknown);
+    let mut s = format!(
+        "Detect done. Modems found: {}/{}  |  {} port(s) with no modem deselected",
+        found, total, empty
+    );
+    if unknown > 0 {
+        s.push_str(&format!(
+            "  |  {} port(s) could not be probed — left as they were",
+            unknown
+        ));
+    }
+    s
 }
 
 /// Status line for live mode. Reports ready, offline and still-connecting
@@ -1629,6 +1720,7 @@ pub fn open_log_folder() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::modem::{ProbeResult, NOT_RESPONDING};
 
     #[test]
     fn progress_status_without_failures_has_no_suffix() {
@@ -1986,6 +2078,127 @@ mod tests {
         assert!(merged[0].checked);
         assert_eq!(merged[0].alive, Some(true));
     }
+
+    /// The two failures that most need explaining were the two a refresh erased.
+    /// A background timer runs `refresh_ports` on its own, and `OutageLatch` emits
+    /// one event per outage rather than repeating, so a blanked message never came
+    /// back: the port spent the rest of the outage looking like an ordinary idle
+    /// row.
+    #[test]
+    fn a_refresh_keeps_the_reason_a_port_is_failing() {
+        let mut old = port_row("/dev/ttyUSB3", SLOT_A, false);
+        old.live_error = Some("Reconnecting: Port lost: EIO".into());
+        let merged = merge_ports(
+            vec![("/dev/ttyUSB3".into(), SLOT_A.into())],
+            vec![old],
+            &SimDirectory::default(),
+            true,
+        );
+        assert_eq!(
+            merged[0].live_error.as_deref(),
+            Some("Reconnecting: Port lost: EIO")
+        );
+    }
+
+    #[test]
+    fn a_renumbered_stick_does_not_inherit_the_previous_error() {
+        // Gated on the tty name for the same reason as the badge: the message
+        // describes a worker bound to a name that no longer exists, so carrying it
+        // onto whatever is in that slot now would be misleading.
+        let mut old = port_row("/dev/ttyUSB3", SLOT_A, false);
+        old.live_error = Some("Serial I/O failed: Input/output error".into());
+        let merged = merge_ports(
+            vec![("/dev/ttyUSB70".into(), SLOT_A.into())],
+            vec![old],
+            &SimDirectory::default(),
+            true,
+        );
+        assert!(merged[0].live_error.is_none());
+    }
+
+    #[test]
+    fn a_healthy_port_still_refreshes_with_no_error() {
+        let merged = merge_ports(
+            vec![("/dev/ttyUSB3".into(), SLOT_A.into())],
+            vec![port_row("/dev/ttyUSB3", SLOT_A, true)],
+            &SimDirectory::default(),
+            true,
+        );
+        assert!(merged[0].live_error.is_none());
+    }
+
+    #[test]
+    fn detect_status_only_mentions_unreachable_ports_when_there_are_some() {
+        assert_eq!(
+            detect_done_status(7, 64, 0),
+            "Detect done. Modems found: 7/64  |  57 port(s) with no modem deselected"
+        );
+        // The three that could not be probed are not counted as empty, because
+        // they were left selected and kept whatever liveness they had.
+        assert_eq!(
+            detect_done_status(7, 64, 3),
+            "Detect done. Modems found: 7/64  |  54 port(s) with no modem deselected  \
+             |  3 port(s) could not be probed — left as they were"
+        );
+    }
+
+    fn probe_ok(alive: bool, failure: Option<&str>, iccid: Option<&str>) -> ProbeResult {
+        ProbeResult {            alive,
+            failure: failure.map(Into::into),
+            iccid: iccid.map(Into::into),
+        }
+    }
+
+    /// The classification that used to be a two-way `match` collapsing every
+    /// failure into `alive = false`. Only the probe's own silence is evidence
+    /// about the slot; everything else is evidence about this machine.
+    #[test]
+    fn only_probe_silence_counts_as_an_empty_slot() {
+        let silent = ProbeVerdict::of(
+            "ttyUSB0",
+            Ok(Ok(probe_ok(false, Some(NOT_RESPONDING), None))),
+        );
+        assert!(matches!(silent, ProbeVerdict::Empty));
+
+        // A host-side read/write failure proves nothing about the slot.
+        let broken = ProbeVerdict::of(
+            "ttyUSB0",
+            Ok(Ok(probe_ok(
+                false,
+                Some("Serial I/O failed: Input/output error"),
+                None,
+            ))),
+        );
+        assert!(matches!(broken, ProbeVerdict::Inconclusive(_)));
+
+        // Held by ModemManager, unplugged, or a permissions problem.
+        let unopenable: ProbeVerdict =
+            ProbeVerdict::of("ttyUSB0", Ok(Err("Permission denied".into())));
+        match unopenable {
+            ProbeVerdict::Inconclusive(reason) => assert!(reason.contains("Permission denied")),
+            _ => panic!("an unopenable port is not an empty slot"),
+        }
+    }
+
+    #[test]
+    fn a_live_port_carries_its_iccid_through_the_verdict() {
+        let v = ProbeVerdict::of(
+            "ttyUSB0",
+            Ok(Ok(probe_ok(true, None, Some("8995010912345678901")))),
+        );
+        match v {
+            ProbeVerdict::Alive(iccid) => {
+                assert_eq!(iccid.as_deref(), Some("8995010912345678901"))
+            }
+            _ => panic!("a modem answered"),
+        }
+        // Answered but would not give up its ICCID — still alive, no ICCID to file.
+        assert!(matches!(
+            ProbeVerdict::of("ttyUSB0", Ok(Ok(probe_ok(true, None, None)))),
+            ProbeVerdict::Alive(None)
+        ));
+    }
+
 
     #[test]
     fn a_slot_hint_filling_in_an_unknown_iccid_leaves_the_badge_alone() {

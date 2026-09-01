@@ -1,4 +1,4 @@
-# 03 — Troubleshooting Casebook (တကယ်ဖြစ်ခဲ့တဲ့ ၁၅ ခု)
+# 03 — Troubleshooting Casebook (တကယ်ဖြစ်ခဲ့တဲ့ ၁၆ ခု)
 
 > Format: Symptom → Root Cause → Fix → Preventive Rule. Debug ခင် ဒီထဲ အရင်ရှာပါ။
 
@@ -293,6 +293,59 @@
 - **Rule ၄:** Frontend ကို unit test မရသေးတဲ့ အလွှာ (component) ဖြစ်ရင် **browser preview
   မှာ A/B စမ်းပါ** — fix ကို stash လုပ်ပြီး အရင်အခြေအနေ ပြန်ပြေးခိုင်းတာက "ပြင်ပြီး
   အလုပ်လုပ်တယ်" နဲ့ "ဒါ တကယ် bug ဖြစ်ခဲ့တယ်" နှစ်ခုလုံးကို သက်သေပြတယ်
+
+## 1️⃣6️⃣ Port ခဏ busy ဖြစ်တာနဲ့ "NO MODEM" ဖြစ်ပြီး SIM နံပါတ် disk ပေါ်ကနေ ပျောက်တာ
+
+- **Symptom ၂ မျိုး၊ တစ်ခုတည်းသော အကြောင်းရင်း:**
+  1. **Detect** ပြေးတဲ့အချိန် ModemManager ဒါမှမဟုတ် တခြား process က port ကို ခဏ ဖမ်းထားရင်
+     (ဒါမှမဟုတ် EBUSY ခံရင်) အဲ့ port က `NO MODEM` ဖြစ်တယ်၊ deselect ခံတယ်၊ ပြီးတော့
+     **slot→ICCID mapping က `sim_numbers.csv` ကနေ အပြီးအပိုင် ပျောက်တယ်** — SIM နံပါတ်
+     ပြန်ရဖို့ Get SIM Numbers ပြန်ပြေးရမယ်
+  2. **Refresh** (background timer, ၃၀ စက္ကန့်တစ်ခါ default) ပြီးတဲ့အခါ
+     "Reconnecting: Port lost: EIO" / "Serial I/O failed: …" ဆိုတဲ့ error text က **ပျောက်တယ်**၊
+     ပြီးတော့ **ပြန်မလာဘူး** — port က outage ကျန်တဲ့အချိန်တစ်လျှောက် ရိုးရိုး idle row အဖြစ် ပြတယ်
+- **Root Cause (၁):** `detect_ports` က probe ရဲ့ ရလဒ် ၄ မျိုးကို **နှစ်မျိုးအဖြစ် ချုံ့**ခဲ့တယ်:
+  ```rust
+  let (alive, iccid) = match probed {
+      Ok(Ok(r)) => (r.alive, r.iccid),
+      _ => (false, None),          // ← Err နဲ့ panic နှစ်ခုလုံး "SIM မရှိ" ဖြစ်သွားတယ်
+  };
+  ```
+  ပြီးတော့ `ProbeResult` မှာ error field **မရှိခဲ့ဘူး**၊ ဒါကြောင့် `probe_failure_reason` ရဲ့
+  "silence vs transport failure" ခွဲခြားမှု (scan/USSD/live သုံးခုလုံး လိုက်နာတဲ့ဟာ) က ဒီ path
+  တစ်ခုတည်းမှာ လုံးဝ ပျောက်ခဲ့တယ်။ `alive == false` ဖြစ်တာနဲ့ `sim_dir.clear_slot(&path)`
+- **Root Cause (၂):** `merge_ports` က `live_error: None` ကို **unconditional** ထားခဲ့တယ်။
+  `OutageLatch` က outage တစ်ခုအတွက် event တစ်ခုပဲ ပို့တာမို့ (ထပ်ခါထပ်ခါ မပို့ဘူး) ဖျက်လိုက်တာ
+  **ပြန်မလာဘူး**။ `alive` ကို carry လုပ်ပြီးသားမို့ **silence တစ်ခုတည်း** သာ ကျန်ပြီး
+  operator အလိုအရေးဆုံး ဖြစ်တဲ့ နှစ်ခု က ပျောက်တဲ့ နှစ်ခု ဖြစ်တယ်
+- **Fix (၁):** `ProbeResult` မှာ `failure: Option<String>` + `proved_empty()` ထည့်၊ ပြီးတော့
+  `ProbeVerdict` enum ၃ မျိုး:
+  | Verdict | `alive` | `checked` | `iccid` | `sim_dir` | `live_error` |
+  |---|---|---|---|---|---|
+  | `Alive(iccid)` | `Some(true)` | `true` | set (ရရင်) | `set_slot` | `None` |
+  | `Empty` (silence ပဲ) | `Some(false)` | `false` | `None` | `clear_slot` | `None` |
+  | `Inconclusive(why)` | **မထိ** | **မထိ** | **မထိ** | **မထိ** | `Some(why)` |
+
+  `Empty` က `alive = Some(false)` သတ်မှတ်ခွင့်ရှိတဲ့ **တစ်ခုတည်းသော** verdict
+- **Fix (၂):** `live_error` ကို refresh အတွင်း carry လုပ်တယ် — `live_ready` လိုပဲ **tty name
+  တူမှ**။ Renumber ဖြစ်ပြီးရင် အဲ့ message က မရှိတော့တဲ့ name ရဲ့ worker အကြောင်း ဖြစ်တာမို့
+  လွဲမှားစေတယ်။ **Expire လုပ်စရာ မလိုဘူး**: `start_live`/`stop_live` နှစ်ခုလုံး boundary မှာ
+  `live_error` အားလုံး ရှင်းတယ်၊ `detect_ports` က port အလိုက် ကိုယ်တိုင် overwrite တယ်
+- **Trade-off (တမင် ရွေးထားတာ):** Inconclusive port က **selected အတိုင်း ကျန်**တယ်၊ ဒါကြောင့်
+  နောက် scan က သူ့ timeout ကို ပေးရမယ်။ ICCID mapping ပျောက်တာနဲ့ စာရင် ဒါက အများကြီး သက်သာတယ် —
+  ပြီးတော့ status line က `N port(s) could not be probed — left as they were` လို့ ရှင်းရှင်း ပြောတယ်
+- **လက်ရှိ ကျန်နေတဲ့ အပိုင်း:** အရင် `Empty` ဖြစ်ခဲ့တဲ့ port (`alive == Some(false)`) မှာ
+  Inconclusive verdict တင်ရင် `portStatus` က `alive === false` branch ကို အရင် စစ်တာမို့
+  `NO MODEM` ပဲ ပြပြီး reason text ကို မပြဘူး။ **တမင် ချန်ထားတာ** — branch order ပြောင်းရင်
+  transient failure တစ်ခုအတွက် bank ထဲက slot ဗလာ အားလုံး အနီ ဖြစ်မယ် (`utils/port.ts` ရဲ့
+  comment ကိုယ်တိုင် အဲ့ဒါကို သတိပေးထားတယ်)။ ရှိပြီးသား evidence က "ဗလာ" ဆိုတာမို့ အဲ့ဒါ ပြတာ မှန်တယ်
+- **Rule ၁:** **"မသိဘူး" ကို "မရှိဘူး" နဲ့ တစ်ခုတည်း မလုပ်ပါ။** State ၂ ခုပဲ ရှိတဲ့
+  `bool`/`(bool, Option<_>)` က ဒီ ချုံ့မှုကို ဖိတ်ခေါ်တယ် — verdict ၃ မျိုးဆိုရင် enum ထားပါ၊
+  compiler က arm တိုင်း ဖြေရှင်းခိုင်းလိမ့်မယ်
+- **Rule ၂:** `match probed { Ok(Ok(r)) => …, _ => … }` ဆိုတဲ့ **catch-all arm က ခွဲခြားမှုကို
+  တိတ်တဆိတ် စားတယ်**။ `Err` variant တွေကို တစ်ခုချင်း ဖြေရှင်းပါ
+- **Rule ၃:** State ကို "ရှင်းလင်းတယ်" ဆိုတဲ့ code ရေးတဲ့အခါ **အဲ့ဒါ ပြန်လာမလား** ကို စစ်ပါ။
+  Latch/one-shot event ကနေ လာတဲ့ state ကို ဖျက်တာက **အပြီးအပိုင် ဖျက်တာ** ဖြစ်တယ်
 
 ## ⚠️ Latent Traps (မဖြစ်သေးဘူး၊ ဒါပေမဲ့ ချောင်းနေတာ)
 
