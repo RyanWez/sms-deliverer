@@ -77,6 +77,50 @@ fn take_port<T>(queue: &Mutex<Vec<T>>) -> Option<T> {
     queue.lock().unwrap_or_else(|e| e.into_inner()).pop()
 }
 
+/// Releases a busy flag when the thread that owns an operation goes away —
+/// including by unwinding.
+///
+/// Every flag in `port_busy()` used to be released by an ordinary statement on
+/// the happy path, so a panic anywhere outside the `catch_unwind` that wraps the
+/// per-port work left it set for the rest of the process. `delete_selected` was
+/// the sharpest case: its `catch_unwind` covers only the modem loop, so a panic
+/// in the bookkeeping after it wedged `delete_busy` and with it every
+/// port-touching command until restart. `start_live` was worse — its supervisor
+/// thread had no `catch_unwind` at all, and it owns both `live_on` and
+/// `live_stop`.
+///
+/// The happy path is deliberately unchanged. Each command still clears its own
+/// flag inline, because several of them do more work under that same lock
+/// (`sim_dir.save()`, building the status line) and reordering that is a
+/// behaviour change this guard has no business making. `clear` is therefore
+/// written to be idempotent and in practice the guard only ever fires on an
+/// unwind. `lock_state` recovers from poisoning, so it can still take the lock
+/// after a panic.
+///
+/// Construct it in the command and `move` it into the spawned closure: if
+/// `thread::spawn` itself panics, the closure — and with it the guard — is
+/// dropped during that unwind and the flag is still released.
+struct BusyGuard {
+    state: SharedState,
+    clear: fn(&mut AppStateInner),
+}
+
+impl BusyGuard {
+    fn new(state: &SharedState, clear: fn(&mut AppStateInner)) -> Self {
+        BusyGuard {
+            state: Arc::clone(state),
+            clear,
+        }
+    }
+}
+
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        let mut st = lock_state(&self.state);
+        (self.clear)(&mut st);
+    }
+}
+
 /// Cap concurrent port access to protect the USB bridge from contention. With
 /// 60+ sticks, firing 64 simultaneous AT probes backs up the modem hardware and
 /// the OS USB stack; a bounded worker pool preserves the shared-state/progress
@@ -270,7 +314,9 @@ pub fn detect_ports(
 
     let state_clone = Arc::clone(&state);
     let app2 = app.clone();
+    let busy = BusyGuard::new(&state, |st| st.detect_busy = false);
     thread::spawn(move || {
+        let _busy = busy;
         let work = Arc::new(Mutex::new(names));
         let done = Arc::new(AtomicUsize::new(0));
         let alive_count = Arc::new(AtomicUsize::new(0));
@@ -470,7 +516,9 @@ pub fn start_scan(
     // sweep — minutes on a full bank — and only then answered "Scan started".
     let state_clone = Arc::clone(&state);
     let app2 = app.clone();
+    let busy = BusyGuard::new(&state, |st| st.scan_busy = false);
     thread::spawn(move || {
+        let _busy = busy;
         let work = Arc::new(Mutex::new(ports));
         let workers = total.min(MAX_CONCURRENT_PORTS);
         let mut handles = Vec::with_capacity(workers);
@@ -607,7 +655,9 @@ pub fn get_sim_numbers(
     }
     let state_clone = Arc::clone(&state);
     let app2 = app.clone();
+    let busy = BusyGuard::new(&state, |st| st.ussd_busy = false);
     thread::spawn(move || {
+        let _busy = busy;
         let total = ports.len();
         let found = Arc::new(AtomicUsize::new(0));
         let done = Arc::new(AtomicUsize::new(0));
@@ -846,13 +896,23 @@ pub fn start_live(
         &serde_json::json!({ "text": format!("Starting live on {} port(s)...", ports.len()) }),
     );
     let state_clone = Arc::clone(&state);
+    // The supervisor owns both live flags. It had no `catch_unwind`, so a panic
+    // in it left `live_on` and `live_stop` set and `port_busy()` permanently
+    // true — the app reports "Busy" to every port command until restart.
+    let busy = BusyGuard::new(&state, |st| {
+        st.live_on = false;
+        st.live_stop = None;
+    });
     thread::spawn(move || {
+        let _busy = busy;
         let port_count = ports.len();
         let mut handles = Vec::with_capacity(port_count);
         for port in ports {
             let stop = Arc::clone(&shared_stop);
             let st2 = Arc::clone(&state_clone);
+            let st3 = Arc::clone(&state_clone);
             let app2 = app.clone();
+            let app3 = app.clone();
             handles.push(thread::spawn(move || {
                 let sender = move |evt: crate::core::live::LiveEvent| match evt {
                     crate::core::live::LiveEvent::Ready { port } => {
@@ -1053,7 +1113,37 @@ pub fn start_live(
                         );
                     }
                 };
-                crate::core::live::run_live(port, stop, retention, sender);
+                // The live workers were the one per-port pool with no
+                // `catch_unwind`. A panic in `run_live` killed that port's
+                // monitoring silently: `join()` swallowed it, nothing marked the
+                // port failed, and the LIVE badge stayed green on a stick that
+                // had stopped delivering. Report it the same way a transport
+                // failure is reported so the row turns red and says why.
+                let port_name = port.clone();
+                let outcome = catch_unwind(AssertUnwindSafe(|| {
+                    crate::core::live::run_live(port, stop, retention, sender);
+                }));
+                if outcome.is_err() {
+                    log::error!("Live worker panicked on {}", port_name);
+                    let reason = crate::core::live::WORKER_PANIC;
+                    let (text, ports_snapshot);
+                    {
+                        let mut st = lock_state(&st3);
+                        if let Some(p) = st.ports.iter_mut().find(|p| p.name == port_name) {
+                            p.live_ready = false;
+                            p.live_error = Some(reason.into());
+                        }
+                        st.live_failed.push((port_name.clone(), reason.into()));
+                        st.status_text = format!("{} FAILED: {}", port_name, reason);
+                        text = st.status_text.clone();
+                        ports_snapshot = st.ports.clone();
+                    }
+                    let _ = app3.emit("status:update", &serde_json::json!({ "text": text }));
+                    let _ = app3.emit(
+                        "ports:updated",
+                        &serde_json::json!({ "ports": ports_snapshot }),
+                    );
+                }
             }));
         }
         for h in handles {
@@ -1202,7 +1292,9 @@ pub fn delete_selected(
     );
     let state_clone = Arc::clone(&state);
     let app2 = app.clone();
+    let busy = BusyGuard::new(&state, |st| st.delete_busy = false);
     thread::spawn(move || {
+        let _busy = busy;
         let mut fail = 0usize;
         let mut wanted = 0usize;
         let mut gone = 0usize;
@@ -1381,7 +1473,9 @@ pub fn cleanup_sim_storage(
 
     let state_clone = Arc::clone(&state);
     let app2 = app.clone();
+    let busy = BusyGuard::new(&state, |st| st.cleanup_busy = false);
     thread::spawn(move || {
+        let _busy = busy;
         let deleted = Arc::new(AtomicUsize::new(0));
         let failed = Arc::new(AtomicUsize::new(0));
         let work = Arc::new(Mutex::new(ports));
@@ -1670,6 +1764,80 @@ mod tests {
         assert!(st.port_busy());
         // Only the supervisor's final clear releases the gate.
         st.live_stop = None;
+        assert!(!st.port_busy());
+    }
+
+    /// The whole point of the guard: the flag has to come back down even when the
+    /// thread that set it never reaches its own clear.
+    #[test]
+    fn busy_guard_releases_the_gate_on_an_unwind() {
+        let state: SharedState = Arc::new(Mutex::new(idle_state()));
+        lock_state(&state).delete_busy = true;
+        assert!(lock_state(&state).port_busy());
+
+        let panicked = catch_unwind(AssertUnwindSafe(|| {
+            let _busy = BusyGuard::new(&state, |st| st.delete_busy = false);
+            panic!("worker died mid-operation");
+        }));
+
+        assert!(panicked.is_err());
+        assert!(
+            !lock_state(&state).port_busy(),
+            "a panicking worker must not leave the app reporting Busy forever"
+        );
+    }
+
+    #[test]
+    fn busy_guard_releases_the_gate_on_a_normal_return() {
+        let state: SharedState = Arc::new(Mutex::new(idle_state()));
+        lock_state(&state).scan_busy = true;
+        {
+            let _busy = BusyGuard::new(&state, |st| st.scan_busy = false);
+            assert!(lock_state(&state).port_busy());
+        }
+        assert!(!lock_state(&state).port_busy());
+    }
+
+    /// The commands still clear their own flag inline, because several of them do
+    /// more work under that same lock. The guard has to tolerate running after
+    /// that, and must not disturb a different operation that started since.
+    #[test]
+    fn busy_guard_is_a_no_op_once_the_flag_is_already_clear() {
+        let state: SharedState = Arc::new(Mutex::new(idle_state()));
+        {
+            let _busy = BusyGuard::new(&state, |st| st.cleanup_busy = false);
+            lock_state(&state).cleanup_busy = true;
+            // The inline clear the command performs on its happy path.
+            lock_state(&state).cleanup_busy = false;
+            // A later operation, already running by the time the guard drops.
+            lock_state(&state).scan_busy = true;
+        }
+        let st = lock_state(&state);
+        assert!(!st.cleanup_busy);
+        assert!(st.scan_busy, "the guard must only touch its own flag");
+    }
+
+    /// `start_live`'s supervisor owns both flags, and `live_stop` is what keeps
+    /// `port_busy()` true through the shutdown window.
+    #[test]
+    fn busy_guard_releases_both_live_flags() {
+        let state: SharedState = Arc::new(Mutex::new(idle_state()));
+        {
+            let mut st = lock_state(&state);
+            st.live_on = true;
+            st.live_stop = Some(Arc::new(AtomicBool::new(false)));
+        }
+        let panicked = catch_unwind(AssertUnwindSafe(|| {
+            let _busy = BusyGuard::new(&state, |st| {
+                st.live_on = false;
+                st.live_stop = None;
+            });
+            panic!("supervisor died before joining its workers");
+        }));
+        assert!(panicked.is_err());
+        let st = lock_state(&state);
+        assert!(!st.live_on);
+        assert!(st.live_stop.is_none());
         assert!(!st.port_busy());
     }
 
