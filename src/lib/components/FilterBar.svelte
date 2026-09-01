@@ -15,20 +15,14 @@
     { label: 'Today', value: 'Today' },
   ];
 
-  // Debounced search: local input mirrors store query but commits after 180ms of idle
+  // Debounced search: the input owns `localQuery`, the store gets it after
+  // 180ms of idle. There is deliberately no effect syncing the store back into
+  // `localQuery`: `messagesStore.query` is written from this component and
+  // nowhere else, so there is no external update to mirror, and the one that
+  // used to be here cleared the field on every keystroke while the committed
+  // query was still empty, which left the search unusable.
   let localQuery = $state(messagesStore.query);
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-  // Keep local in sync when store is cleared externally (e.g. clear button)
-  $effect(() => {
-    if (messagesStore.query === '' && localQuery !== '') {
-      localQuery = '';
-    } else if (messagesStore.query !== localQuery && debounceTimer === null) {
-      // external update not from typing (e.g. navigation) — sync immediately
-      // avoid overriding user typing mid-debounce
-      localQuery = messagesStore.query;
-    }
-  });
 
   function onSearchInput(v: string) {
     localQuery = v;
