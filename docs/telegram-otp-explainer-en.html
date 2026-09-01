@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SIM Bank → Telegram OTP Bot — Full System Design (English Edition)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#171717; --surface:#1e1e1e; --elevated:#2d2d2d; --border:#404040;
+    --fg:#e4e4e4; --muted:#a1a1a1; --primary:#38bdf8; --success:#10b981;
+    --danger:#ef4444; --warning:#f59e0b; --otp:#fb923c; --violet:#a78bfa;
+    --pixelfont:'Press Start 2P','Courier New',monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font-family:'Noto Sans Myanmar','Myanmar Text','Padauk','Myanmar Sans Pro',-apple-system,'Segoe UI',Roboto,sans-serif;
+    line-height:1.75; font-size:15.5px;
+  }
+  .wrap{max-width:1060px; margin:0 auto; padding:24px 20px 80px}
+  header.hero{
+    border:1px solid var(--border); border-radius:16px; padding:28px 28px 20px;
+    background:linear-gradient(120deg,#1e1e1e,#16222e,#12241d,#16222e); background-size:300% 300%;
+    animation:sheen 16s ease infinite; margin-bottom:28px;
+  }
+  .hero h1{margin:0 0 6px; font-size:27px; line-height:1.4}
+  .hero p.sub{margin:0; color:var(--muted)}
+  .pill{display:inline-block; padding:2px 12px; border-radius:999px; font-size:9px; letter-spacing:.5px; margin-right:6px; border:1px solid var(--border); color:var(--muted); font-family:var(--pixelfont)}
+  .pill.new{color:#0c0c0c; background:var(--primary); border-color:var(--primary); font-weight:700}
+  .pill.warn{color:#0c0c0c; background:var(--warning); border-color:var(--warning); font-weight:700}
+  .pill.grp{color:#0c0c0c; background:#a78bfa; border-color:#a78bfa; font-weight:700}
+  nav.toc{display:flex; flex-wrap:wrap; gap:8px; margin:14px 0 0}
+  nav.toc a{color:var(--primary); text-decoration:none; border:1px solid var(--border); border-radius:8px; padding:3px 10px; font-size:13px; transition:background .2s}
+  nav.toc a:hover{background:var(--elevated)}
+  section{margin-top:48px; scroll-margin-top:24px}
+  h2.sec{
+    font-size:22px; margin:0 0 4px; padding-bottom:10px; border-bottom:1px solid var(--border);
+    display:flex; align-items:center; gap:10px;
+  }
+  h2.sec .num{
+    background:var(--primary); color:#0c0c0c; font-weight:800; border-radius:8px;
+    min-width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center; font-size:10px;
+    font-family:var(--pixelfont);
+  }
+  p.lead{color:var(--muted); margin:8px 0 18px}
+  .card{background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:18px 20px; margin:16px 0; transition:transform .25s ease, border-color .25s ease}
+  .card:hover{transform:translateY(-2px); border-color:#5e5e5e}
+  .card h3{margin:0 0 8px; font-size:17px}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+  .grid3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px}
+  @media(max-width:820px){.grid2,.grid3{grid-template-columns:1fr}}
+  .qa{border-left:4px solid var(--primary); padding-left:16px; margin:18px 0}
+  .qa .q{font-weight:700; color:var(--primary)}
+  .qa .a{margin-top:4px}
+  .note{background:#1c2430; border:1px solid #2b4a63; border-radius:10px; padding:12px 16px; margin:14px 0; font-size:14.5px}
+  .note.warn{background:#2b2113; border-color:#6b4c12}
+  .note.danger{background:#2b1516; border-color:#6b2023}
+  .note.ok{background:#12241d; border-color:#1e5c46}
+  .figure{background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:14px; margin:20px 0; transition:border-color .25s ease}
+  .figure:hover{border-color:#5e5e5e}
+  .figure svg{width:100%; height:auto; display:block}
+  .figure figcaption{color:var(--muted); font-size:13.5px; margin-top:8px; text-align:center}
+  .figid{font-family:var(--pixelfont); font-size:10px; color:var(--primary); letter-spacing:1px}
+  table{width:100%; border-collapse:collapse; margin:14px 0; font-size:14.5px}
+  th,td{border:1px solid var(--border); padding:9px 12px; text-align:left; vertical-align:top}
+  th{background:var(--elevated)}
+  code, pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace}
+  code{background:#262626; border:1px solid #3a3a3a; border-radius:6px; padding:1px 6px; font-size:13px; color:#fbbf24}
+  pre{background:#0d1117; border:1px solid var(--border); border-radius:10px; padding:14px 16px; overflow-x:auto; font-size:13px; line-height:1.7; color:#c9d1d9}
+  .tag{display:inline-block; font-size:9px; border-radius:6px; padding:1px 8px; font-weight:700; font-family:var(--pixelfont)}
+  .tag.ok{background:rgba(16,185,129,.15); color:#34d399; border:1px solid rgba(16,185,129,.4)}
+  .tag.bad{background:rgba(239,68,68,.15); color:#f87171; border:1px solid rgba(239,68,68,.4)}
+  .tag.mid{background:rgba(245,158,11,.15); color:#fbbf24; border:1px solid rgba(245,158,11,.4)}
+  ul.tight{margin:8px 0; padding-left:22px}
+  ul.tight li{margin:5px 0}
+  .pfx{font-family:var(--pixelfont); font-size:9.5px}
+
+  /* ============ ANIMATIONS ============ */
+  @keyframes dashmove{to{stroke-dashoffset:-36}}
+  .flow{stroke-dasharray:11 9; animation:dashmove 1.2s linear infinite}
+  .flow.slow{animation-duration:1.8s}
+  @keyframes pulse{0%,100%{opacity:.35; transform:scale(1)} 50%{opacity:1; transform:scale(1.14)}}
+  .pulse{transform-box:fill-box; transform-origin:center; animation:pulse 2.4s ease-in-out infinite}
+  @keyframes bob{0%,100%{transform:translateY(0)} 50%{transform:translateY(-7px)}}
+  .bob{animation:bob 3.8s ease-in-out infinite; transform-box:fill-box}
+  @keyframes blink{0%,49%{opacity:1} 50%,100%{opacity:.12}}
+  .blink{animation:blink 1.1s steps(1) infinite}
+  @keyframes ring{0%,100%{transform:rotate(0)} 8%{transform:rotate(-14deg)} 18%{transform:rotate(11deg)} 28%{transform:rotate(-9deg)} 38%{transform:rotate(6deg)} 48%{transform:rotate(0)}}
+  .ring{animation:ring 3.2s ease-in-out infinite; transform-box:fill-box; transform-origin:50% 85%}
+  @keyframes halo{0%{opacity:0} 4%{opacity:.95} 13%{opacity:0} 100%{opacity:0}}
+  .halo{opacity:0; animation:halo 8s linear infinite}
+  @keyframes glow{0%,100%{filter:drop-shadow(0 0 0 rgba(16,185,129,0))} 50%{filter:drop-shadow(0 0 7px rgba(16,185,129,.75))}}
+  .glow{animation:glow 2.6s ease-in-out infinite}
+  @keyframes denied{0%,88%,100%{transform:translateX(0)} 90%{transform:translateX(-4px)} 92%{transform:translateX(4px)} 94%{transform:translateX(-3px)} 96%{transform:translateX(2px)}}
+  .denied{animation:denied 4s ease-in-out infinite; transform-box:fill-box}
+  @keyframes floaty{0%,100%{transform:translateY(0) rotate(-2deg)} 50%{transform:translateY(-5px) rotate(2deg)}}
+  .floaty{animation:floaty 4.5s ease-in-out infinite; transform-box:fill-box}
+  /* v2 polish */
+  @keyframes sheen{0%,100%{background-position:0% 50%} 50%{background-position:100% 50%}}
+  #pbar{position:fixed; top:0; left:0; height:3px; width:0; z-index:99; background:linear-gradient(90deg,#38bdf8,#a78bfa,#10b981)}
+  /* all synced to the 5-second packet loop in Fig.4 */
+  @keyframes arrive{0%,86%{transform:scale(1); opacity:.75} 93%{transform:scale(1.15); opacity:1} 100%{transform:scale(1); opacity:.75}}
+  .arrive{transform-box:fill-box; transform-origin:center; animation:arrive 5s ease-in-out infinite}
+  @keyframes ding{0%,88%{opacity:0; transform:scale(.3)} 93%{opacity:1; transform:scale(1.3)} 100%{opacity:0; transform:scale(.8)}}
+  .ding{opacity:0; transform-box:fill-box; transform-origin:center; animation:ding 5s ease-in-out infinite}
+  @keyframes ripple{0%{opacity:.85; transform:scale(.3)} 70%{opacity:.25} 100%{opacity:0; transform:scale(3)}}
+  .ripple{opacity:0; transform-box:fill-box; transform-origin:center; animation:ripple 2.4s ease-out infinite}
+  @keyframes ringx{0%{opacity:0; transform:scale(.3)} 4%{opacity:.9; transform:scale(.7)} 13%{opacity:0; transform:scale(2.1)} 100%{opacity:0}}
+  .ringx{fill:none; stroke-width:2; opacity:0; transform-box:fill-box; transform-origin:center; animation:ringx 8s linear infinite}
+  @keyframes steptxt{0%{opacity:.45} 3%{opacity:1} 15%{opacity:1} 22%{opacity:.45} 100%{opacity:.45}}
+  .steptxt{animation:steptxt 8s linear infinite}
+  /* reveal on scroll */
+  .rv{opacity:0; transform:translateY(20px); transition:opacity .65s ease, transform .65s ease}
+  .rv.in{opacity:1; transform:none}
+  @media (prefers-reduced-motion: reduce){
+    *{animation:none !important; transition:none !important}
+    .rv{opacity:1; transform:none}
+  }
+</style>
+</head>
+<body>
+<div id="pbar"></div>
+<div class="wrap">
+
+<header class="hero">
+  <div>
+    <span class="pill">SIM Bank SMS Reader (sms-deliverer)</span>
+    <span class="pill new">Telegram OTP Bot — Design Proposal</span>
+    <span class="pill grp">Destination: Private Group</span>
+    <span class="pill warn">No code touched yet</span>
+  </div>
+  <h1>Every OTP, pushed to your whole team's Telegram — instantly</h1>
+  <p class="sub">GSM hardware basics → how the current project works → the Group-based Telegram bot design → access control → mockups. English edition of the design doc. <a href="/telegram-otp-explainer.html" style="color:var(--primary)">မြန်မာ version</a> is still available.</p>
+  <nav class="toc">
+    <a href="#tldr">⚡ TL;DR</a>
+    <a href="#gsm">📡 GSM 101</a>
+    <a href="#now">🖥️ Current app</a>
+    <a href="#plan">🤖 Bot design</a>
+    <a href="#access">🔐 Access control</a>
+    <a href="#network">🌐 Network / local</a>
+    <a href="#mock">📱 Mockups</a>
+    <a href="#advice">🗺️ Roadmap advice</a>
+    <a href="#faq">❓ FAQ</a>
+  </nav>
+</header>
+
+<!-- ==================== TLDR ==================== -->
+<section id="tldr" class="rv">
+  <h2 class="sec"><span class="num">⚡</span>TL;DR — direct answers to the four questions</h2>
+  <p class="lead">This is the compressed version of everything below. The design has been updated to reflect the final decision: <b>the bot forwards into one private group</b>, not to individual chat IDs.</p>
+
+  <div class="qa">
+    <div class="q">❶ How can my whole team see OTPs, instead of only the person sitting in front of the app?</div>
+    <div class="a">
+      Today the app is a <b>single-machine desktop program</b> — one screen, one operator, no network layer at all (no server, no database).
+      The cleanest and fastest fix is a <b>Telegram bot that pushes into one private group</b>: an OTP lands on any SIM, and within seconds every team member's phone buzzes.
+      Note — your own project roadmap (<code>Memory/05-feature-roadmap.md</code>) already lists "Telegram Bot &amp; Webhook SMS Forwarding" as <b>Feature #1, high priority</b>. Your instinct matches the plan.
+    </div>
+  </div>
+
+  <div class="qa">
+    <div class="q">❷ Can anyone on Telegram use the bot? Or only my team?</div>
+    <div class="a">
+      With the group design, the answer is beautifully simple: <b>the group is the allowlist.</b>
+      Anyone who somehow finds the bot's username can press Start and even message it — the bot stays completely silent in private chats and has exactly <b>one</b> configured destination: your group's chat ID.
+      A stranger can't get anything unless an admin invites them into the group. Membership is granted and revoked with Telegram's own group admin tools — the app never manages per-person IDs.
+    </div>
+  </div>
+
+  <div class="qa">
+    <div class="q">❸ How does it connect locally, and how does it work?</div>
+    <div class="a">
+      <b>Nothing changes on the hardware side</b>: SIM Bank → USB → the PC running this app, exactly as today.
+      What gets added is one <b>Forwarder module inside the app</b> that makes an outbound <b>HTTPS (port 443)</b> call to <code>api.telegram.org</code> every time a new SMS arrives.
+      Requirements: the PC has internet, the app is running with <b>Live mode ON</b> (an "Auto-start Live Mode" setting already exists), and the bot is a member of your private group.
+    </div>
+  </div>
+
+  <div class="qa">
+    <div class="q">❹ Will it actually be able to read the SMS OTPs?</div>
+    <div class="a">
+      <b>It already does.</b> This app ships a full OTP extraction engine (<code>extract_otp</code>): 4–8 digit codes, keyword-gated cascade patterns, and even <b>Myanmar numerals (၀၁၂၃…)</b>.
+      The bot simply forwards what the app has already decoded — the hard part of the pipeline is finished. Only the "way out" is missing.
+    </div>
+  </div>
+</section>
+
+<!-- ==================== GSM BASICS ==================== -->
+<section id="gsm" class="rv">
+  <h2 class="sec"><span class="num">1</span>First — GSM hardware in plain words</h2>
+  <p class="lead">Before designing the bot, it helps to actually understand the machine underneath. It's simpler than it looks.</p>
+
+  <div class="card">
+    <h3>📡 What is a GSM modem?</h3>
+    <p>
+      A GSM modem is <b>the working guts of a phone, without the screen and keyboard</b> — a SIM slot, a radio, and a serial interface.
+      You don't tap on it; your computer talks to it with text commands called <b>AT commands</b>.
+    </p>
+    <p>
+      A <b>SIM Bank (GSM modem pool)</b> packs <b>8 / 16 / 32 / 64</b> of those modems into one chassis with an internal USB hub and a single USB cable out.
+      Plug it into a PC and the OS sees <b>that many serial ports</b> — <code>/dev/ttyUSB0…31</code> on Linux, <code>COM3…COM34</code> on Windows. One port = one SIM.
+    </p>
+  </div>
+
+  <figure class="figure">
+    <svg viewBox="0 0 1000 400" xmlns="http://www.w3.org/2000/svg" font-family="'Noto Sans Myanmar','Myanmar Text','Padauk',sans-serif">
+      <defs>
+        <linearGradient id="gBank" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#3a2f1e"/><stop offset="1" stop-color="#241c11"/>
+        </linearGradient>
+      </defs>
+      <!-- SIM Bank box -->
+      <rect x="40" y="60" width="520" height="290" rx="14" fill="url(#gBank)" stroke="#f59e0b" stroke-width="2"/>
+      <text x="300" y="90" text-anchor="middle" fill="#fbbf24" font-size="17" font-weight="700">SIM Bank / GSM Modem Pool (32-port)</text>
+      <!-- antennas -->
+      <g stroke="#f59e0b" stroke-width="3">
+        <line x1="120" y1="60" x2="120" y2="24"/><line x1="300" y1="60" x2="300" y2="24"/><line x1="480" y1="60" x2="480" y2="24"/>
+      </g>
+      <g class="pulse">
+        <circle cx="120" cy="20" r="5" fill="#f59e0b"/><circle cx="300" cy="20" r="5" fill="#f59e0b"/><circle cx="480" cy="20" r="5" fill="#f59e0b"/>
+      </g>
+      <text x="300" y="14" text-anchor="middle" fill="#a1a1a1" font-size="12">Antennas (the radio part)</text>
+      <!-- slot grid 8x4 -->
+      <g fill="#1e1e1e" stroke="#8a6d3b">
+        <rect x="70" y="110" width="48" height="34" rx="4"/><rect x="126" y="110" width="48" height="34" rx="4"/><rect x="182" y="110" width="48" height="34" rx="4"/><rect x="238" y="110" width="48" height="34" rx="4"/><rect x="294" y="110" width="48" height="34" rx="4"/><rect x="350" y="110" width="48" height="34" rx="4"/><rect x="406" y="110" width="48" height="34" rx="4"/><rect x="462" y="110" width="48" height="34" rx="4"/>
+        <rect x="70" y="152" width="48" height="34" rx="4"/><rect x="126" y="152" width="48" height="34" rx="4"/><rect x="182" y="152" width="48" height="34" rx="4"/><rect x="238" y="152" width="48" height="34" rx="4"/><rect x="294" y="152" width="48" height="34" rx="4"/><rect x="350" y="152" width="48" height="34" rx="4"/><rect x="406" y="152" width="48" height="34" rx="4"/><rect x="462" y="152" width="48" height="34" rx="4"/>
+        <rect x="70" y="194" width="48" height="34" rx="4"/><rect x="126" y="194" width="48" height="34" rx="4"/><rect x="182" y="194" width="48" height="34" rx="4"/><rect x="238" y="194" width="48" height="34" rx="4"/><rect x="294" y="194" width="48" height="34" rx="4"/><rect x="350" y="194" width="48" height="34" rx="4"/><rect x="406" y="194" width="48" height="34" rx="4"/><rect x="462" y="194" width="48" height="34" rx="4"/>
+        <rect x="70" y="236" width="48" height="34" rx="4"/><rect x="126" y="236" width="48" height="34" rx="4"/><rect x="182" y="236" width="48" height="34" rx="4"/><rect x="238" y="236" width="48" height="34" rx="4"/><rect x="294" y="236" width="48" height="34" rx="4"/><rect x="350" y="236" width="48" height="34" rx="4"/><rect x="406" y="236" width="48" height="34" rx="4"/><rect x="462" y="236" width="48" height="34" rx="4"/>
+      </g>
+      <!-- highlighted slot -->
+      <rect class="pulse" x="294" y="152" width="48" height="34" rx="4" fill="#fb923c" stroke="#ffd9a8" stroke-width="2"/>
+      <text x="318" y="174" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1206">SIM</text>
+      <text x="290" y="292" text-anchor="middle" fill="#e4e4e4" font-size="13.5">One slot per SIM — and each slot holds a complete modem</text>
+      <text x="290" y="316" text-anchor="middle" fill="#a1a1a1" font-size="12.5">(radio + SIM reader + its own serial port)</text>
+      <!-- USB hub chip -->
+      <rect x="452" y="286" width="86" height="46" rx="8" fill="#0d1117" stroke="#38bdf8" stroke-width="1.5"/>
+      <text x="495" y="305" text-anchor="middle" fill="#38bdf8" font-size="12" font-weight="700">USB Hub</text>
+      <text x="495" y="322" text-anchor="middle" fill="#a1a1a1" font-size="10.5">merges all 32 inside</text>
+      <!-- USB cable -->
+      <path d="M560 309 C 610 309 610 250 650 250" fill="none" stroke="#38bdf8" stroke-width="4"/>
+      <text x="605" y="272" text-anchor="middle" fill="#38bdf8" font-size="13" font-weight="700">one USB cable</text>
+      <!-- PC -->
+      <rect x="650" y="120" width="310" height="200" rx="14" fill="#16222e" stroke="#38bdf8" stroke-width="2"/>
+      <rect x="680" y="140" width="180" height="110" rx="6" fill="#0d1117" stroke="#38bdf8"/>
+      <rect x="760" y="250" width="20" height="14" fill="#38bdf8"/>
+      <rect x="730" y="264" width="80" height="8" rx="3" fill="#38bdf8"/>
+      <text x="770" y="200" text-anchor="middle" fill="#38bdf8" font-size="12.5">Desktop App</text>
+      <text x="770" y="222" text-anchor="middle" fill="#a1a1a1" font-size="11">SIM Bank SMS Reader</text>
+      <rect x="880" y="140" width="52" height="132" rx="6" fill="#0d1117" stroke="#38bdf8"/>
+      <circle class="blink" cx="906" cy="158" r="5" fill="#10b981"/>
+      <text x="906" y="205" text-anchor="middle" fill="#a1a1a1" font-size="10">PC</text>
+      <text x="805" y="300" text-anchor="middle" fill="#e4e4e4" font-size="13.5" font-weight="700">The computer running this app</text>
+      <text x="805" y="322" text-anchor="middle" fill="#a1a1a1" font-size="12">OS sees: 32 separate serial ports</text>
+      <!-- ports -->
+      <rect x="650" y="340" width="310" height="44" rx="8" fill="#0d1117"/>
+      <text x="805" y="358" text-anchor="middle" fill="#fbbf24" font-size="12.5" font-family="monospace">Linux: /dev/ttyUSB0 … /dev/ttyUSB31</text>
+      <text x="805" y="376" text-anchor="middle" fill="#fbbf24" font-size="12.5" font-family="monospace">Windows: COM3 … COM34</text>
+    </svg>
+    <figcaption><span class="figid">FIG 1</span> — Anatomy of a SIM Bank. One USB cable in, but the computer sees 32 serial ports — one per SIM.</figcaption>
+  </figure>
+
+  <div class="card">
+    <h3>⌨️ AT commands — the language the modems speak</h3>
+    <p>Plain text commands, industry-standard since the 90s. This app uses exactly these:</p>
+    <table>
+      <tr><th style="width:230px">Command</th><th>Meaning</th><th style="width:260px">Typical reply</th></tr>
+      <tr><td><code>AT</code></td><td>"Are you alive?" — liveness probe</td><td><code>OK</code></td></tr>
+      <tr><td><code>AT+CCID</code></td><td>Read the SIM's ICCID (card identity)</td><td><code>8968...15 digits</code></td></tr>
+      <tr><td><code>AT+CMGF=0</code></td><td>Switch to PDU mode — SMS as binary data</td><td><code>OK</code></td></tr>
+      <tr><td><code>AT+CMGL=4</code></td><td>List every SMS stored on the SIM</td><td>long PDU dump</td></tr>
+      <tr><td><code>+CMTI: "SM",5</code></td><td><b>Unsolicited:</b> "a new SMS just arrived, stored in slot 5"</td><td>(what Live mode listens for)</td></tr>
+      <tr><td><code>AT+CMGD=5</code></td><td>Delete the message in slot 5</td><td><code>OK</code></td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>📩 What path does an OTP SMS actually take?</h3>
+    <p>In Myanmar the carriers (MPT / ATOM / Ooredoo / Mytel) originate the message. The whole journey:</p>
+  </div>
+
+  <figure class="figure">
+    <svg viewBox="0 0 1000 330" xmlns="http://www.w3.org/2000/svg" font-family="'Noto Sans Myanmar','Myanmar Text','Padauk',sans-serif">
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#a1a1a1"/></marker></defs>
+      <!-- Step 1: carrier -->
+      <rect x="20" y="60" width="180" height="120" rx="12" fill="#1e1e1e" stroke="#a78bfa" stroke-width="2"/>
+      <text x="110" y="105" text-anchor="middle" fill="#a78bfa" font-size="15" font-weight="700">Carrier / SMSC</text>
+      <text x="110" y="130" text-anchor="middle" fill="#a1a1a1" font-size="12">"Your OTP 483920"</text>
+      <text x="110" y="150" text-anchor="middle" fill="#a1a1a1" font-size="11.5">the service that sends OTPs</text>
+      <!-- Step 2: tower (with broadcast ripples) -->
+      <g fill="none" stroke="#a78bfa" stroke-width="2">
+        <circle class="ripple" cx="362" cy="102" r="10"/>
+        <circle class="ripple" cx="362" cy="102" r="10" style="animation-delay:.8s"/>
+        <circle class="ripple" cx="362" cy="102" r="10" style="animation-delay:1.6s"/>
+      </g>
+      <path d="M330 170 L362 80 L394 170 Z" fill="#1e1e1e" stroke="#a78bfa" stroke-width="2"/>
+      <line x1="345" y1="150" x2="330" y2="150" stroke="#a78bfa" stroke-width="2"/>
+      <line x1="379" y1="150" x2="394" y2="150" stroke="#a78bfa" stroke-width="2"/>
+      <line x1="362" y1="120" x2="340" y2="120" stroke="#a78bfa" stroke-width="2"/>
+      <line x1="362" y1="120" x2="384" y2="120" stroke="#a78bfa" stroke-width="2"/>
+      <text x="362" y="195" text-anchor="middle" fill="#e4e4e4" font-size="13.5" font-weight="700">Cell tower</text>
+      <text x="362" y="216" text-anchor="middle" fill="#a1a1a1" font-size="12">over the air</text>
+      <!-- Step 3: SIM bank -->
+      <rect x="520" y="50" width="230" height="140" rx="12" fill="#3a2f1e" stroke="#f59e0b" stroke-width="2"/>
+      <text x="635" y="90" text-anchor="middle" fill="#fbbf24" font-size="14.5" font-weight="700">SIM Bank</text>
+      <rect class="pulse" x="585" y="105" width="100" height="44" rx="6" fill="#fb923c"/>
+      <text x="635" y="132" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a1206">SIM slot 12</text>
+      <text x="635" y="176" text-anchor="middle" fill="#e4e4e4" font-size="12.5">SMS lands in SIM storage</text>
+      <!-- Step 4: serial to PC -->
+      <rect x="800" y="50" width="180" height="140" rx="12" fill="#16222e" stroke="#38bdf8" stroke-width="2"/>
+      <text x="890" y="100" text-anchor="middle" fill="#38bdf8" font-size="14.5" font-weight="700">Computer</text>
+      <text x="890" y="128" text-anchor="middle" fill="#e4e4e4" font-size="12.5" class="blink">+CMTI notice</text>
+      <text x="890" y="150" text-anchor="middle" fill="#a1a1a1" font-size="12">pops up on the serial line</text>
+      <!-- arrows -->
+      <line class="flow slow" x1="200" y1="120" x2="318" y2="120" stroke="#a1a1a1" stroke-width="2" marker-end="url(#arr)"/>
+      <line class="flow slow" x1="400" y1="120" x2="510" y2="120" stroke="#a1a1a1" stroke-width="2" marker-end="url(#arr)"/>
+      <line class="flow" x1="750" y1="120" x2="790" y2="120" stroke="#a1a1a1" stroke-width="2" marker-end="url(#arr)"/>
+      <!-- numbers -->
+      <g font-size="13" font-weight="700">
+        <circle cx="208" cy="100" r="12" fill="#a78bfa"/><text x="208" y="105" text-anchor="middle" fill="#17171f">1</text>
+        <circle cx="412" cy="100" r="12" fill="#a78bfa"/><text x="412" y="105" text-anchor="middle" fill="#17171f">2</text>
+        <circle cx="758" cy="100" r="12" fill="#f59e0b"/><text x="758" y="105" text-anchor="middle" fill="#17171f">3</text>
+      </g>
+      <!-- timeline note -->
+      <rect x="20" y="230" width="960" height="76" rx="10" fill="#0d1117" stroke="#404040"/>
+      <text x="500" y="258" text-anchor="middle" fill="#e4e4e4" font-size="13.5">This is the exact same path a normal phone takes to receive an SMS.</text>
+      <text x="500" y="284" text-anchor="middle" fill="#a1a1a1" font-size="13">The only difference: a phone shows it on screen — a SIM bank announces it on a serial port.</text>
+    </svg>
+    <figcaption><span class="figid">FIG 2</span> — The OTP's journey: (1) service sends → (2) tower relays over the air → (3) stored on the SIM, and the computer gets told about it.</figcaption>
+  </figure>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>📦 SIM storage is tiny</h3>
+      <p style="margin:0">A SIM card holds only <b>20–50 messages</b>. When it's full, the modem <b>silently rejects new SMS</b>. That's why this app already includes a periodic SIM sweep (every 10 minutes) — it keeps slots free.</p>
+    </div>
+    <div class="card">
+      <h3>🧩 PDU mode &amp; Myanmar text</h3>
+      <p style="margin:0">SMS arrives as a hex blob (PDU). This app decodes GSM-7 (English), <b>UCS-2 (Unicode — including Myanmar script)</b>, and stitches multi-part concatenated messages back into one.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== CURRENT ARCHITECTURE ==================== -->
+<section id="now" class="rv">
+  <h2 class="sec"><span class="num">2</span>How the current project works — and where it stops</h2>
+  <p class="lead">One sentence summary: a superb engine with no exhaust pipe. Everything ends at one person's eyeballs.</p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 1000 480" xmlns="http://www.w3.org/2000/svg" font-family="'Noto Sans Myanmar','Myanmar Text','Padauk',sans-serif">
+      <defs><marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#a1a1a1"/></marker></defs>
+      <!-- boundary -->
+      <rect x="14" y="14" width="972" height="380" rx="16" fill="none" stroke="#ef4444" stroke-width="2" stroke-dasharray="10 7"/>
+      <text x="500" y="40" text-anchor="middle" fill="#f87171" font-size="13.5" font-weight="700">🚫 Hard boundary — everything dies inside this one machine (no network · no database · nobody else can see it)</text>
+      <!-- SIM bank mini -->
+      <rect x="40" y="90" width="150" height="110" rx="10" fill="#3a2f1e" stroke="#f59e0b" stroke-width="2"/>
+      <text x="115" y="130" text-anchor="middle" fill="#fbbf24" font-size="14" font-weight="700">SIM Bank</text>
+      <text x="115" y="155" text-anchor="middle" fill="#a1a1a1" font-size="12">all the SIMs</text>
+      <text x="115" y="175" text-anchor="middle" fill="#a1a1a1" font-size="11.5">Live mode ON</text>
+      <!-- USB arrow -->
+      <line class="flow" x1="190" y1="145" x2="240" y2="145" stroke="#38bdf8" stroke-width="4"/>
+      <text x="215" y="128" text-anchor="middle" fill="#38bdf8" font-size="11.5">USB</text>
+      <!-- Rust backend -->
+      <rect x="244" y="70" width="360" height="300" rx="12" fill="#1e1e1e" stroke="#38bdf8" stroke-width="2"/>
+      <text x="424" y="100" text-anchor="middle" fill="#38bdf8" font-size="15" font-weight="700">Rust Backend (an engine, not a server)</text>
+      <g font-size="12.5">
+        <rect x="270" y="115" width="308" height="34" rx="7" fill="#0d1117" stroke="#2d4a63"/>
+        <text x="424" y="137" text-anchor="middle" fill="#c9d1d9">One worker thread per port</text>
+        <rect x="270" y="157" width="308" height="34" rx="7" fill="#0d1117" stroke="#2d4a63"/>
+        <text x="424" y="179" text-anchor="middle" fill="#c9d1d9">AT command channel (watching for +CMTI)</text>
+        <rect x="270" y="199" width="308" height="34" rx="7" fill="#0d1117" stroke="#2d4a63"/>
+        <text x="424" y="221" text-anchor="middle" fill="#c9d1d9">PDU decoder (GSM-7 / UCS-2 Myanmar)</text>
+        <rect x="270" y="241" width="308" height="34" rx="7" fill="#0d1117" stroke="#2d4a63"/>
+        <text x="424" y="263" text-anchor="middle" fill="#c9d1d9">Concatenated SMS reassembler</text>
+        <rect class="glow" x="270" y="283" width="308" height="34" rx="7" fill="#2b1e10" stroke="#fb923c"/>
+        <text x="424" y="305" text-anchor="middle" fill="#fb923c" font-weight="700">OTP Extractor (extract_otp) ✅ already built</text>
+      </g>
+      <text x="424" y="345" text-anchor="middle" fill="#a1a1a1" font-size="12">Messages live in RAM only (2-hour retention)</text>
+      <!-- IPC arrow -->
+      <line x1="604" y1="220" x2="654" y2="220" stroke="#a1a1a1" stroke-width="2" marker-end="url(#arr2)"/>
+      <text x="629" y="200" text-anchor="middle" fill="#a1a1a1" font-size="11.5">event</text>
+      <text x="629" y="245" text-anchor="middle" fill="#fbbf24" font-size="11" font-family="monospace">sms:new</text>
+      <!-- Frontend -->
+      <rect x="658" y="70" width="300" height="200" rx="12" fill="#16222e" stroke="#38bdf8" stroke-width="2"/>
+      <text x="808" y="100" text-anchor="middle" fill="#38bdf8" font-size="15" font-weight="700">Svelte UI (what eyes can see)</text>
+      <g font-size="12.5" fill="#c9d1d9">
+        <text x="808" y="135" text-anchor="middle">Inbox table / one-click OTP copy</text>
+        <text x="808" y="165" text-anchor="middle">Toast + sound alerts</text>
+        <text x="808" y="195" text-anchor="middle">Port health overview</text>
+      </g>
+      <!-- person -->
+      <g transform="translate(808,300)">
+        <circle cx="0" cy="0" r="16" fill="none" stroke="#e4e4e4" stroke-width="2.5"/>
+        <circle cx="0" cy="-8" r="6" fill="none" stroke="#e4e4e4" stroke-width="2.5"/>
+        <path d="M -14 14 Q 0 4 14 14" fill="none" stroke="#e4e4e4" stroke-width="2.5"/>
+      </g>
+      <text x="808" y="345" text-anchor="middle" fill="#e4e4e4" font-size="13.5" font-weight="700">One person, sitting at the machine</text>
+      <text x="808" y="368" text-anchor="middle" fill="#f87171" font-size="12.5">❌ The team sees nothing</text>
+    </svg>
+    <figcaption><span class="figid">FIG 3</span> — Current pipeline: SIM Bank → Rust engine → UI → one pair of eyeballs. All inside one box.</figcaption>
+  </figure>
+
+  <div class="grid2">
+    <div class="card" style="border-color:#6b2023">
+      <h3 style="color:#f87171">What's missing today</h3>
+      <ul class="tight">
+        <li><b>No network layer at all</b> — the app doesn't use the internet (except update checks)</li>
+        <li>Messages live <b>in RAM</b> — closing the app wipes history</li>
+        <li>Visibility = <b>whoever is physically at the screen</b></li>
+      </ul>
+    </div>
+    <div class="card" style="border-color:#1e5c46">
+      <h3 style="color:#34d399">What's already perfectly ready</h3>
+      <ul class="tight">
+        <li><b>Live mode</b> — the <code>+CMTI</code> watcher that catches new SMS instantly ✅</li>
+        <li><b>OTP extractor</b> — <code>extract_otp</code>, Myanmar digits included ✅</li>
+        <li><b>The <code>sms:new</code> event</b> — an internal "new message!" signal already firing in exactly the right place ✅ — the perfect hook point for a forwarder</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="note ok">
+    💡 <b>Key insight:</b> the hardest parts of an OTP-bot (reading SMS, decoding, extracting the code) are <b>already done in this project</b>. What's missing is the last mile — a door to the outside.
+  </div>
+</section>
+<!-- ==================== BOT DESIGN (GROUP) ==================== -->
+<section id="plan" class="rv">
+  <h2 class="sec"><span class="num">3</span>The bot design — push into a private group</h2>
+  <p class="lead">The destination of every OTP is <b>one private Telegram group</b>. Whoever is a member of the group gets everything; whoever is removed sees nothing more. Membership is the permission system.</p>
+
+  <div class="card">
+    <h3>🤖 Telegram bots — the 30-second model</h3>
+    <ul class="tight">
+      <li>A bot is a <b>special user account</b> created via <b>@BotFather</b>. You get a <b>token</b> (looks like <code>123456:ABC-...</code>) — that token is the bot's identity and password at the same time.</li>
+      <li>The bot doesn't run on Telegram's servers — <b>your app calls Telegram's API over the internet</b> using the token. That's why this design needs no port forwarding, no public IP, no server of your own.</li>
+      <li>Bots <b>cannot start conversations</b> — Telegram blocks that. A user must open the bot once and press Start… <b>but with the group design this doesn't matter</b>: the bot is a group member, so it's allowed to speak there (with a small rate limit — see §3.2).</li>
+      <li>Bots in groups normally only see commands unless "Group Privacy" is off — <b>irrelevant here too</b>: we don't listen for anything, we only <b>send</b>.</li>
+    </ul>
+    <div class="note warn" style="margin-bottom:0">
+      ⚠️ <b>Push-only design:</b> the bot never listens, never replies, has no commands. It receives nothing from anyone — it only <b>ships OTPs out</b>. Attack surface: minimum.
+    </div>
+  </div>
+
+  <h3 style="margin-top:26px">3.1 — The full pipeline, end to end</h3>
+
+  <figure class="figure">
+    <svg viewBox="0 0 1000 560" xmlns="http://www.w3.org/2000/svg" font-family="'Noto Sans Myanmar','Myanmar Text','Padauk',sans-serif">
+      <defs>
+        <marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#a1a1a1"/></marker>
+        <filter id="pktGlow" x="-80%" y="-80%" width="260%" height="260%">
+          <feGaussianBlur stdDeviation="4" result="b"/>
+          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+      <!-- carrier + tower -->
+      <rect x="30" y="40" width="150" height="70" rx="10" fill="#1e1e1e" stroke="#a78bfa" stroke-width="2"/>
+      <text x="105" y="70" text-anchor="middle" fill="#a78bfa" font-size="13.5" font-weight="700">Carrier</text>
+      <text x="105" y="92" text-anchor="middle" fill="#a1a1a1" font-size="11.5">sends the OTP</text>
+      <path d="M78 155 L105 95 L132 155 Z" fill="#1e1e1e" stroke="#a78bfa" stroke-width="2"/>
+      <text x="105" y="175" text-anchor="middle" fill="#a1a1a1" font-size="11.5">tower</text>
+      <line class="flow slow" x1="180" y1="75" x2="230" y2="75" stroke="#a1a1a1" stroke-width="2" marker-end="url(#arr3)"/>
+      <!-- SIM bank -->
+      <rect x="234" y="30" width="150" height="90" rx="10" fill="#3a2f1e" stroke="#f59e0b" stroke-width="2"/>
+      <text x="309" y="65" text-anchor="middle" fill="#fbbf24" font-size="13.5" font-weight="700">SIM Bank</text>
+      <rect class="pulse" x="272" y="78" width="74" height="28" rx="5" fill="#fb923c"/>
+      <text x="309" y="97" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1a1206">SIM slot</text>
+      <!-- to PC -->
+      <line class="flow" x1="384" y1="75" x2="434" y2="75" stroke="#38bdf8" stroke-width="3"/>
+      <text x="409" y="58" text-anchor="middle" fill="#38bdf8" font-size="10.5">USB</text>
+      <!-- PC box -->
+      <rect x="438" y="20" width="230" height="170" rx="12" fill="#16222e" stroke="#38bdf8" stroke-width="2"/>
+      <text x="553" y="46" text-anchor="middle" fill="#38bdf8" font-size="13.5" font-weight="700">Your PC (this app)</text>
+      <g font-size="11">
+        <rect x="456" y="60" width="194" height="26" rx="6" fill="#0d1117" stroke="#2d4a63"/>
+        <text x="553" y="77" text-anchor="middle" fill="#c9d1d9">live.rs — +CMTI watcher</text>
+        <rect x="456" y="92" width="194" height="26" rx="6" fill="#0d1117" stroke="#2d4a63"/>
+        <text x="553" y="109" text-anchor="middle" fill="#c9d1d9">decoder.rs — PDU → text</text>
+        <rect class="glow" x="456" y="124" width="194" height="26" rx="6" fill="#2b1e10" stroke="#fb923c"/>
+        <text x="553" y="141" text-anchor="middle" fill="#fb923c" font-weight="700">extract_otp → 483920</text>
+      </g>
+      <text x="553" y="172" text-anchor="middle" fill="#a1a1a1" font-size="10.5">event: sms:new ⚡</text>
+      <!-- forwarder (new!) -->
+      <rect x="700" y="20" width="270" height="170" rx="12" fill="#12241d" stroke="#10b981" stroke-width="2.5"/>
+      <text x="835" y="46" text-anchor="middle" fill="#34d399" font-size="13.5" font-weight="700">NEW — Forwarder module</text>
+      <g font-size="11">
+        <rect x="718" y="60" width="234" height="26" rx="6" fill="#0d1117" stroke="#1e5c46"/>
+        <text x="835" y="77" text-anchor="middle" fill="#c9d1d9">formats the message</text>
+        <rect x="718" y="92" width="234" height="26" rx="6" fill="#0d1117" stroke="#1e5c46"/>
+        <text x="835" y="109" text-anchor="middle" fill="#c9d1d9">paced queue (~1 per 3 s)</text>
+        <rect x="718" y="124" width="234" height="26" rx="6" fill="#0d1117" stroke="#1e5c46"/>
+        <text x="835" y="141" text-anchor="middle" fill="#c9d1d9">honors 429 / retry_after</text>
+      </g>
+      <text x="835" y="172" text-anchor="middle" fill="#34d399" font-size="10.5">HTTPS POST → api.telegram.org</text>
+      <line x1="668" y1="105" x2="696" y2="105" stroke="#a1a1a1" stroke-width="2" marker-end="url(#arr3)"/>
+      <!-- internet cloud, bobbing -->
+      <g class="bob">
+        <path d="M480 320 q-18 -2 -18 -20 q0 -22 26 -22 q6 -26 40 -22 q22 -26 54 -6 q30 -4 34 26 q20 4 14 24 q-6 20 -26 20 z" fill="#0d1117" stroke="#38bdf8" stroke-width="2"/>
+        <text x="545" y="288" text-anchor="middle" fill="#38bdf8" font-size="13" font-weight="700">Internet</text>
+        <text x="545" y="308" text-anchor="middle" fill="#a1a1a1" font-size="10.5">port 443 · TLS</text>
+      </g>
+      <!-- path PC -> cloud -> telegram with comet trail -->
+      <path id="pToCloud" d="M770 190 C 740 240 640 260 560 270" fill="none" stroke="none"/>
+      <path id="pToTG" d="M510 275 C 380 290 300 300 240 310" fill="none" stroke="none"/>
+      <path d="M770 190 C 740 240 640 260 560 270" fill="none" stroke="#38bdf8" stroke-width="2" opacity=".35"/>
+      <path d="M510 275 C 380 290 300 300 240 310" fill="none" stroke="#38bdf8" stroke-width="2" opacity=".35"/>
+      <!-- comet trail: 5 dots on the same combined motion path -->
+      <g filter="url(#pktGlow)">
+        <circle r="5" fill="#34d399"><animateMotion dur="5s" repeatCount="indefinite" path="M770 190 C 740 240 640 260 560 270 C 480 285 300 300 240 310"></animateMotion></circle>
+        <circle r="4" fill="#34d399" opacity=".7"><animateMotion dur="5s" begin="-0.15s" repeatCount="indefinite" path="M770 190 C 740 240 640 260 560 270 C 480 285 300 300 240 310"></animateMotion></circle>
+        <circle r="3.5" fill="#34d399" opacity=".5"><animateMotion dur="5s" begin="-0.3s" repeatCount="indefinite" path="M770 190 C 740 240 640 260 560 270 C 480 285 300 300 240 310"></animateMotion></circle>
+        <circle r="2.5" fill="#34d399" opacity=".35"><animateMotion dur="5s" begin="-0.45s" repeatCount="indefinite" path="M770 190 C 740 240 640 260 560 270 C 480 285 300 300 240 310"></animateMotion></circle>
+        <circle r="2" fill="#34d399" opacity=".2"><animateMotion dur="5s" begin="-0.6s" repeatCount="indefinite" path="M770 190 C 740 240 640 260 560 270 C 480 285 300 300 240 310"></animateMotion></circle>
+      </g>
+      <!-- telegram -->
+      <g transform="translate(130,290)">
+        <circle cx="55" cy="55" r="52" fill="#16222e" stroke="#38bdf8" stroke-width="2.5"/>
+        <path d="M20 52 L88 24 L70 88 L48 68 L36 80 L38 62 Z" fill="#38bdf8"/>
+        <path d="M48 68 L70 88 L70 76" fill="#16222e"/>
+      </g>
+      <text x="185" y="418" text-anchor="middle" fill="#38bdf8" font-size="13.5" font-weight="700">Telegram</text>
+      <text x="185" y="438" text-anchor="middle" fill="#a1a1a1" font-size="11">api.telegram.org/bot&lt;token&gt;/sendMessage</text>
+      <!-- group bubble with arrive + ding -->
+      <g class="arrive">
+        <rect x="620" y="250" width="330" height="150" rx="14" fill="#1e2430" stroke="#a78bfa" stroke-width="2"/>
+        <text x="785" y="278" text-anchor="middle" fill="#a78bfa" font-size="13" font-weight="700">Private Group — "OTP Vault"</text>
+        <rect x="645" y="292" width="220" height="60" rx="10" fill="#2b5278"/>
+        <text x="657" y="313" font-size="11.5" fill="#c9d1d9">🔐 OTP — Wave Money</text>
+        <text x="657" y="334" font-size="16" font-weight="800" fill="#ffffff" font-family="monospace">483920</text>
+        <text x="852" y="344" font-size="9.5" fill="#a1c1e8">2s</text>
+        <text x="785" y="380" text-anchor="middle" fill="#a1a1a1" font-size="11">every member's phone buzzes</text>
+      </g>
+      <g class="ding" transform="translate(905,255)">
+        <text x="0" y="0" font-size="20">🔔</text>
+      </g>
+      <!-- team members -->
+      <g font-size="11.5" fill="#a1a1a1">
+        <g transform="translate(680,455)"><circle cx="0" cy="0" r="14" fill="none" stroke="#34d399" stroke-width="2"/><circle cx="0" cy="-6" r="5" fill="none" stroke="#34d399" stroke-width="2"/><path d="M -12 12 Q 0 3 12 12" fill="none" stroke="#34d399" stroke-width="2"/></g>
+        <g transform="translate(760,455)"><circle cx="0" cy="0" r="14" fill="none" stroke="#34d399" stroke-width="2"/><circle cx="0" cy="-6" r="5" fill="none" stroke="#34d399" stroke-width="2"/><path d="M -12 12 Q 0 3 12 12" fill="none" stroke="#34d399" stroke-width="2"/></g>
+        <g transform="translate(840,455)"><circle cx="0" cy="0" r="14" fill="none" stroke="#34d399" stroke-width="2"/><circle cx="0" cy="-6" r="5" fill="none" stroke="#34d399" stroke-width="2"/><path d="M -12 12 Q 0 3 12 12" fill="none" stroke="#34d399" stroke-width="2"/></g>
+        <text x="760" y="492" text-anchor="middle" fill="#34d399" font-weight="700">All team members get it at once</text>
+        <text x="760" y="510" text-anchor="middle">no one has to /start the bot — group membership is enough</text>
+      </g>
+      <!-- timing badges -->
+      <g>
+        <rect x="240" y="440" width="140" height="26" rx="13" fill="#0d1117" stroke="#404040"/>
+        <text class="pfx" x="310" y="457" text-anchor="middle" fill="#a1a1a1">~3–8 s total</text>
+        <rect x="400" y="440" width="165" height="26" rx="13" fill="#0d1117" stroke="#404040"/>
+        <text class="pfx" x="482" y="457" text-anchor="middle" fill="#a1a1a1">already built</text>
+      </g>
+    </svg>
+    <figcaption><span class="figid">FIG 4</span> — The complete pipeline. Only the green box is new code; the green packet rides HTTPS out to Telegram and lands in the group (🔔 = the buzz every member gets, synced to the packet's 5-second loop).</figcaption>
+  </figure>
+
+  <h3 style="margin-top:26px">3.2 — Rate limits (why the queue matters)</h3>
+  <div class="grid2">
+    <div class="card">
+      <h3>Telegram's limits</h3>
+      <ul class="tight">
+        <li><b>~20 messages/minute</b> into a group — the practical constraint</li>
+        <li>~30 messages/second globally per bot</li>
+        <li>Exceed it and Telegram replies <code>429 Too Many Requests</code> with a <code>retry_after</code> field — you just wait that many seconds and resend</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>The design's answer</h3>
+      <ul class="tight">
+        <li>A <b>paced queue</b>: one send every ~3 seconds, 20/min worst case — under the limit</li>
+        <li><b>Honors 429 retry_after</b> if a burst ever slips past</li>
+        <li>OTPs expire in minutes; a 3-second pacing is invisible</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== ACCESS CONTROL ==================== -->
+<section id="access" class="rv">
+  <h2 class="sec"><span class="num">4</span>Access control — the group IS the allowlist</h2>
+  <p class="lead">One configured destination, zero per-person management. Telegram's own group admin tools become your permission system.</p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 1000 440" xmlns="http://www.w3.org/2000/svg" font-family="'Noto Sans Myanmar','Myanmar Text','Padauk',sans-serif">
+      <defs>
+        <marker id="arr4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#a1a1a1"/></marker>
+      </defs>
+      <!-- the group (destination) -->
+      <rect x="330" y="40" width="340" height="220" rx="14" fill="#1e2430" stroke="#a78bfa" stroke-width="2.5"/>
+      <text x="500" y="70" text-anchor="middle" fill="#a78bfa" font-size="15" font-weight="700">🔒 Private Group "OTP Vault"</text>
+      <text x="500" y="92" text-anchor="middle" fill="#fbbf24" font-size="12" font-family="monospace">chat_id = -1001234567890</text>
+      <!-- members -->
+      <g font-size="11" fill="#a1a1a1">
+        <g transform="translate(395,140)"><circle cx="0" cy="0" r="15" fill="none" stroke="#34d399" stroke-width="2"/><circle cx="0" cy="-6" r="5" fill="none" stroke="#34d399" stroke-width="2"/><path d="M -13 13 Q 0 3 13 13" fill="none" stroke="#34d399" stroke-width="2"/><text x="0" y="34" text-anchor="middle">Alice ✅</text></g>
+        <g transform="translate(500,140)"><circle cx="0" cy="0" r="15" fill="none" stroke="#34d399" stroke-width="2"/><circle cx="0" cy="-6" r="5" fill="none" stroke="#34d399" stroke-width="2"/><path d="M -13 13 Q 0 3 13 13" fill="none" stroke="#34d399" stroke-width="2"/><text x="0" y="34" text-anchor="middle">Bob ✅</text></g>
+        <g transform="translate(605,140)"><circle cx="0" cy="0" r="15" fill="none" stroke="#34d399" stroke-width="2"/><circle cx="0" cy="-6" r="5" fill="none" stroke="#34d399" stroke-width="2"/><path d="M -13 13 Q 0 3 13 13" fill="none" stroke="#34d399" stroke-width="2"/><text x="0" y="34" text-anchor="middle">Carol ✅</text></g>
+      </g>
+      <!-- bot inside group -->
+      <g transform="translate(500,215)">
+        <circle cx="0" cy="0" r="17" fill="#12241d" stroke="#10b981" stroke-width="2.5"/>
+        <text x="0" y="6" text-anchor="middle" font-size="18">🤖</text>
+      </g>
+      <text x="500" y="248" text-anchor="middle" fill="#34d399" font-size="11.5" font-weight="700">the bot — a member, allowed to post</text>
+      <!-- OTP flow into group -->
+      <path class="flow" d="M220 150 C 260 150 260 110 325 110" fill="none" stroke="#10b981" stroke-width="3" marker-end="url(#arr4)"/>
+      <text x="243" y="126" text-anchor="middle" fill="#34d399" font-size="11.5" font-weight="700">OTPs</text>
+      <!-- PC -->
+      <rect x="60" y="100" width="160" height="100" rx="10" fill="#16222e" stroke="#38bdf8" stroke-width="2"/>
+      <text x="140" y="140" text-anchor="middle" fill="#38bdf8" font-size="13" font-weight="700">Your PC</text>
+      <text x="140" y="165" text-anchor="middle" fill="#a1a1a1" font-size="11.5">app + SIM bank</text>
+      <!-- stranger denied -->
+      <g class="denied">
+        <g transform="translate(120,330)">
+          <circle cx="0" cy="0" r="16" fill="none" stroke="#f87171" stroke-width="2"/>
+          <circle cx="0" cy="-7" r="5" fill="none" stroke="#f87171" stroke-width="2"/>
+          <path d="M -14 14 Q 0 3 14 14" fill="none" stroke="#f87171" stroke-width="2"/>
+        </g>
+        <text x="120" y="368" text-anchor="middle" fill="#f87171" font-size="11.5">A stranger who found</text>
+        <text x="120" y="386" text-anchor="middle" fill="#f87171" font-size="11.5">the bot's username</text>
+      </g>
+      <path d="M160 310 C 220 280 300 290 340 260" fill="none" stroke="#ef4444" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arr4)"/>
+      <text x="265" y="270" text-anchor="middle" fill="#f87171" font-size="11.5" font-weight="700">❌ silence — bot ignores private chats</text>
+      <!-- removed member -->
+      <g transform="translate(830,330)">
+        <circle cx="0" cy="0" r="16" fill="none" stroke="#a1a1a1" stroke-width="2"/>
+        <circle cx="0" cy="-7" r="5" fill="none" stroke="#a1a1a1" stroke-width="2"/>
+        <path d="M -14 14 Q 0 3 14 14" fill="none" stroke="#a1a1a1" stroke-width="2"/>
+        <line x1="-12" y1="-12" x2="12" y2="12" stroke="#ef4444" stroke-width="2"/>
+      </g>
+      <text x="830" y="368" text-anchor="middle" fill="#a1a1a1" font-size="11.5">Ex-member — removed</text>
+      <text x="830" y="386" text-anchor="middle" fill="#a1a1a1" font-size="11.5">by a group admin</text>
+      <path d="M790 300 C 760 270 720 250 680 235" fill="none" stroke="#ef4444" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arr4)"/>
+      <text x="735" y="248" text-anchor="middle" fill="#f87171" font-size="11.5" font-weight="700">❌ cut off instantly</text>
+      <!-- rules box -->
+      <rect x="330" y="300" width="340" height="120" rx="10" fill="#0d1117" stroke="#404040"/>
+      <text x="500" y="325" text-anchor="middle" fill="#e4e4e4" font-size="12.5" font-weight="700">The only two rules</text>
+      <text x="500" y="350" text-anchor="middle" fill="#a1a1a1" font-size="11.5">1 · one destination chat_id, configured in Settings</text>
+      <text x="500" y="372" text-anchor="middle" fill="#a1a1a1" font-size="11.5">2 · membership = permission (managed in Telegram)</text>
+      <text x="500" y="398" text-anchor="middle" fill="#34d399" font-size="11.5" font-weight="700">That's the entire security model.</text>
+    </svg>
+    <figcaption><span class="figid">FIG 5</span> — The group is the allowlist. The app holds exactly one destination ID; Telegram's group admin tools grant and revoke access.</figcaption>
+  </figure>
+
+  <h3 style="margin-top:26px">Onboarding — 5 steps, once</h3>
+  <figure class="figure">
+    <svg viewBox="0 0 1000 430" xmlns="http://www.w3.org/2000/svg" font-family="'Noto Sans Myanmar','Myanmar Text','Padauk',sans-serif">
+      <!-- group icon: 6 expanding rings, one per step -->
+      <g stroke="#a78bfa">
+        <circle class="ringx" cx="170" cy="210" r="36"/>
+        <circle class="ringx" cx="170" cy="210" r="36" style="animation-delay:1.1s"/>
+        <circle class="ringx" cx="170" cy="210" r="36" style="animation-delay:2.2s"/>
+        <circle class="ringx" cx="170" cy="210" r="36" style="animation-delay:3.3s"/>
+        <circle class="ringx" cx="170" cy="210" r="36" style="animation-delay:4.4s"/>
+        <circle class="ringx" cx="170" cy="210" r="36" style="animation-delay:5.5s"/>
+      </g>
+      <circle cx="170" cy="210" r="36" fill="#1e2430" stroke="#a78bfa" stroke-width="2.5"/>
+      <text x="170" y="206" text-anchor="middle" font-size="19">🔒</text>
+      <text x="170" y="224" text-anchor="middle" fill="#a78bfa" font-size="9.5" font-weight="700">GROUP</text>
+      <line x1="222" y1="210" x2="450" y2="210" stroke="#404040" stroke-width="1.5" stroke-dasharray="4 5"/>
+      <!-- six steps, each lighting up in sync with its ring -->
+      <text class="pfx" x="470" y="60" text-anchor="end" fill="#a1a1a1">t+0m</text>
+      <text class="steptxt" x="505" y="60" font-size="13" fill="#e4e4e4" font-weight="700">1 · create a private group — name it "OTP Vault"</text>
+      <text class="pfx" x="470" y="120" text-anchor="end" fill="#a1a1a1">t+1m</text>
+      <text class="steptxt" x="505" y="120" font-size="13" fill="#e4e4e4" style="animation-delay:1.1s">2 · add the bot as a member — no admin rights needed</text>
+      <text class="pfx" x="470" y="180" text-anchor="end" fill="#a1a1a1">t+2m</text>
+      <text class="steptxt" x="505" y="180" font-size="13" fill="#e4e4e4" style="animation-delay:2.2s">3 · Settings → Forwarding → "Detect Group ID"</text>
+      <text class="pfx" x="470" y="240" text-anchor="end" fill="#a1a1a1">t+3m</text>
+      <text class="steptxt" x="505" y="240" font-size="13" fill="#e4e4e4" style="animation-delay:3.3s">4 · the -100… group ID fills in · paste your Bot Token</text>
+      <text class="pfx" x="470" y="300" text-anchor="end" fill="#a1a1a1">t+4m</text>
+      <text class="steptxt" x="505" y="300" font-size="13" fill="#e4e4e4" style="animation-delay:4.4s">5 · "Send test message" → it lands in the group</text>
+      <text class="pfx" x="470" y="360" text-anchor="end" fill="#a1a1a1">t+5m</text>
+      <text class="steptxt" x="505" y="360" font-size="13" fill="#34d399" font-weight="700" style="animation-delay:5.5s">✓ done — keep Live mode ON; everyone gets OTPs</text>
+      <text x="505" y="402" font-size="12" fill="#a1a1a1">add or remove people any time, in Telegram itself</text>
+    </svg>
+    <figcaption><span class="figid">FIG 6</span> — Five minutes, once. Each ring expands from the group in sync with its step lighting up.</figcaption>
+  </figure>
+
+  <div class="note warn">
+    ⚠️ <b>The supergroup gotcha:</b> if a basic group is upgraded to a <b>supergroup</b> (this happens automatically when you enable certain features like group auto-delete or admin-only posting), <b>its chat_id changes</b> to a new <code>-100…</code> value. Symptom: forwarding silently stops. Fix: press <b>Detect Group ID</b> again. Better fix: make the group a supergroup from day one, so the ID never changes under you.
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>✅ Advantages of this model</h3>
+      <ul class="tight">
+        <li><b>Zero user management</b> in the app — add/remove people with Telegram's own tools</li>
+        <li>Members <b>don't need to /start</b> the bot or share any ID with you</li>
+        <li>New employee onboarded in <b>one group invite</b></li>
+        <li>Audit trail for free — Telegram's own chat history is the log</li>
+        <li>The bot token can only ever write to <b>that one group</b></li>
+      </ul>
+    </div>
+    <div class="card" style="border-color:#6b4c12">
+      <h3 style="color:#fbbf24">Trade-offs to accept</h3>
+      <ul class="tight">
+        <li><b>All members see all OTPs</b> — including sensitive accounts. That's the design: speed over compartmentalization</li>
+        <li>Message history lives on Telegram's servers (mitigate: enable the group's <b>auto-delete timer</b>)</li>
+        <li>Anyone who gets into the group gets everything — protect group invites like passwords</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== NETWORK / LOCAL ==================== -->
+<section id="network" class="rv">
+  <h2 class="sec"><span class="num">5</span>Network &amp; "local" — what runs where</h2>
+  <p class="lead">A common point of confusion: the SIM bank is local hardware, but Telegram is a global service. The app is the bridge.</p>
+
+  <table>
+    <tr><th>Thing</th><th>Where it lives</th><th>What reaches the internet?</th></tr>
+    <tr><td> SIM bank + SIMs</td><td> 🏠 next to your PC</td><td rowspan="3" style="vertical-align:middle">Only <b>one outbound</b> connection:<br><code>api.telegram.org:443</code> (HTTPS)<br>Nothing listens. Nothing accepts inbound.</td></tr>
+    <tr><td> The app (Rust + Svelte)</td><td> 🖥️ that same PC</td></tr>
+    <tr><td> OTP messages</td><td> 🧠 RAM (2-hour window)</td></tr>
+    <tr><td> Telegram servers</td><td> ☁️ Telegram (global)</td><td>— they receive the message and fan it out to your group</td></tr>
+  </table>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>🏠 LAN-only alternative (rejected)</h3>
+      <p style="margin:0 0 10px">One could run a tiny local web server and let phones on the same Wi-Fi poll it. Rejected because:</p>
+      <ul class="tight" style="margin:0">
+        <li>No push — phones must poll or keep a page open</li>
+        <li>Breaks the moment the phone leaves your Wi-Fi</li>
+        <li>Port/IP management is its own little hell</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>☁️ Telegram approach (chosen)</h3>
+      <p style="margin:0 0 10px">The PC makes an outbound HTTPS call; Telegram's infrastructure does the fan-out:</p>
+      <ul class="tight" style="margin:0">
+        <li>True push — works on any network, anywhere on Earth</li>
+        <li>No port forwarding, no static IP, no DNS</li>
+        <li>Delivery + notification handling is Telegram's problem, not yours</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="note danger">
+    🇲🇲 <b>Myanmar reality check:</b> <code>api.telegram.org</code> has been fully blocked by some ISPs during internet shutdowns. The Forwarder will log a clear error if it can't connect. The planned fix is a <b>SOCKS5 proxy</b> setting (one field in Settings) — Bot API traffic works fine through <code>socks5h://</code> proxies. MTProto proxy links only help Telegram's client apps, <b>not</b> bot API calls.
+  </div>
+</section>
+
+<!-- ==================== MOCKUPS ==================== -->
+<section id="mock" class="rv">
+  <h2 class="sec"><span class="num">6</span>Mockups — what it will look like</h2>
+  <p class="lead">Not code, just targets to aim at. First the new tab in the app, then the group chat itself.</p>
+
+  <figure class="figure">
+    <div style="border:1px solid var(--border); border-radius:10px; overflow:hidden">
+      <div style="background:var(--elevated); padding:10px 16px; display:flex; gap:22px; font-size:13px; color:var(--muted)">
+        <span>Ports</span><span>Inbox</span><span>Settings</span><span style="color:var(--primary); font-weight:700">Forwarding ✦ NEW</span>
+      </div>
+      <div style="padding:18px">
+        <div style="font-size:16px; font-weight:700; margin-bottom:14px">Settings → Forwarding</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px">
+          <div style="border:1px solid var(--border); border-radius:10px; padding:14px">
+            <div style="font-size:13px; color:var(--muted); margin-bottom:6px">Bot Token (from @BotFather)</div>
+            <div style="background:#0d1117; border:1px solid var(--border); border-radius:8px; padding:9px 12px; font-family:monospace; font-size:12.5px; color:#fbbf24">1234567:AAF3xK…•••••••••••• <span style="color:var(--muted)">(paste)</span></div>
+            <div style="font-size:11.5px; color:var(--muted); margin-top:6px">stored locally only · masked after save</div>
+          </div>
+          <div style="border:1px solid var(--border); border-radius:10px; padding:14px">
+            <div style="font-size:13px; color:var(--muted); margin-bottom:6px">Group Chat ID (destination)</div>
+            <div style="background:#0d1117; border:1px solid var(--border); border-radius:8px; padding:9px 12px; font-family:monospace; font-size:12.5px; color:#a78bfa">-1001234567890</div>
+            <button style="margin-top:8px; background:var(--primary); border:none; color:#0c0c0c; font-weight:700; border-radius:8px; padding:6px 14px; font-size:12.5px; cursor:pointer">🔍 Detect Group ID</button>
+          </div>
+          <div style="border:1px solid var(--border); border-radius:10px; padding:14px">
+            <div style="font-size:13px; color:var(--muted); margin-bottom:6px">SOCKS5 Proxy (optional — for blocked networks)</div>
+            <div style="background:#0d1117; border:1px solid var(--border); border-radius:8px; padding:9px 12px; font-family:monospace; font-size:12.5px; color:var(--muted)">socks5h://127.0.0.1:9050</div>
+            <div style="font-size:11.5px; color:var(--muted); margin-top:6px">leave empty if api.telegram.org is reachable directly</div>
+          </div>
+          <div style="border:1px solid var(--border); border-radius:10px; padding:14px; display:flex; flex-direction:column; justify-content:center; gap:8px">
+            <label style="display:flex; align-items:center; gap:8px; font-size:13.5px"><input type="checkbox" checked> Forward OTP messages</label>
+            <label style="display:flex; align-items:center; gap:8px; font-size:13.5px"><input type="checkbox" checked> Forward non-OTP SMS too</label>
+            <label style="display:flex; align-items:center; gap:8px; font-size:13.5px"><input type="checkbox"> Mask codes as <code style="font-size:11px">••••••</code> (tap-to-reveal in chat)</label>
+            <div style="display:flex; gap:8px; margin-top:4px">
+              <button style="background:var(--success); border:none; color:#0c0c0c; font-weight:700; border-radius:8px; padding:6px 14px; font-size:12.5px; cursor:pointer">Send test message</button>
+              <span style="align-self:center; font-size:12px; color:var(--success)">✓ Delivered to group</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <figcaption><b>The Forwarding tab</b> — Bot Token + Group Chat ID + Detect button + optional proxy. Nothing else is needed.</figcaption>
+  </figure>
+
+  <figure class="figure">
+    <div style="max-width:380px; margin:0 auto; border:1px solid var(--border); border-radius:18px; overflow:hidden; background:#0e1621">
+      <div style="background:#17212b; padding:12px 16px; display:flex; align-items:center; gap:10px">
+        <div style="width:34px; height:34px; border-radius:50%; background:#2b5278; display:flex; align-items:center; justify-content:center">🔒</div>
+        <div>
+          <div style="font-size:14px; font-weight:700">OTP Vault</div>
+          <div style="font-size:11.5px; color:#6ab3f3">private group · 4 members · bot</div>
+        </div>
+      </div>
+      <div style="padding:14px; display:flex; flex-direction:column; gap:10px; min-height:290px">
+        <div style="align-self:center; font-size:11px; color:#6ab3f3; background:rgba(0,0,0,.25); border-radius:12px; padding:3px 12px">today</div>
+        <div style="align-self:flex-start; background:#2b5278; border-radius:12px 12px 12px 4px; padding:8px 12px; max-width:85%">
+          <div style="font-size:11px; color:#a1c1e8">SIM 12 · MPT · Wave Money</div>
+          <div style="font-size:12px; margin:3px 0">🔐 Your OTP code</div>
+          <div style="font-size:20px; font-weight:800; font-family:monospace; letter-spacing:2px">483920</div>
+          <div style="font-size:10px; color:#a1c1e8; text-align:right">14:32 · via OTP bot</div>
+        </div>
+        <div style="align-self:flex-start; background:#2b5278; border-radius:12px 12px 12px 4px; padding:8px 12px; max-width:85%">
+          <div style="font-size:11px; color:#a1c1e8">SIM 03 · Ooredoo · KBZPay</div>
+          <div style="font-size:12px; margin:3px 0">🔐 Your verification code</div>
+          <div style="font-size:20px; font-weight:800; font-family:monospace; letter-spacing:2px">7 2 9 4</div>
+          <div style="font-size:10px; color:#a1c1e8; text-align:right">14:35 · via OTP bot</div>
+        </div>
+        <div style="align-self:center; font-size:11px; color:#6ab3f3; background:rgba(0,0,0,.25); border-radius:12px; padding:3px 12px">Bob removed Carol from the group</div>
+      </div>
+    </div>
+    <figcaption><b>The group itself</b> — one bubble per OTP: which SIM, which carrier, which service, the code — and Telegram's native history as the audit log.</figcaption>
+  </figure>
+</section>
+
+<!-- ==================== ADVICE ==================== -->
+<section id="advice" class="rv">
+  <h2 class="sec"><span class="num">7</span>Roadmap advice — build order</h2>
+  <p class="lead">The order below is chosen so that every phase is useful on its own, and nothing is thrown away later.</p>
+
+  <table>
+    <tr><th style="width:60px">Phase</th><th>What</th><th>Effort</th><th>Why this order</th></tr>
+    <tr>
+      <td><b>0</b></td>
+      <td><b>Group-based forwarder — MVP</b> (this doc)</td>
+      <td><span class="tag ok">small</span></td>
+      <td>Maximum value for minimum code: one HTTP call at the <code>sms:new</code> hook. Nothing else changes.</td>
+    </tr>
+    <tr>
+      <td>1</td>
+      <td>Hardening: 429 handling, offline retry queue, token masking in logs</td>
+      <td><span class="tag ok">small</span></td>
+      <td>Makes the MVP survive real networks (and honor AGENTS.md's no-secrets-in-logs rule).</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>Persistent message history (SQLite) + search</td>
+      <td><span class="tag mid">medium</span></td>
+      <td>RAM-only history is the app's biggest existing weakness — and it pairs with the Telegram audit trail.</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>Multi-destination: N groups, per-SIM routing rules ("KBZPay SIM → finance group")</td>
+      <td><span class="tag mid">medium</span></td>
+      <td>Once one destination works, N is a table — but only after the single-group flow has proven itself.</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>HTTP API / web dashboard for integration into your own systems</td>
+      <td><span class="tag bad">large</span></td>
+      <td>The heaviest option — worth it only if other software must consume OTPs programmatically.</td>
+    </tr>
+  </table>
+
+  <div class="note">
+    💡 <b>Honest recommendation:</b> ship Phase 0 exactly as described here and live with it for two weeks. The pacing, the bubble format, the masking — all of it is cheap to change after real usage. Don't design phase 3 before phase 0 has run in production.
+  </div>
+</section>
+
+<!-- ==================== FAQ ==================== -->
+<section id="faq" class="rv">
+  <h2 class="sec"><span class="num">8</span>FAQ</h2>
+
+  <div class="qa"><div class="q">Does every team member need to open the bot and press Start?</div>
+  <div class="a"><b>No.</b> That rule only applies to bots messaging users privately. Because the bot speaks inside your group, group membership alone is enough. Members never interact with the bot directly at all.</div></div>
+
+  <div class="qa"><div class="q">What if someone finds the bot and messages it?</div>
+  <div class="a">Nothing. The bot is push-only: it never polls for updates and has no command handlers. A stranger pressing Start sees silence — the bot's only configured destination is your group's chat_id.</div></div>
+
+  <div class="qa"><div class="q">Can someone fake the bot and inject a fake OTP?</div>
+  <div class="a">Not via Telegram's normal surface — posting as the bot requires the token, which lives only on your PC. Protect the PC, protect the token. If a token ever leaks, @BotFather's <code>/revoke</code> kills it instantly and issues a new one.</div></div>
+
+  <div class="qa"><div class="q">How do I remove someone's access?</div>
+  <div class="a">Remove them from the group — that's it. In Telegram, instantly. No app setting touches people.</div></div>
+
+  <div class="qa"><div class="q">What happens if the PC has no internet?</div>
+  <div class="a">OTP delivery pauses; SMS keep accumulating on the SIMs and in the app. With the Phase-1 retry queue, pending messages ship out when connectivity returns. The 10-minute SIM sweep keeps slots from filling meanwhile.</div></div>
+
+  <div class="qa"><div class="q">Do all OTPs go to everyone?</div>
+  <div class="a">Yes — in the single-group design, everyone in the group sees every OTP. It's simple and fast. If you later need "finance OTPs only for the finance team", that's Phase 3's per-SIM routing — built on the same foundation, nothing redone.</div></div>
+
+  <div class="qa"><div class="q">Why a group at all, instead of DMing each person?</div>
+  <div class="a">Three reasons: <b>(1)</b> no per-person chat_id bookkeeping — membership is managed where your team already lives, in Telegram; <b>(2)</b> one send per OTP instead of N sends (gentler on rate limits); <b>(3)</b> shared visibility — anyone can grab a code without asking "did anyone see the KBZPay OTP?".</div></div>
+
+  <div class="qa"><div class="q">Is Telegram safe for OTPs?</div>
+  <div class="a">Reasonable: TLS in transit, no default E2E for group chats, history on Telegram servers. Mitigations built into this design: private (invite-only) group, auto-delete timer, optional code masking (<code>••••••</code>), and instant revocation. For most teams the convenience outweighs the residual risk — but that's your call to make consciously.</div></div>
+
+  <div class="qa"><div class="q">Does this work with Myanmar-language OTPs?</div>
+  <div class="a">Yes — the decoder already handles UCS-2 Myanmar text, and <code>extract_otp</code> recognizes Myanmar numerals (၀၁၂၃…). The forwarded bubble keeps the original message body.</div></div>
+
+  <div class="qa"><div class="q">How fast is delivery, really?</div>
+  <div class="a">~3–8 seconds from SMS arrival to buzz on the phone: the app already decodes in well under a second, the forwarder formats instantly, and the queue only adds ~3 s under heavy bursts. Normal case: you hear the phone before you finish switching windows.</div></div>
+</section>
+
+<footer style="margin-top:56px; padding-top:20px; border-top:1px solid var(--border); color:var(--muted); font-size:13px">
+  <p><b>SIM Bank SMS Reader — Telegram OTP Bot design proposal (English edition, v2)</b></p>
+  <p style="margin:6px 0">Design targets only — no code has been written or changed for this feature. Sources: Telegram Bot API documentation &amp; rate-limit references; project source code (<code>sms-tauri</code> v1.4.0, <code>Memory/05-feature-roadmap.md</code>).</p>
+  <p style="margin:6px 0; font-size:11.5px; opacity:.75">Diagram fonts: the Myanmar font stack (Noto Sans Myanmar / Padauk) · accent font: Press Start 2P (with monospace fallback)</p>
+</footer>
+
+</div>
+<script>
+(function(){
+  // scroll progress bar
+  var bar = document.getElementById('pbar');
+  function onScroll(){
+    var h = document.documentElement;
+    var max = h.scrollHeight - h.clientHeight;
+    bar.style.width = (max > 0 ? (h.scrollTop / max) * 100 : 0) + '%';
+  }
+  document.addEventListener('scroll', onScroll, {passive:true});
+  onScroll();
+  // reveal on scroll
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, {threshold:.12});
+  document.querySelectorAll('.rv').forEach(function(el){ io.observe(el); });
+})();
+</script>
+</body>
+</html>

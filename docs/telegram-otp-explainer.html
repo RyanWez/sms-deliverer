@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="my">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SIM Bank → Telegram OTP Bot — စနစ်တစ်ခုလုံးရဲ့ ဒီဇိုင်း (မြန်မာ)</title>
+<style>
+  :root{
+    --bg:#171717; --surface:#1e1e1e; --elevated:#2d2d2d; --border:#404040;
+    --fg:#e4e4e4; --muted:#a1a1a1; --primary:#38bdf8; --success:#10b981;
+    --danger:#ef4444; --warning:#f59e0b; --otp:#fb923c; --violet:#a78bfa;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font-family:'Noto Sans Myanmar','Myanmar Text','Padauk',-apple-system,'Segoe UI',Roboto,sans-serif;
+    line-height:1.85; font-size:15.5px;
+  }
+  .wrap{max-width:1060px; margin:0 auto; padding:24px 20px 80px}
+  header.hero{
+    border:1px solid var(--border); border-radius:16px; padding:28px 28px 20px;
+    background:linear-gradient(120deg,#1e1e1e,#16222e,#12241d); margin-bottom:28px;
+  }
+  .hero h1{margin:0 0 6px; font-size:25px; line-height:1.55}
+  .hero p.sub{margin:0; color:var(--muted)}
+  .pill{display:inline-block; padding:2px 12px; border-radius:999px; font-size:12px; margin:0 6px 6px 0; border:1px solid var(--border); color:var(--muted)}
+  .pill.new{color:#0c0c0c; background:var(--primary); border-color:var(--primary); font-weight:700}
+  .pill.warn{color:#0c0c0c; background:var(--warning); border-color:var(--warning); font-weight:700}
+  nav.toc{display:flex; flex-wrap:wrap; gap:8px; margin:14px 0 0}
+  nav.toc a{color:var(--primary); text-decoration:none; border:1px solid var(--border); border-radius:8px; padding:3px 10px; font-size:13px}
+  nav.toc a:hover{background:var(--elevated)}
+  section{margin-top:48px}
+  h2.sec{
+    font-size:20px; margin:0 0 4px; padding-bottom:10px; border-bottom:1px solid var(--border);
+    display:flex; align-items:center; gap:10px;
+  }
+  h2.sec .num{
+    background:var(--primary); color:#0c0c0c; font-weight:800; border-radius:8px;
+    min-width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center; font-size:15px;
+  }
+  p.lead{color:var(--muted); margin:8px 0 18px}
+  .card{background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:18px 20px; margin:16px 0}
+  .card h3{margin:0 0 8px; font-size:17px}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+  .grid3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px}
+  @media(max-width:820px){.grid2,.grid3{grid-template-columns:1fr}}
+  .qa{border-left:4px solid var(--primary); padding-left:16px; margin:18px 0}
+  .qa .q{font-weight:700; color:var(--primary)}
+  .qa .a{margin-top:4px}
+  .note{background:#1c2430; border:1px solid #2b4a63; border-radius:10px; padding:12px 16px; margin:14px 0; font-size:14.5px}
+  .note.warn{background:#2b2113; border-color:#6b4c12}
+  .note.danger{background:#2b1516; border-color:#6b2023}
+  .note.ok{background:#12241d; border-color:#1e5c46}
+  .figure{background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:14px; margin:20px 0}
+  .figure svg{width:100%; height:auto; display:block}
+  .figure figcaption{color:var(--muted); font-size:13.5px; margin-top:8px; text-align:center}
+  table{width:100%; border-collapse:collapse; margin:14px 0; font-size:14.5px}
+  th,td{border:1px solid var(--border); padding:9px 12px; text-align:left; vertical-align:top}
+  th{background:var(--elevated)}
+  code, pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace}
+  code{background:#262626; border:1px solid #3a3a3a; border-radius:6px; padding:1px 6px; font-size:13px; color:#fbbf24}
+  pre{background:#0d1117; border:1px solid var(--border); border-radius:10px; padding:14px 16px; overflow-x:auto; font-size:13px; line-height:1.7; color:#c9d1d9}
+  .tag{display:inline-block; font-size:11px; border-radius:6px; padding:1px 8px; font-weight:700}
+  .tag.ok{background:rgba(16,185,129,.15); color:#34d399; border:1px solid rgba(16,185,129,.4)}
+  .tag.bad{background:rgba(239,68,68,.15); color:#f87171; border:1px solid rgba(239,68,68,.4)}
+  .tag.mid{background:rgba(245,158,11,.15); color:#fbbf24; border:1px solid rgba(245,158,11,.4)}
+  ul.tight{margin:8px 0; padding-left:22px}
+  ul.tight li{margin:5px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div>
+    <span class="pill">SIM Bank SMS Reader (sms-deliverer)</span>
+    <span class="pill new">Telegram OTP Bot — ဒီဇိုင်းအဆိုပြုချက်</span>
+    <span class="pill warn">code ကို မထိရသေးပါ</span>
+  </div>
+  <h1>OTP တိုင်းကို ချက်ချင်း သင့်ဖုန်းထံရောက်စေမယ့် Telegram Bot ဒီဇိုင်း</h1>
+  <p class="sub">GSM hardware အခြေခံ → လက်ရှိ project အလုပ်လုပ်ပုံ → Telegram bot ဒီဇိုင်း → ဝင်ရောက်ခွင့် ထိန်းချုပ်မှု → မြင်ကွင်းပုံများ။ စာအရှည်ဖတ်ချင်မှ ဖတ်ပါ — ပုံတွေနဲ့ပဲ နားလည်သွားအောင် စီစဉ်ထားပါတယ်။</p>
+  <nav class="toc">
+    <a href="#tldr">⚡ အနှစ်ချုပ်</a>
+    <a href="#gsm">📡 GSM အခြေခံ</a>
+    <a href="#now">🖥️ လက်ရှိ app</a>
+    <a href="#plan">🤖 Bot ဒီဇိုင်း</a>
+    <a href="#access">🔐 ဝင်ရောက်ခွင့်</a>
+    <a href="#network">🌐 Network</a>
+    <a href="#mock">📱 မြင်ကွင်းပုံ</a>
+    <a href="#advice">🗺️ အကြံပြုချက်</a>
+    <a href="#faq">❓ မေးခွန်းများ</a>
+  </nav>
+</header>
+
+<!-- ==================== အနှစ်ချုပ် ==================== -->
+<section id="tldr">
+  <h2 class="sec"><span class="num">⚡</span>အနှစ်ချုပ် — မေးခွန်း ၄ ခုကို တိုက်ရိုက်ဖြေပါမယ်</h2>
+  <p class="lead">အောက်မှာရှိတဲ့ အားလုံးရဲ့ ချုံ့ထားတဲ့ မူကြမ်းပါ။ ဒီဇိုင်းအားလုံးကို သင်မေးထားတဲ့ မေးခွန်း ၄ ခုအတိုင်း စီထားပါတယ်။</p>
+
+  <div class="qa">
+    <div class="q">❶ ကျွန်တော့်အဖွဲ့ အားလုံး OTP တွေကို ဘယ်လိုမြင်ကြမလဲ — (app ရှေ့မှာ ထိုင်နေရသူ တစ်ယောက်ပဲ မြင်ရတဲ့ အခြေအနေကနေ)?</div>
+    <div class="a">
+      ဒီ app က <b>စက်တစ်လုံးတည်းအတွက် desktop program</b> ပါ — စခရင်တစ်ခု၊ လုပ်ဖော်ကိုင်ဖက်တစ်ယောက်၊ network layer လုံးဝမရှိ (server မရှိ၊ database မရှိ)။
+      အမြန်ဆုံးနဲ့ သန့်ရှင်းဆုံး ဖြေရှင်းချက်က <b>Telegram bot</b> ပါ — OTP တစ်ခု ဆင်းမ်ဘဏ်ကိစ္စနဲ့ ရောက်လာတာနဲ့ စက္ကန့်ပိုင်းအတွင်း ခွင့်ပြုထားတဲ့ အဖွဲ့ဝင်တိုင်းရဲ့ ဖုန်းမှာ အသံနဲ့တကွ သတိပေးလာမယ်။
+      သတိထားမိမယ် — ကိုယ့် project roadmap (<code>Memory/05-feature-roadmap.md</code>) မှာတောင် "Telegram Bot &amp; Webhook SMS Forwarding" ကို <b>Feature #1၊ ဦးစားပေးအမြင့်</b> အနေနဲ့ ရေးထားပြီးသားပါ။ ကိုယ့်စိတ်ကူးနဲ့ အစီအစဉ် ကိုက်နေတယ်။
+    </div>
+  </div>
+
+  <div class="qa">
+    <div class="q">❷ Telegram မှာ ဘယ်သူမဆို ဒီ bot ကို သုံးနိုင်မလား — ဒါမှမဟုတ် ကျွန်တော့်အဖွဲ့ပဲလား?</div>
+    <div class="a">
+      <b>Allowlist (ခွင့်ပြုစာရင်း)</b> နဲ့ ထိန်းပါတယ်။ အဖွဲ့ဝင်တိုင်းရဲ့ <b>chat_id</b> (အရေအတွက်ပါ — ဥပမာ <code>123456789</code>) ကို Settings မှာ ထည့်သွင်းရမယ်။
+      Bot က စာပို့ပေးမှာက အဲဒီစာရင်းထဲက လူတွေကိုပဲ။ စာရင်းမှာမပါတဲ့သူက bot ကို ရှာတွေ့ပြီး စတင်ခွင့်တောင်းရင်တောင် — ဘာဖြေချင်စရာမရှိလို့ <b>တိတ်ဆိတ်နေမယ်</b>။ ခွင့်ပြုလိုက်တာနဲ့ တစ်ဖက်ချက်ကနေ ပိတ်လို့ရတဲ့ စနစ်ပါ။
+    </div>
+  </div>
+
+  <div class="qa">
+    <div class="q">❸ Local မှာ ဘယ်လိုချိတ်ဆက်မလဲ — ဘယ်လိုအလုပ်လုပ်မလဲ?</div>
+    <div class="a">
+      <b>Hardware ဘက်မှာ ဘာမှမပြောင်းဘူး</b> — SIM Bank → USB → PC ကို ဒီနေ့ကဲ့သို့ပဲ။
+      ပေါင်းထည့်မယ့်အရာက app ထဲက <b>Forwarder module</b> တစ်ခုပဲ — SMS အသစ် ရောက်လာတိုင်း <code>api.telegram.org</code> ကို <b>HTTPS (port 443)</b> နဲ့ ခေါ်ဆိုမှာ။
+      လိုအပ်ချက် — internet ရှိတဲ့ PC၊ app လည်ပတ်နေမှု၊ <b>Live mode ဖွင့်ထားမှု</b> (Auto-start Live Mode ဆိုတဲ့ setting ရှိပြီးသား)၊ အဖွဲ့ဝင်တိုင်းက bot ကို တစ်ခါတည်း ဖွင့်ပြီး Start နှိပ်ပြီးဖြစ်မှု။
+    </div>
+  </div>
+
+  <div class="qa">
+    <div class="q">❹ SMS OTP တွေကို တကယ်ဖတ်နိုင်မလား?</div>
+    <div class="a">
+      <b>ဖတ်ပြီးသားပါ။</b> ဒီ app ထဲမှာ OTP ထုတ်ပေးတဲ့ အင်ဂျင် (<code>extract_otp</code>) အပြည့်အစုံ ပါပြီး — ဂဏန်း ၄–၈ လုံး၊ keyword စစ်တဲ့ cascade pattern၊ <b>မြန်မာဂဏန်း (၀၁၂၃…)</b> ပါ အားလုံး။
+      Bot ကတော့ app က decode ပြီးသား အချက်အလက်ကို ပို့ပေးရုံပဲ — အခက်ခဲဆုံးအပိုင်းတွေ ပြီးနေပြီ။ လိုနေတဲ့အရာက "ထွက်ပေါက်" တစ်ခုတည်းပဲ။
+    </div>
+  </div>
+</section>
+
+<!-- ==================== GSM အခြေခံ ==================== -->
+<section id="gsm">
+  <h2 class="sec"><span class="num">၁</span>အရင်ဆုံး — GSM hardware ကို ရိုးရိုးသားသားနဲ့ နားလည်ကြရအောင်</h2>
+  <p class="lead">Bot ဒီဇိုင်းမဆွဲခင် အောက်ခံ စက်ကိရိယာကို တကယ်နားလည်ဖို့ လိုပါတယ်။ ထင်ထားတာထက် ရိုးသွားပါတယ်။</p>
+
+  <div class="card">
+    <h3>📡 GSM modem ဆိုတာ ဘာလဲ?</h3>
+    <p>
+      GSM modem ဆိုတာ <b>ဖုန်းတစ်လုံးရဲ့ အလုပ်လုပ်တဲ့ အသဲကို စခရင်နဲ့ ကီးဘုတ်မပါဘဲ ယူထားတာ</b> — ဆင်းမ်စလော့တစ်ခု၊ ရေဒီယိုတစ်ခု၊ serial interface တစ်ခု။
+      အဲဒါကို လက်နဲ့ မနှိပ်ဘဲ ကွန်ပျူတာကနေ <b>AT command</b> ဆိုတဲ့ စာသားညွှန်ကြားချက်တွေနဲ့ ပြောကြားရတဲ့ စနစ်ပါ။
+    </p>
+    <p>
+      <b>SIM Bank (GSM modem pool)</b> ကတော့ modem <b>၈ / ၁၆ / ၃၂ / ၆၄</b> လုံးကို ဘောဒီတစ်ခုတည်းထဲ ထည့်ပြီး အထဲမှာ USB hub နဲ့ တစ်ပေါင်းတစ်စည်းတည်း ထုတ်ပေးထားတာပါ။
+      PC တစ်လုံးနဲ့ ချိတ်လိုက်ရင် operating system ကြားမှာ <b>serial port အရေအတွက်အတိုင်း</b> တွေ့ရမှာ — Linux မှာ <code>/dev/ttyUSB0…31</code>၊ Windows မှာ <code>COM3…COM34</code>။ port တစ်ခု = SIM တစ်ပတ်။
+    </p>
+  </div>
+
+  <figure class="figure">
+    <svg viewBox="0 0 1000 400" xmlns="http://www.w3.org/2000/svg" font-family="'Noto Sans Myanmar','Myanmar Text','Padauk',sans-serif">
+      <defs>
+        <linearGradient id="gBank" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#3a2f1e"/><stop offset="1" stop-color="#241c11"/>
+        </linearGradient>
+      </defs>
+      <!-- SIM Bank box -->
+      <rect x="40" y="60" width="520" height="290" rx="14" fill="url(#gBank)" stroke="#f59e0b" stroke-width="2"/>
+      <text x="300" y="90" text-anchor="middle" fill="#fbbf24" font-size="17" font-weight="700">SIM Bank / GSM Modem Pool (32-port)</text>
+      <!-- antennas -->
+      <g stroke="#f59e0b" stroke-width="3">
+        <line x1="120" y1="60" x2="120" y2="24"/><line x1="300" y1="60" x2="300" y2="24"/><line x1="480" y1="60" x2="480" y2="24"/>
+      </g>
+      <g>
+        <circle cx="120" cy="20" r="5" fill="#f59e0b"/><circle cx="300" cy="20" r="5" fill="#f59e0b"/><circle cx="480" cy="20" r="5" fill="#f59e0b"/>
+      </g>
+      <text x="300" y="14" text-anchor="middle" fill="#a1a1a1" font-size="12">အန်တယ်နာများ (ရေဒီယို)</text>
+      <!-- slot grid 8x4 -->
+      <g fill="#1e1e1e" stroke="#8a6d3b">
+        <rect x="70" y="110" width="48" height="34" rx="4"/><rect x="126" y="110" width="48" height="34" rx="4"/><rect x="182" y="110" width="48" height="34" rx="4"/><rect x="238" y="110" width="48" height="34" rx="4"/><rect x="294" y="110" width="48" height="34" rx="4"/><rect x="350" y="110" width="48" height="34" rx="4"/><rect x="406" y="110" width="48" height="34" rx="4"/><rect x="462" y="110" width="48" height="34" rx="4"/>
+        <rect x="70" y="152" width="48" height="34" rx="4"/><rect x="126" y="152" width="48" height="34" rx="4"/><rect x="182" y="152" width="48" height="34" rx="4"/><rect x="238" y="152" width="48" height="34" rx="4"/><rect x="294" y="152" width="48" height="34" rx="4"/><rect x="350" y="152" width="48" height="34" rx="4"/><rect x="406" y="152" width="48" height="34" rx="4"/><rect x="462" y="152" width="48" height="34" rx="4"/>
+        <rect x="70" y="194" width="48" height="34" rx="4"/><rect x="126" y="194" width="48" height="34" rx="4"/><rect x="182" y="194" width="48" height="34" rx="4"/><rect x="238" y="194" width="48" height="34" rx="4"/><rect x="294" y="194" width="48" height="34" rx="4"/><rect x="350" y="194" width="48" height="34" rx="4"/><rect x="406" y="194" width="48" height="34" rx="4"/><rect x="462" y="194" width="48" height="34" rx="4"/>
+        <rect x="70" y="236" width="48" height="34" rx="4"/><rect x="126" y="236" width="48" height="34" rx="4"/><rect x="182" y="236" width="48" height="34" rx="4"/><rect x="238" y="236" width="48" height="34" rx="4"/><rect x="294" y="236" width="48" height="34" rx="4"/><rect x="350" y="236" width="48" height="34" rx="4"/><rect x="406" y="236" width="48" height="34" rx="4"/><rect x="462" y="236" width="48" height="34" rx="4"/>
+      </g>
+      <!-- highlighted slot -->
+      <rect x="294" y="152" width="48" height="34" rx="4" fill="#fb923c" stroke="#ffd9a8" stroke-width="2"/>
+      <text x="318" y="174" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1206">SIM</text>
+      <text x="290" y="292" text-anchor="middle" fill="#e4e4e4" font-size="13">SIM တစ်ပတ်လျှင် အထိုးကွက်တစ်ကွက် — ကွက်တိုင်းမှာ modem အပြည့်အစုံ</text>
+      <text x="290" y="316" text-anchor="middle" fill="#a1a1a1" font-size="12">(ရေဒီယို + SIM reader + ကိုယ်ပိုင် serial port)</text>
+      <!-- USB hub chip -->
+      <rect x="452" y="286" width="86" height="46" rx="8" fill="#0d1117" stroke="#38bdf8" stroke-width="1.5"/>
+      <text x="495" y="305" text-anchor="middle" fill="#38bdf8" font-size="12" font-weight="700">USB Hub</text>
+      <text x="495" y="322" text-anchor="middle" fill="#a1a1a1" font-size="10.5">အထဲက ၃၂ လုံး ပေါင်းထားတယ်</text>
+      <!-- USB cable -->
+      <path d="M560 309 C 610 309 610 250 650 250" fill="none" stroke="#38bdf8" stroke-width="4"/>
+      <text x="605" y="272" text-anchor="middle" fill="#38bdf8" font-size="13" font-weight="700">USB တစ်ကြိုးတည်း</text>
+      <!-- PC -->
+      <rect x="650" y="120" width="310" height="200" rx="14" fill="#16222e" stroke="#38bdf8" stroke-width="2"/>
+      <rect x="680" y="140" width="180" height="110" rx="6" fill="#0d1117" stroke="#38bdf8"/>
+      <rect x="760" y="250" width="20" height="14" fill="#38bdf8"/>
+      <rect x="730" y="264" width="80" height="8" rx="3" fill="#38bdf8"/>
+      <text x="770" y="200" text-anchor="middle" fill="#38bdf8" font-size="12.5">Desktop App</text>
+      <text x="770" y="222" text-anchor="middle" fill="#a1a1a1" font-size="11">SIM Bank SMS Reader</text>
+      <rect x="880" y="140" width="52" height="132" rx="6" fill="#0d1117" stroke="#38bdf8"/>
+      <circle cx="906" cy="158" r="5" fill="#10b981"/>
+      <text x="906" y="205" text-anchor="middle" fill="#a1a1a1" font-size="10">PC</text>
+      <text x="805" y="300" text-anchor="middle" fill="#e4e4e4" font-size="13.5" font-weight="700">ဒီ app လည်ပတ်နေတဲ့ ကွန်ပျူတာ</text>
+      <text x="805" y="322" text-anchor="middle" fill="#a1a1a1" font-size="12">OS မြင်ရတာ — serial port ၃၂ ခု</text>
+      <!-- ports -->
+      <rect x="650" y="340" width="310" height="44" rx="8" fill="#0d1117"/>
+      <text x="805" y="358" text-anchor="middle" fill="#fbbf24" font-size="12.5" font-family="monospace">Linux: /dev/ttyUSB0 … /dev/ttyUSB31</text>
+      <text x="805" y="376" text-anchor="middle" fill="#fbbf24" font-size="12.5" font-family="monospace">Windows: COM3 … COM34</text>
+    </svg>
+    <figcaption>ပုံ ၁ — SIM Bank ရဲ့ ဖွဲ့စည်းပုံ။ USB တစ်ကြိုးတည်းပဲ ဖြစ်ပေမယ့် ကွန်ပျူတာကိတော့ serial port ၃၂ ခု မြင်ရတယ် — SIM တစ်ပတ်လျှင် တစ်ခု။</figcaption>
+  </figure>
+
+  <div class="card">
+    <h3>⌨️ AT command — modem တွေ ပြောတဲ့ ဘာသာစကား</h3>
+    <p>၉၀ ခုနှစ်ကတည်းက စံချိန်စံညွှန်းဖြစ်နေတဲ့ စာသားညွှန်ကြားချက်တွေ။ ဒီ app ကလည်း အတိအကျ ဒီ command တွေပဲ သုံးပါတယ် —</p>
+    <table>
+      <tr><th style="width:230px">Command</th><th>အဓိပ္ပာယ်</th><th style="width:250px">ပုံမှန်တုံ့ပြန်ချက်</th></tr>
+      <tr><td><code>AT</code></td><td>"အသက်ရှိသေးလား" — အသက်ရှိမှု စစ်တာ</td><td><code>OK</code></td></tr>
+      <tr><td><code>AT+CCID</code></td><td>SIM ရဲ့ ICCID (ကတ်အိုင်ဒီ) ဖတ်တာ</td><td><code>8968...ဂဏန်း ၁၅ လုံး</code></td></tr>
+      <tr><td><code>AT+CMGF=0</code></td><td>PDU mode ကို ပြောင်းတာ — SMS ကို binary data အနေနဲ့</td><td><code>OK</code></td></tr>
+      <tr><td><code>AT+CMGL=4</code></td><td>SIM ထဲမှာ သိမ်းထားတဲ့ SMS အားလုံး ကြည့်တာ</td><td>PDU ရှည်ကြီး</td></tr>
+      <tr><td><code>+CMTI: "SM",5</code></td><td><b>အချက်ပေးလာတာ —</b> "SMS အသစ် ရောက်လာပြီ၊ အကွက် ၅ မှာ သိမ်းထားတယ်"</td><td>(Live mode စောင့်ကြည့်နေတဲ့အရာ)</td></tr>
+      <tr><td><code>AT+CMGD=5</code></td><td>အကွက် ၅ ထဲက စာ ဖျက်တာ</td><td><code>OK</code></td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>📩 OTP SMS တစ်ခုက တကယ်ဘယ်လို ခရီးလမ်းလာတာလဲ?</h3>
+    <p>မြန်မာနိုင်ငံမှာဆိုရင် ဆက်သွယ်ရေးလုပ်ငန်းများ (MPT / ATOM / Ooredoo / Mytel) က မက်ဆေ့ချ်ကို စတင်ပို့ပါတယ်။ တစ်ခုလုံးရဲ့ ခရီးလမ်း —</p>
+  </div>
+
+  <figure class="figure">
+    <svg viewBox="0 0 1000 330" xmlns="http://www.w3.org/2000/svg" font-family="'Noto Sans Myanmar','Myanmar Text','Padauk',sans-serif">
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#a1a1a1"/></marker></defs>
+      <!-- Step 1: carrier -->
+      <rect x="20" y="60" width="180" height="120" rx="12" fill="#1e1e1e" stroke="#a78bfa" stroke-width="2"/>
+      <text x="110" y="105" text-anchor="middle" fill="#a78bfa" font-size="15" font-weight="700">Carrier / SMSC</text>
+      <text x="110" y="130" text-anchor="middle" fill="#a1a1a1" font-size="12">"သင့် OTP 483920"</text>
+      <text x="110" y="150" text-anchor="middle" fill="#a1a1a1" font-size="11">OTP ပို့တဲ့ ဝန်ဆောင်မှု</text>
+      <!-- Step 2: tower -->
+      <g fill="none" stroke="#a78bfa" stroke-width="2" opacity=".55">
+        <circle cx="362" cy="102" r="12"/>
+        <circle cx="362" cy="102" r="20" opacity=".5"/>
+      </g>
+      <path d="M330 170 L362 80 L394 170 Z" fill="#1e1e1e" stroke="#a78bfa" stroke-width="2"/>
+      <line x1="345" y1="150" x2="330" y2="150" stroke="#a78bfa" stroke-width="2"/>
+      <line x1="379" y1="150" x2="394" y2="150" stroke="#a78bfa" stroke-width="2"/>
+      <line x1="362" y1="120" x2="340" y2="120" stroke="#a78bfa" stroke-width="2"/>
+      <line x1="362" y1="120" x2="384" y2="120" stroke="#a78bfa" stroke-width="2"/>
+      <text x="362" y="195" text-anchor="middle" fill="#e4e4e4" font-size="13.5" font-weight="700">မျှော်စင်</text>
+      <text x="362" y="216" text-anchor="middle" fill="#a1a1a1" font-size="12">လေကြောင်း (over the air)</text>
+      <!-- Step 3: SIM bank -->
+      <rect x="520" y="50" width="230" height="140" rx="12" fill="#3a2f1e" stroke="#f59e0b" stroke-width="2"/>
+      <text x="635" y="90" text-anchor="middle" fill="#fbbf24" font-size="14.5" font-weight="700">SIM Bank</text>
+      <rect x="585" y="105" width="100" height="44" rx="6" fill="#fb923c"/>
+      <text x="635" y="132" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a1206">SIM slot 12</text>
+      <text x="635" y="176" text-anchor="middle" fill="#e4e4e4" font-size="12.5">SMS က SIM storage ထဲ ရောက်တယ်</text>
+      <!-- Step 4: serial to PC -->
+      <rect x="800" y="50" width="180" height="140" rx="12" fill="#16222e" stroke="#38bdf8" stroke-width="2"/>
+      <text x="890" y="100" text-anchor="middle" fill="#38bdf8" font-size="14.5" font-weight="700">ကွန်ပျူတာ</text>
+      <text x="890" y="128" text-anchor="middle" fill="#e4e4e4" font-size="12.5">+CMTI အချက်ပေးချက်</text>
+      <text x="890" y="150" text-anchor="middle" fill="#a1a1a1" font-size="12">serial လိုင်းပေါ် ပေါ်လာတယ်</text>
+      <!-- arrows -->
+      <line x1="200" y1="120" x2="318" y2="120" stroke="#a1a1a1" stroke-width="2" marker-end="url(#arr)"/>
+      <line x1="400" y1="120" x2="510" y2="120" stroke="#a1a1a1" stroke-width="2" marker-end="url(#arr)"/>
+      <line x1="750" y1="120" x2="790" y2="120" stroke="#a1a1a1" stroke-width="2" marker-end="url(#arr)"/>
+      <!-- numbers -->
+      <g font-size="13" font-weight="700">
+        <circle cx="208" cy="100" r="12" fill="#a78bfa"/><text x="208" y="105" text-anchor="middle" fill="#17171f">၁</text>
+        <circle cx="412" cy="100" r="12" fill="#a78bfa"/><text x="412" y="105" text-anchor="middle" fill="#17171f">၂</text>
+        <circle cx="758" cy="100" r="12" fill="#f59e0b"/><text x="758" y="105" text-anchor="middle" fill="#17171f">၃</text>
+      </g>
+      <!-- timeline note -->
+      <rect x="20" y="230" width="960" height="76" rx="10" fill="#0d1117" stroke="#404040"/>
+      <text x="500" y="258" text-anchor="middle" fill="#e4e4e4" font-size="13.5">ဒါက သာမန်ဖုန်းတစ်လုံးက SMS လက်ခံတဲ့ ခရီးလမ်းနဲ့ အတူတူပါပဲ။</text>
+      <text x="500" y="284" text-anchor="middle" fill="#a1a1a1" font-size="13">မတူတဲ့အချက်ကတစ်ခုတည်း — ဖုန်းက စခရင်ပေါ်မှာ ပြပြီး၊ SIM bank က serial port ပေါ်မှာ ကြေညာတယ်။</text>
+    </svg>
+    <figcaption>ပုံ ၂ — OTP ရဲ့ ခရီးလမ်း — (၁) ဝန်ဆောင်မှုက ပို့တယ် → (၂) မျှော်စင်က လေကြောင်းဆီ ပို့တယ် → (၃) SIM ထဲ သိမ်းပြီး ကွန်ပျူတာကို အသိပေးတယ်။</figcaption>
+  </figure>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>📦 SIM storage က သေးငယ်တယ်</h3>
+      <p style="margin:0">SIM card တစ်ပတ်မှာ message <b>၂၀–၅၀ စောင်ပဲ</b> သိမ်းလို့ရတယ်။ ပြည့်သွားရင် modem က SMS အသစ်တွေကို <b>တိတ်တဆိတ် ငြင်းပယ်</b>လိုက်တယ်။ ဒါကြောင့် ဒီ app မှာ ၁၀ မိနစ်လျှင် တစ်ကြိမ် SIM သုတ်သင်မှု ထည့်ပြီးသားပါ — အကွက်တွေ လွတ်နေအောင်။</p>
+    </div>
+    <div class="card">
+      <h3>🧩 PDU mode နဲ့ မြန်မာစာ</h3>
+      <p style="margin:0">SMS က hex data (PDU) အနေနဲ့ ရောက်လာတယ်။ ဒီ app က GSM-7 (အင်္ဂလိပ်)၊ <b>UCS-2 (Unicode — မြန်မာစာ အပါအဝင်)</b> တွေကို decode လုပ်ပြီး အပိုင်းခွဲပို့လိုက်တဲ့ ရှည်စာတွေကို တစ်ခုတည်း ပြန်ပေါင်းပေးတယ်။</p>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== လက်ရှိ Architecture ==================== -->
+<section id="now">
+  <h2 class="sec"><span class="num">၂</span>လက်ရှိ project က ဘယ်လိုအလုပ်လုပ်တယ် — ဘယ်နေရာမှာ ရပ်တန့်နေတယ်</h2>
+  <p class="lead">စာကြောင်းတစ်ကြောင်းနဲ့ ချုပ်ရရင် — ပြောလို့ကောင်းတဲ့ အင်ဂျင်တစ်လုံး၊ ဓာတ်ပိုင်းပိုက်လိုင်းမရှိဘူး။ အားလုံးက လူတစ်ယောက်ရဲ့ မျက်လုံးနှစ်လုံးထိပ်မှာ ပြီးဆုံးတယ်။</p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 1000 480" xmlns="http://www.w3.org/2000/svg" font-family="'Noto Sans Myanmar','Myanmar Text','Padauk',sans-serif">
+      <defs><marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#a1a1a1"/></marker></defs>
+      <!-- boundary -->
+      <rect x="14" y="14" width="972" height="380" rx="16" fill="none" stroke="#ef4444" stroke-width="2" stroke-dasharray="10 7"/>
+      <text x="500" y="40" text-anchor="middle" fill="#f87171" font-size="13" font-weight="700">🚫 ကျော်လွန်လို့မရတဲ့ နယ်နိမိတ် — အားလုံးက ဒီစက်တစ်လုံးထဲမှာပဲ ပြီးတယ် (network မရှိ · database မရှိ · အခြားသူ မမြင်ရ)</text>
+      <!-- SIM bank mini -->
+      <rect x="40" y="90" width="150" height="110" rx="10" fill="#3a2f1e" stroke="#f59e0b" stroke-width="2"/>
+      <text x="115" y="130" text-anchor="middle" fill="#fbbf24" font-size="14" font-weight="700">SIM Bank</text>
+      <text x="115" y="155" text-anchor="middle" fill="#a1a1a1" font-size="12">SIM အားလုံး</text>
+      <text x="115" y="175" text-anchor="middle" fill="#a1a1a1" font-size="11.5">Live mode ဖွင့်ထားတယ်</text>
+      <!-- USB arrow -->
+      <line x1="190" y1="145" x2="240" y2="145" stroke="#38bdf8" stroke-width="4"/>
+      <text x="215" y="128" text-anchor="middle" fill="#38bdf8" font-size="11.5">USB</text>
+      <!-- Rust backend -->
+      <rect x="244" y="70" width="360" height="300" rx="12" fill="#1e1e1e" stroke="#38bdf8" stroke-width="2"/>
+      <text x="424" y="100" text-anchor="middle" fill="#38bdf8" font-size="14.5" font-weight="700">Rust Backend (အင်ဂျင်တစ်ခုသာ — server မဟုတ်ဘူး)</text>
+      <g font-size="12">
+        <rect x="270" y="115" width="308" height="34" rx="7" fill="#0d1117" stroke="#2d4a63"/>
+        <text x="424" y="137" text-anchor="middle" fill="#c9d1d9">port တစ်ခုလျှင် worker thread တစ်ခု</text>
+        <rect x="270" y="157" width="308" height="34" rx="7" fill="#0d1117" stroke="#2d4a63"/>
+        <text x="424" y="179" text-anchor="middle" fill="#c9d1d9">AT command channel (+CMTI ကို စောင့်ကြည့်)</text>
+        <rect x="270" y="199" width="308" height="34" rx="7" fill="#0d1117" stroke="#2d4a63"/>
+        <text x="424" y="221" text-anchor="middle" fill="#c9d1d9">PDU decoder (GSM-7 / UCS-2 မြန်မာ)</text>
+        <rect x="270" y="241" width="308" height="34" rx="7" fill="#0d1117" stroke="#2d4a63"/>
+        <text x="424" y="263" text-anchor="middle" fill="#c9d1d9">အပိုင်းခွဲ SMS ပြန်ပေါင်းစက်</text>
+        <rect x="270" y="283" width="308" height="34" rx="7" fill="#2b1e10" stroke="#fb923c"/>
+        <text x="424" y="305" text-anchor="middle" fill="#fb923c" font-weight="700">OTP ထုတ်ပေးစက် (extract_otp) ✅ ပြီးပြီးသား</text>
+      </g>
+      <text x="424" y="345" text-anchor="middle" fill="#a1a1a1" font-size="12">message တွေ RAM ထဲမှာပဲ ရှိတယ် (၂ နာရီအထိ)</text>
+      <!-- IPC arrow -->
+      <line x1="604" y1="220" x2="654" y2="220" stroke="#a1a1a1" stroke-width="2" marker-end="url(#arr2)"/>
+      <text x="629" y="200" text-anchor="middle" fill="#a1a1a1" font-size="11.5">event</text>
+      <text x="629" y="245" text-anchor="middle" fill="#fbbf24" font-size="11" font-family="monospace">sms:new</text>
+      <!-- Frontend -->
+      <rect x="658" y="70" width="300" height="200" rx="12" fill="#16222e" stroke="#38bdf8" stroke-width="2"/>
+      <text x="808" y="100" text-anchor="middle" fill="#38bdf8" font-size="14.5" font-weight="700">Svelte UI (မျက်စိနဲ့မြင်ရတဲ့အပိုင်း)</text>
+      <g font-size="12.5" fill="#c9d1d9">
+        <text x="808" y="135" text-anchor="middle">Inbox ဇယား / OTP တစ်ချက်နှိပ် ကူးယူ</text>
+        <text x="808" y="165" text-anchor="middle">Toast + အသံ သတိပေးချက်</text>
+        <text x="808" y="195" text-anchor="middle">Port ကျန်းမာရေး အခြေအနေ</text>
+      </g>
+      <!-- person -->
+      <g transform="translate(808,300)">
+        <circle cx="0" cy="0" r="16" fill="none" stroke="#e4e4e4" stroke-width="2.5"/>
+        <circle cx="0" cy="-8" r="6" fill="none" stroke="#e4e4e4" stroke-width="2.5"/>
+        <path d="M -14 14 Q 0 4 14 14" fill="none" stroke="#e4e4e4" stroke-width="2.5"/>
+      </g>
+      <text x="808" y="345" text-anchor="middle" fill="#e4e4e4" font-size="13.5" font-weight="700">စက်ရှေ့မှာ ထိုင်နေတဲ့ လူတစ်ယောက်</text>
+      <text x="808" y="368" text-anchor="middle" fill="#f87171" font-size="12.5">❌ အဖွဲ့က ဘာမှ မမြင်ရဘူး</text>
+    </svg>
+    <figcaption>ပုံ ၃ — လက်ရှိ pipeline — SIM Bank → Rust အင်ဂျင် → UI → မျက်လုံးတစ်စုံ။ အားလုံး ဘောက်စ်တစ်ခုထဲမှာ။</figcaption>
+  </figure>
+
+  <div class="grid2">
+    <div class="card" style="border-color:#6b2023">
+      <h3 style="color:#f87171">ဒီနေ့ မရှိသေးတဲ့အရာများ</h3>
+      <ul class="tight">
+        <li><b>Network layer လုံးဝမရှိ</b> — app က internet ကို မသုံးဘူး (update စစ်တာပဲ 除外)</li>
+        <li>message တွေ <b>RAM ထဲမှာပဲ</b> — app ပိတ်လိုက်ရင် မှတ်တမ်း အပြတ်</li>
+        <li>မြင်နိုင်တဲ့သူ = <b>စခရင်ရှေ့မှာ ပစ်ရှိနေသူ</b>ပဲ</li>
+      </ul>
+    </div>
+    <div class="card" style="border-color:#1e5c46">
+      <h3 style="color:#34d399">ပြည့်စုံပြီးသား အပိုင်းများ</h3>
+      <ul class="tight">
+        <li><b>Live mode</b> — <code>+CMTI</code> ကို စောင့်ပြီး SMS အသစ်ကို ချက်ချင်းဖမ်းတဲ့စနစ် ✅</li>
+        <li><b>OTP extractor</b> — <code>extract_otp</code>၊ မြန်မာဂဏန်းပါ ✅</li>
+        <li><b><code>sms:new</code> event</b> — "စာအသစ်ရောက်ပြီ" ဆိုတဲ့ အချက်ပေးချက်က အတိအကျ မှန်တဲ့နေရာမှာ ပြီးသားပဲ ✅ — forwarder အတွက် အကောင်းဆုံး ချိတ်ဆက်မှတ်</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="note ok">
+    💡 <b>အဓိကအချက် —</b> OTP bot တစ်လုံးရဲ့ အခက်ခဲဆုံး အပိုင်းတွေ (SMS ဖတ်၊ decode၊ code ထုတ်) က <b>ဒီ project ထဲမှာ ပြီးနေပြီ</b>။ လိုနေတဲ့အရာက နောက်ဆုံးတစ်ဆင့် — အပြင်ကမ္ဘာကို တံခါးတစ်ခုပဲ။
+  </div>
+</section>
+<!-- ==================== BOT ဒီဇိုင်း ==================== -->
+<section id="plan">
+  <h2 class="sec"><span class="num">၃</span>Bot ဒီဇိုင်း — push-only၊ မိနစ်ပိုင်းအတွင်း</h2>
+  <p class="lead">Bot ကို အလွန်ရိုးရိုးသားသား ဒီဇိုင်းထားပါတယ် — <b>မိနစ်အနည်းငယ်အတွင်း တည်ဆောက်ပြီးသား</b>၊ အလုပ်လုပ်ပုံလည်း ရိုးတယ်။</p>
+
+  <div class="card">
+    <h3>🤖 Telegram bot — စက္ကန့် ၃၀ နားလည်စေတဲ့ မော်ဒယ်</h3>
+    <ul class="tight">
+      <li>Bot ဆိုတာ <b>@BotFather</b> ဆိုတဲ့ တရားဝင် bot ဆီကနေ ဖန်တီးတဲ့ <b>အထူး account တစ်ခု</b>။ ဖန်တီးပြီးရင် <b>token</b> တစ်ခု ရပါမယ် (<code>123456:ABC-...</code> ပုံစံ) — အဲဒါက bot ရဲ့ အမည်နဲ့ စကားဝှက် နှစ်ခုတစ်ပြိုင်ပါ။</li>
+      <li>Bot က Telegram server ပေါ်မှာ မလည်ပတ်ဘူး — <b>ကိုယ့် app က internet ကနေ Telegram API ကို ခေါ်</b>တာ (token နဲ့အတူ)။ ဒါကြောင့် port forwarding မလို၊ public IP မလို၊ server ငှားစရာမလိုဘူး။</li>
+      <li>Bot တွေက <b>ပြောစမှာ စပြောလို့မရ</b> — Telegram က ပိတ်ထားတယ်။ user တစ်ယောက်က bot ကို ဖွင့်ပြီး Start နှိပ်ပြီးမှ စာပို့ခွင့်ရတယ်။ ဒါက Telegram ရဲ့ စပန်းရင်ကတည်းက ပေါ်လစီပါ။</li>
+    </ul>
+    <div class="note warn" style="margin-bottom:0">
+      ⚠️ <b>ဒီဇိုင်းက push-only:</b> bot က ဘာမှမနာဘူး၊ ဘာမှ မဖြေဘူး၊ command လည်း မရှိဘူး။ ဘယ်သူ့ဆီကမှ လက်ခံတာမရှိ — <b>OTP တွေကို ပို့ထုတ်ရုံပဲ</b>။ တိုက်ခိုက်ခံရနိုင်တဲ့အပိုင်း အနည်းဆုံး။
+    </div>
+  </div>
+
+  <h3 style="margin-top:26px">၃.၁ — Pipeline အပြည့်အစုံ</h3>
+
+  <figure class="figure">
+    <svg viewBox="0 0 1000 560" xmlns="http://www.w3.org/2000/svg" font-family="'Noto Sans Myanmar','Myanmar Text','Padauk',sans-serif">
+      <defs>
+        <marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#a1a1a1"/></marker>
+      </defs>
+      <!-- carrier + tower -->
+      <rect x="30" y="40" width="150" height="70" rx="10" fill="#1e1e1e" stroke="#a78bfa" stroke-width="2"/>
+      <text x="105" y="70" text-anchor="middle" fill="#a78bfa" font-size="13.5" font-weight="700">Carrier</text>
+      <text x="105" y="92" text-anchor="middle" fill="#a1a1a1" font-size="11.5">OTP ပို့တယ်</text>
+      <path d="M78 155 L105 95 L132 155 Z" fill="#1e1e1e" stroke="#a78bfa" stroke-width="2"/>
+      <text x="105" y="175" text-anchor="middle" fill="#a1a1a1" font-size="11.5">မျှော်စင်</text>
+      <line x1="180" y1="75" x2="230" y2="75" stroke="#a1a1a1" stroke-width="2" marker-end="url(#arr3)"/>
+      <!-- SIM bank -->
+      <rect x="234" y="30" width="150" height="90" rx="10" fill="#3a2f1e" stroke="#f59e0b" stroke-width="2"/>
+      <text x="309" y="65" text-anchor="middle" fill="#fbbf24" font-size="13.5" font-weight="700">SIM Bank</text>
+      <rect x="272" y="78" width="74" height="28" rx="5" fill="#fb923c"/>
+      <text x="309" y="97" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1a1206">SIM slot</text>
+      <!-- to PC -->
+      <line x1="384" y1="75" x2="434" y2="75" stroke="#38bdf8" stroke-width="3"/>
+      <text x="409" y="58" text-anchor="middle" fill="#38bdf8" font-size="10.5">USB</text>
+      <!-- PC box -->
+      <rect x="438" y="20" width="230" height="170" rx="12" fill="#16222e" stroke="#38bdf8" stroke-width="2"/>
+      <text x="553" y="46" text-anchor="middle" fill="#38bdf8" font-size="13.5" font-weight="700">သင့် PC (ဒီ app)</text>
+      <g font-size="11">
+        <rect x="456" y="60" width="194" height="26" rx="6" fill="#0d1117" stroke="#2d4a63"/>
+        <text x="553" y="77" text-anchor="middle" fill="#c9d1d9">live.rs — +CMTI စောင့်ကြည့်စက်</text>
+        <rect x="456" y="92" width="194" height="26" rx="6" fill="#0d1117" stroke="#2d4a63"/>
+        <text x="553" y="109" text-anchor="middle" fill="#c9d1d9">decoder.rs — PDU → စာသား</text>
+        <rect x="456" y="124" width="194" height="26" rx="6" fill="#2b1e10" stroke="#fb923c"/>
+        <text x="553" y="141" text-anchor="middle" fill="#fb923c" font-weight="700">extract_otp → 483920</text>
+      </g>
+      <text x="553" y="172" text-anchor="middle" fill="#a1a1a1" font-size="10.5">event: sms:new ⚡</text>
+      <!-- forwarder (new!) -->
+      <rect x="700" y="20" width="270" height="170" rx="12" fill="#12241d" stroke="#10b981" stroke-width="2.5"/>
+      <text x="835" y="46" text-anchor="middle" fill="#34d399" font-size="13.5" font-weight="700">အသစ် — Forwarder module</text>
+      <g font-size="11">
+        <rect x="718" y="60" width="234" height="26" rx="6" fill="#0d1117" stroke="#1e5c46"/>
+        <text x="835" y="77" text-anchor="middle" fill="#c9d1d9">စာသားပုံစံ ချမှာ</text>
+        <rect x="718" y="92" width="234" height="26" rx="6" fill="#0d1117" stroke="#1e5c46"/>
+        <text x="835" y="109" text-anchor="middle" fill="#c9d1d9">တစ်ကြိမ်လျှင် ~၃ စက္ကန့် queue</text>
+        <rect x="718" y="124" width="234" height="26" rx="6" fill="#0d1117" stroke="#1e5c46"/>
+        <text x="835" y="141" text-anchor="middle" fill="#c9d1d9">429 / retry_after လေးစား</text>
+      </g>
+      <text x="835" y="172" text-anchor="middle" fill="#34d399" font-size="10.5">HTTPS POST → api.telegram.org</text>
+      <line x1="668" y1="105" x2="696" y2="105" stroke="#a1a1a1" stroke-width="2" marker-end="url(#arr3)"/>
+      <!-- internet cloud -->
+      <g>
+        <path d="M480 320 q-18 -2 -18 -20 q0 -22 26 -22 q6 -26 40 -22 q22 -26 54 -6 q30 -4 34 26 q20 4 14 24 q-6 20 -26 20 z" fill="#0d1117" stroke="#38bdf8" stroke-width="2"/>
+        <text x="545" y="288" text-anchor="middle" fill="#38bdf8" font-size="13" font-weight="700">Internet</text>
+        <text x="545" y="308" text-anchor="middle" fill="#a1a1a1" font-size="10.5">port 443 · TLS</text>
+      </g>
+      <!-- paths -->
+      <path d="M770 190 C 740 240 640 260 560 270" fill="none" stroke="#38bdf8" stroke-width="2" opacity=".5"/>
+      <path d="M510 275 C 380 290 300 300 240 310" fill="none" stroke="#38bdf8" stroke-width="2" opacity=".5"/>
+      <circle cx="655" cy="245" r="5" fill="#34d399"/>
+      <circle cx="445" cy="290" r="5" fill="#34d399"/>
+      <!-- telegram -->
+      <g transform="translate(130,290)">
+        <circle cx="55" cy="55" r="52" fill="#16222e" stroke="#38bdf8" stroke-width="2.5"/>
+        <path d="M20 52 L88 24 L70 88 L48 68 L36 80 L38 62 Z" fill="#38bdf8"/>
+        <path d="M48 68 L70 88 L70 76" fill="#16222e"/>
+      </g>
+      <text x="185" y="418" text-anchor="middle" fill="#38bdf8" font-size="13.5" font-weight="700">Telegram</text>
+      <text x="185" y="438" text-anchor="middle" fill="#a1a1a1" font-size="11">api.telegram.org/bot&lt;token&gt;/sendMessage</text>
+      <!-- allowed users with OTP bubbles -->
+      <g>
+        <rect x="620" y="250" width="330" height="160" rx="14" fill="#1e2430" stroke="#10b981" stroke-width="2"/>
+        <text x="785" y="276" text-anchor="middle" fill="#34d399" font-size="13" font-weight="700">Allowlist ထဲက အဖွဲ့ဝင်များ</text>
+        <rect x="645" y="288" width="140" height="56" rx="10" fill="#2b5278"/>
+        <text x="655" y="306" font-size="10.5" fill="#a1c1e8">Alice ✅</text>
+        <text x="655" y="330" font-size="15" font-weight="800" fill="#ffffff" font-family="monospace">483920</text>
+        <rect x="800" y="288" width="140" height="56" rx="10" fill="#2b5278"/>
+        <text x="810" y="306" font-size="10.5" fill="#a1c1e8">Bob ✅</text>
+        <text x="810" y="330" font-size="15" font-weight="800" fill="#ffffff" font-family="monospace">483920</text>
+        <text x="785" y="386" text-anchor="middle" fill="#a1a1a1" font-size="11">ကိုယ်စီရဲ့ စကားပြောခန်းထဲ တစ်ပြိုင်တည်း ရောက်တယ်</text>
+      </g>
+      <!-- stranger -->
+      <g transform="translate(870,455)">
+        <circle cx="0" cy="0" r="14" fill="none" stroke="#f87171" stroke-width="2"/>
+        <circle cx="0" cy="-6" r="5" fill="none" stroke="#f87171" stroke-width="2"/>
+        <path d="M -12 12 Q 0 3 12 12" fill="none" stroke="#f87171" stroke-width="2"/>
+        <line x1="-10" y1="-10" x2="10" y2="10" stroke="#f87171" stroke-width="2"/>
+      </g>
+      <text x="870" y="492" text-anchor="middle" fill="#f87171" font-size="11.5" font-weight="700">မဟုတ်တဲ့သူ — ဘာမှမရ</text>
+      <!-- timing badges -->
+      <g font-size="11">
+        <rect x="240" y="440" width="150" height="26" rx="13" fill="#0d1117" stroke="#404040"/>
+        <text x="315" y="457" text-anchor="middle" fill="#a1a1a1">စုစုပေါင်း ~၃–၈ စက္ကန့်</text>
+        <rect x="410" y="440" width="170" height="26" rx="13" fill="#0d1117" stroke="#404040"/>
+        <text x="495" y="457" text-anchor="middle" fill="#a1a1a1">အစိမ်းရောင်ဘောက်စ်ပဲ အသစ်</text>
+      </g>
+    </svg>
+    <figcaption>ပုံ ၄ — Pipeline အပြည့်အစုံ။ အစိမ်းရောင်ဘောက်စ်ကလွဲရင် အားလုံး ရှိပြီးသား — အစိမ်းရောင်ပါက်ကက်က HTTPS နဲ့ ထွက်သွားပြီး allowlist ထဲက user တိုင်းဆီ ရောက်တယ်။</figcaption>
+  </figure>
+
+  <h3 style="margin-top:26px">၃.၂ — Rate limit (queue လိုအပ်တဲ့အကြောင်း)</h3>
+  <div class="grid2">
+    <div class="card">
+      <h3>Telegram ရဲ့ ကန့်သတ်ချက်များ</h3>
+      <ul class="tight">
+        <li>user တစ်ယောက်ချင်းဆို dialog တစ်ခုလျှင် — <b>စက္ကန့်တစ်ချက်ကို စာတစ်စောင်</b> (တစ်မိနစ်ကို ~၂၀)</li>
+        <li>bot တစ်လုံးချင်း global — <b>စက္ကန့်ကို စာ ~၃၀</b></li>
+        <li>ကျော်သွားရင် Telegram က <code>429 Too Many Requests</code> ပြန်ပြီး <code>retry_after</code> ဆိုတဲ့ စောင့်ရမယ့်စက္ကန့်ပါပို့တယ် — အဲဒါကို လေးစားပြီး နောက်ထပ်ပို့ရတယ်</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>ဒီဇိုင်းရဲ့ ဖြေရှင်းချက်</h3>
+      <ul class="tight">
+        <li><b>ချိတ်းထားတဲ့ queue</b> — တစ်ကြိမ်လျှင် ~၃ စက္ကန့်၊ worst case မိနစ်တစ်မိနစ်ကို ၂၀ ရှိမယ် — limit အောက်မှာပဲ</li>
+        <li>burst ဖြစ်သွားရင်တောင် <b>429 retry_after ကို လေးစား</b>ပြီး ပြန်ပို့မယ်</li>
+        <li>OTP တွေက မိနစ်ပိုင်းအတွင်း သက်တမ်းကုန်တတ်တာမို့ ၃ စက္ကန့် ချိတ်းတာကို သူတစ်ပါး မသိနိုင်ဘူး</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== ဝင်ရောက်ခွင့် ==================== -->
+<section id="access">
+  <h2 class="sec"><span class="num">၄</span>ဝင်ရောက်ခွင့် ထိန်းချုပ်မှု — allowlist စနစ်</h2>
+  <p class="lead">နိုင်ငံခြားက ဘယ်သူမှ မဝင်နိုင်အောင် — ခွင့်ပြုထားတဲ့ chat_id တွေပဲ စာလက်ခံရမယ်။</p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 1000 440" xmlns="http://www.w3.org/2000/svg" font-family="'Noto Sans Myanmar','Myanmar Text','Padauk',sans-serif">
+      <defs>
+        <marker id="arr4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#a1a1a1"/></marker>
+      </defs>
+      <!-- PC -->
+      <rect x="60" y="100" width="160" height="100" rx="10" fill="#16222e" stroke="#38bdf8" stroke-width="2"/>
+      <text x="140" y="140" text-anchor="middle" fill="#38bdf8" font-size="13" font-weight="700">သင့် PC</text>
+      <text x="140" y="165" text-anchor="middle" fill="#a1a1a1" font-size="11.5">app + SIM bank</text>
+      <!-- allowlist box -->
+      <rect x="330" y="40" width="340" height="220" rx="14" fill="#1e2430" stroke="#10b981" stroke-width="2.5"/>
+      <text x="500" y="70" text-anchor="middle" fill="#34d399" font-size="15" font-weight="700">📋 Settings ထဲက Allowlist</text>
+      <g font-family="monospace" font-size="12.5">
+        <rect x="365" y="90" width="270" height="34" rx="7" fill="#0d1117" stroke="#1e5c46"/>
+        <text x="500" y="112" text-anchor="middle" fill="#34d399">123456789 · Alice ✅</text>
+        <rect x="365" y="132" width="270" height="34" rx="7" fill="#0d1117" stroke="#1e5c46"/>
+        <text x="500" y="154" text-anchor="middle" fill="#34d399">987654321 · Bob ✅</text>
+        <rect x="365" y="174" width="270" height="34" rx="7" fill="#0d1117" stroke="#404040"/>
+        <text x="500" y="196" text-anchor="middle" fill="#a1a1a1">555777333 · (ပိတ်ထားတယ်) ⛔</text>
+      </g>
+      <text x="500" y="238" text-anchor="middle" fill="#a1a1a1" font-size="11.5">chat_id တွေကို တစ်ခုချင်း ထည့်/ပယ်ဖျက်လို့ရတယ်</text>
+      <!-- OTP flow into allowlist -->
+      <path d="M220 150 C 260 150 260 130 325 130" fill="none" stroke="#10b981" stroke-width="3" marker-end="url(#arr4)"/>
+      <text x="243" y="146" text-anchor="middle" fill="#34d399" font-size="11.5" font-weight="700">OTP တွေ</text>
+      <!-- allowed users -->
+      <g font-size="11" fill="#a1a1a1">
+        <g transform="translate(790,110)"><circle cx="0" cy="0" r="15" fill="none" stroke="#34d399" stroke-width="2"/><circle cx="0" cy="-6" r="5" fill="none" stroke="#34d399" stroke-width="2"/><path d="M -13 13 Q 0 3 13 13" fill="none" stroke="#34d399" stroke-width="2"/><text x="0" y="34" text-anchor="middle">Alice ✅ ရတယ်</text></g>
+        <g transform="translate(790,190)"><circle cx="0" cy="0" r="15" fill="none" stroke="#34d399" stroke-width="2"/><circle cx="0" cy="-6" r="5" fill="none" stroke="#34d399" stroke-width="2"/><path d="M -13 13 Q 0 3 13 13" fill="none" stroke="#34d399" stroke-width="2"/><text x="0" y="34" text-anchor="middle">Bob ✅ ရတယ်</text></g>
+      </g>
+      <path d="M670 110 C 710 100 720 100 760 105" fill="none" stroke="#10b981" stroke-width="2" marker-end="url(#arr4)"/>
+      <path d="M670 190 C 710 200 720 200 760 195" fill="none" stroke="#10b981" stroke-width="2" marker-end="url(#arr4)"/>
+      <!-- stranger -->
+      <g transform="translate(790,330)">
+        <circle cx="0" cy="0" r="16" fill="none" stroke="#f87171" stroke-width="2"/>
+        <circle cx="0" cy="-7" r="5" fill="none" stroke="#f87171" stroke-width="2"/>
+        <path d="M -14 14 Q 0 3 14 14" fill="none" stroke="#f87171" stroke-width="2"/>
+        <line x1="-12" y1="-12" x2="12" y2="12" stroke="#ef4444" stroke-width="2"/>
+      </g>
+      <text x="790" y="368" text-anchor="middle" fill="#f87171" font-size="11.5">bot ကို ရှာတွေ့တဲ့ အထူးသူ</text>
+      <path d="M790 305 C 760 280 700 260 680 250" fill="none" stroke="#ef4444" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arr4)"/>
+      <text x="742" y="262" text-anchor="middle" fill="#f87171" font-size="11.5" font-weight="700">❌ လုံးဝ ငြိမ်သက်</text>
+      <!-- rules box -->
+      <rect x="60" y="300" width="500" height="120" rx="10" fill="#0d1117" stroke="#404040"/>
+      <text x="310" y="325" text-anchor="middle" fill="#e4e4e4" font-size="12.5" font-weight="700">စည်းမျဉ်း ၂ ခုတည်း</text>
+      <text x="310" y="350" text-anchor="middle" fill="#a1a1a1" font-size="11.5">၁ · allowlist ထဲမှာ chat_id ပါရမယ် (Settings ထဲကနေ ထိန်းတယ်)</text>
+      <text x="310" y="372" text-anchor="middle" fill="#a1a1a1" font-size="11.5">၂ · အဖွဲ့ဝင်တိုင်းက bot ကို တစ်ခါတည်း ဖွင့်ပြီး Start နှိပ်ပြီးဖြစ်ရမယ်</text>
+      <text x="310" y="398" text-anchor="middle" fill="#34d399" font-size="11.5" font-weight="700">ဒါက လုံခြုံရေး မော်ဒယ် အတွင်းက အားလုံးပါ။</text>
+    </svg>
+    <figcaption>ပုံ ၅ — Allowlist စနစ်။ App ထဲမှာ ခွင့်ပြု chat_id စာရင်းတစ်ခုတည်း — စာရင်းမပါတဲ့သူက ဘာမှ မရနိုင်ဘူး။</figcaption>
+  </figure>
+
+  <h3 style="margin-top:26px">စတင်အသုံးပြုပုံ — အဆင့် ၅ ဆင့်၊ တစ်ခါတည်း</h3>
+  <figure class="figure">
+    <svg viewBox="0 0 1000 300" xmlns="http://www.w3.org/2000/svg" font-family="'Noto Sans Myanmar','Myanmar Text','Padauk',sans-serif">
+      <defs>
+        <marker id="arr5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#5e5e5e"/></marker>
+      </defs>
+      <!-- horizontal timeline -->
+      <line x1="60" y1="110" x2="940" y2="110" stroke="#404040" stroke-width="2"/>
+      <g font-size="12.5">
+        <circle cx="100" cy="110" r="13" fill="#a78bfa"/><text x="100" y="115" text-anchor="middle" fill="#17171f" font-weight="700">၁</text>
+        <circle cx="290" cy="110" r="13" fill="#a78bfa"/><text x="290" y="115" text-anchor="middle" fill="#17171f" font-weight="700">၂</text>
+        <circle cx="480" cy="110" r="13" fill="#a78bfa"/><text x="480" y="115" text-anchor="middle" fill="#17171f" font-weight="700">၃</text>
+        <circle cx="670" cy="110" r="13" fill="#a78bfa"/><text x="670" y="115" text-anchor="middle" fill="#17171f" font-weight="700">၄</text>
+        <circle cx="880" cy="110" r="13" fill="#10b981"/><text x="880" y="115" text-anchor="middle" fill="#17171f" font-weight="700">၅</text>
+      </g>
+      <line x1="113" y1="110" x2="277" y2="110" stroke="#5e5e5e" stroke-width="1.5" marker-end="url(#arr5)"/>
+      <line x1="303" y1="110" x2="467" y2="110" stroke="#5e5e5e" stroke-width="1.5" marker-end="url(#arr5)"/>
+      <line x1="493" y1="110" x2="657" y2="110" stroke="#5e5e5e" stroke-width="1.5" marker-end="url(#arr5)"/>
+      <line x1="683" y1="110" x2="867" y2="110" stroke="#5e5e5e" stroke-width="1.5" marker-end="url(#arr5)"/>
+      <g font-size="12" fill="#e4e4e4">
+        <text x="100" y="150" text-anchor="middle" font-weight="700">Bot ဖန်တီးပါ</text>
+        <text x="100" y="172" text-anchor="middle" fill="#a1a1a1" font-size="11">@BotFather ကို စာပို့ → /newbot</text>
+        <text x="290" y="150" text-anchor="middle" font-weight="700">အဖွဲ့ဝင်တိုင်း Start နှိပ်ပါ</text>
+        <text x="290" y="172" text-anchor="middle" fill="#a1a1a1" font-size="11">bot ကို ရှာပြီး ဖွင့် → START</text>
+        <text x="480" y="150" text-anchor="middle" font-weight="700">chat_id ယူပါ</text>
+        <text x="480" y="172" text-anchor="middle" fill="#a1a1a1" font-size="11">@userinfobot ကို စာပို့ရင်</text>
+        <text x="480" y="190" text-anchor="middle" fill="#a1a1a1" font-size="11">ကိုယ့် ID ချက်ချင်း ပြန်ပြတယ်</text>
+        <text x="670" y="150" text-anchor="middle" font-weight="700">Settings ထဲ ထည့်ပါ</text>
+        <text x="670" y="172" text-anchor="middle" fill="#a1a1a1" font-size="11">Forwarding tab → allowlist</text>
+        <text x="670" y="190" text-anchor="middle" fill="#a1a1a1" font-size="11">chat_id + Token ထည့်</text>
+        <text x="880" y="150" text-anchor="middle" font-weight="700">စမ်းသပ်ပါ ✅</text>
+        <text x="880" y="172" text-anchor="middle" fill="#a1a1a1" font-size="11">"Send test message"</text>
+        <text x="880" y="190" text-anchor="middle" fill="#a1a1a1" font-size="11">ဖုန်းရောက်မှ ပြီး</text>
+      </g>
+      <text x="500" y="240" text-anchor="middle" fill="#a1a1a1" font-size="12">တစ်ခါတည်းပြီးရင်ပြီး — နောက်တစ်ခါ ထပ်လုပ်စရာမလိုဘူး။ အဖွဲ့ဝင်အသစ်ထည့်ချင်ရင်တော့ သူ့ chat_id တောင်းပြီး allowlist ထဲ ထည့်ပေးရတယ်။</text>
+      <text x="500" y="270" text-anchor="middle" fill="#34d399" font-size="12.5" font-weight="700">⏱ အားလုံးကြာရင် ၅ မိနစ်ပဲ ကုန်တယ်</text>
+    </svg>
+    <figcaption>ပုံ ၆ — စတင်အသုံးပြုပုံ ၅ ဆင့်။ အဖွဲ့ဝင်တစ်ယောက်ချင်းစီအတွက် တစ်ခါတစ်ရံသာ လိုအပ်တယ်။</figcaption>
+  </figure>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>✅ ဒီမော်ဒယ်ရဲ့ အားသာချက်များ</h3>
+      <ul class="tight">
+        <li>သူ့သူ့ဖုန်း သူ့သူ့ဆီ ကိုယ်စီရတယ် — တစ်ယောက်ကို တစ်ယောက် စာမမြင်ရ</li>
+        <li>ခွဲခြားနိုင်တယ် — ဘယ်သူ့ကို ပိတ်မလဲဆိုတာ allowlist နဲ့ ထိန်းလို့ရ</li>
+        <li>ရိုးရိုးရှင်းရှင်း — နားလည်ရလွယ်တဲ့ လုံခြုံရေးမော်ဒယ်</li>
+      </ul>
+    </div>
+    <div class="card" style="border-color:#6b4c12">
+      <h3 style="color:#fbbf24">လက်ခံရမယ့် အားနည်းချက်များ</h3>
+      <ul class="tight">
+        <li>အဖွဲ့ဝင်တိုင်းရဲ့ chat_id ကို တစ်ခုချင်း စုဆောင်းရတယ်</li>
+        <li>အဖွဲ့ဝင်အသစ်ဝင်လာတိုင်း admin က လက်ဖြင့် ထည့်ပေးရတယ်</li>
+        <li>OTP တစ်ခုကို လူ ၃ယောက်ရှိရင် စာ ၃ စောင် ပို့ရတယ် (rate limit ပိုစားတယ်)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="note">
+    💡 <b>နောက်ဆက်တွဲ မှတ်ချက် —</b> allowlist စနစ်က လူအနည်းငယ်အတွက် ကောင်းပေမယ့် အဖွဲ့အတွင်း မျှဝေချင်တဲ့အခါ "Group chat တစ်ခုထဲ ပို့တဲ့" ဒီဇိုင်းကလည်း ရှိပါတယ် (တစ်နေရာတည်းကိုပဲ ပို့ရုံ — group chat_id တစ်ခုတည်း)။ နှစ်ခုလုံးကို ဒီ app ရဲ့ Settings နဲ့ အလွယ်ပဲ ပြောင်းလို့ရအောင် ဒီဇိုင်းထုတ်ထားနိုင်ပါတယ်။
+  </div>
+</section>
+
+<!-- ==================== NETWORK ==================== -->
+<section id="network">
+  <h2 class="sec"><span class="num">၅</span>Network နဲ့ "local" — ဘာက ဘယ်နေရာမှာ လည်ပတ်တယ်</h2>
+  <p class="lead">မကြာခဏ ရှုပ်ထွေးစေတဲ့ အချက် — SIM bank က အိမ်ရှေ့ hardware ပေမယ့် Telegram က ကမ္ဘာအနှံ့ ဝန်ဆောင်မှု။ ဒီကြားထဲမှာ တံတားသဖွယ် ချိတ်ပေးတာက app ပါ။</p>
+
+  <table>
+    <tr><th>အရာ</th><th>ဘယ်နေရာမှာရှိလဲ</th><th>Internet ကို ဘာရောက်လဲ?</th></tr>
+    <tr><td> SIM bank + SIM များ</td><td> 🏠 သင့် PC နားမှာပဲ</td><td rowspan="3" style="vertical-align:middle"><b>ထွက်သွားတဲ့ ချိတ်ဆက်မှု တစ်ခုတည်း:</b><br><code>api.telegram.org:443</code> (HTTPS)<br>အဝင်လက်ခံတာ ဘာမှမရှိ။ နားထောင်တာ ဘာမှမရှိ။</td></tr>
+    <tr><td> App (Rust + Svelte)</td><td> 🖥️ အဲဒီ PC ထဲမှာပဲ</td></tr>
+    <tr><td> OTP message များ</td><td> 🧠 RAM (၂ နာရီအတွင်း)</td></tr>
+    <tr><td> Telegram server များ</td><td> ☁️ Telegram (ကမ္ဘာအနှံ့)</td><td>— သူတို့က စာလက်ခံပြီး ကိုယ့် allowlist က user တွေဆီ ဖြန့်ပေးတယ်</td></tr>
+  </table>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>🏠 LAN အတွင်းချည်း (မရွေးချယ်ထားတဲ့ နည်းလမ်း)</h3>
+      <p style="margin:0 0 10px">အိမ်ထဲက Wi-Fi ချိတ်ပြီး ဖုန်းတွေက စစ်ဆေးခိုင်းတဲ့ သေးငယ်တဲ့ local web server တစ်ခု လည်ပတ်နိုင်ပါတယ်။ မရွေးချယ်တဲ့အကြောင်းတွေက —</p>
+      <ul class="tight" style="margin:0">
+        <li>Push မရှိ — ဖုန်းတွေက ထပ်ခါထပ်ခါ စစ်နေရမယ် (ဒါမှမဟုတ် စာမျက်နှာ ဖွင့်ထားရမယ်)</li>
+        <li>ဖုန်းက Wi-Fi ကနေ ထွက်လိုက်တာနဲ့ ပျက်သွားတယ်</li>
+        <li>Port / IP စီမံခန့်ခွဲမှုကိုယ်တိုင်က ရှုပ်ထွေးတဲ့ အလုပ်တစ်ခု</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>☁️ Telegram နည်း (ရွေးချယ်ထားတဲ့နည်း)</h3>
+      <p style="margin:0 0 10px">PC က ထွက်သွားတဲ့ HTTPS ခေါ်ဆိုမှုတစ်ခုလုံးလုံး လုပ်ရုံပဲ — ကျန်တာကို Telegram ရဲ့ infrastructure က လုပ်ပေးတယ်:</p>
+      <ul class="tight" style="margin:0">
+        <li>တကယ့် push — ကမ္ဘာပေါ်မှာ ဘယ် network ကမဆို အလုပ်လုပ်တယ်</li>
+        <li>Port forwarding မလို၊ static IP မလို၊ DNS မလို</li>
+        <li>ပို့ရောက်မှု + အသံတွေ့အချက်ပြမှုက Telegram ရဲ့ တာဝန် — ကိုယ့်တာဝန် မဟုတ်တော့ဘူး</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="note danger">
+    🇲🇲 <b>မြန်မာ့အချက်အလက် တကယ့်အခြေအနေ —</b> internet ပိတ်ချိန်တွေမှာ <code>api.telegram.org</code> ကို ISP အချို့က အပြည့်အဝ ပိတ်ချထားခဲ့ဖူးပါတယ်။ Forwarder က ချိတ်လို့မရရင် ရှင်းရှင်းလင်းလင်း error မှတ်ပါမယ်။ ကြိုတင်ဖြေရှင်းနည်းက <b>SOCKS5 proxy</b> setting (Settings မှာ ကွက်တစ်ကွက်) — Bot API က <code>socks5h://</code> proxy တွေနဲ့ အလုပ်လုပ်တယ်။ MTProto proxy link တွေကတော့ Telegram client app တွေအတွက်ပဲ ကူညီတယ် — bot API ခေါ်ဆိုမှုတွေအတွက် မဟုတ်ဘူး။
+  </div>
+</section>
+
+<!-- ==================== မြင်ကွင်းပုံများ ==================== -->
+<section id="mock">
+  <h2 class="sec"><span class="num">၆</span>မြင်ကွင်းပုံများ — ဘယ်လိုမြင်ရမလဲ</h2>
+  <p class="lead">Code မဟုတ်ဘူး — ရည်မှန်းထားတဲ့ ပုံစံခွက်တွေပါ။ အရင်က app ထဲမှာ ထည့်မယ့် tab၊ နောက် bot စကားပြောခန်း။</p>
+
+  <figure class="figure">
+    <div style="border:1px solid var(--border); border-radius:10px; overflow:hidden">
+      <div style="background:var(--elevated); padding:10px 16px; display:flex; gap:22px; font-size:13px; color:var(--muted)">
+        <span>Ports</span><span>Inbox</span><span>Settings</span><span style="color:var(--primary); font-weight:700">Forwarding ✦ အသစ်</span>
+      </div>
+      <div style="padding:18px">
+        <div style="font-size:16px; font-weight:700; margin-bottom:14px">Settings → Forwarding</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px">
+          <div style="border:1px solid var(--border); border-radius:10px; padding:14px">
+            <div style="font-size:13px; color:var(--muted); margin-bottom:6px">Bot Token (@BotFather ကနေ)</div>
+            <div style="background:#0d1117; border:1px solid var(--border); border-radius:8px; padding:9px 12px; font-family:monospace; font-size:12.5px; color:#fbbf24">1234567:AAF3xK…•••••••••••• <span style="color:var(--muted)">(ထည့်ပါ)</span></div>
+            <div style="font-size:11.5px; color:var(--muted); margin-top:6px">local မှာသာ သိမ်းတယ် · သိမ်းပြီးရင် ဖျောက်ပြထားတယ်</div>
+          </div>
+          <div style="border:1px solid var(--border); border-radius:10px; padding:14px">
+            <div style="font-size:13px; color:var(--muted); margin-bottom:6px">Allowlist — Chat IDs (ခွင့်ပြုစာရင်း)</div>
+            <div style="background:#0d1117; border:1px solid var(--border); border-radius:8px; padding:9px 12px; font-family:monospace; font-size:12.5px; color:#34d399">123456789 · Alice<br>987654321 · Bob</div>
+            <button style="margin-top:8px; background:var(--primary); border:none; color:#0c0c0c; font-weight:700; border-radius:8px; padding:6px 14px; font-size:12.5px; cursor:pointer">＋ ထည့်ပါ</button>
+          </div>
+          <div style="border:1px solid var(--border); border-radius:10px; padding:14px">
+            <div style="font-size:13px; color:var(--muted); margin-bottom:6px">SOCKS5 Proxy (ရွေးချယ်စရာ — ပိတ်ထားတဲ့ network တွေအတွက်)</div>
+            <div style="background:#0d1117; border:1px solid var(--border); border-radius:8px; padding:9px 12px; font-family:monospace; font-size:12.5px; color:var(--muted)">socks5h://127.0.0.1:9050</div>
+            <div style="font-size:11.5px; color:var(--muted); margin-top:6px">api.telegram.org တိုက်ရိုက်ရရင် ချန်ထားပါ</div>
+          </div>
+          <div style="border:1px solid var(--border); border-radius:10px; padding:14px; display:flex; flex-direction:column; justify-content:center; gap:8px">
+            <label style="display:flex; align-items:center; gap:8px; font-size:13.5px"><input type="checkbox" checked> OTP စာတွေ ပို့ပါ</label>
+            <label style="display:flex; align-items:center; gap:8px; font-size:13.5px"><input type="checkbox" checked> OTP မဟုတ်တဲ့ SMS တွေပါ ပို့ပါ</label>
+            <label style="display:flex; align-items:center; gap:8px; font-size:13.5px"><input type="checkbox"> ကုဒ်ကို <code style="font-size:11px">••••••</code> ပုံစံ ဖျောက်ပါ</label>
+            <div style="display:flex; gap:8px; margin-top:4px">
+              <button style="background:var(--success); border:none; color:#0c0c0c; font-weight:700; border-radius:8px; padding:6px 14px; font-size:12.5px; cursor:pointer">စမ်းသပ်စာ ပို့ပါ</button>
+              <span style="align-self:center; font-size:12px; color:var(--success)">✓ Alice နဲ့ Bob ဆီ ရောက်ပြီ</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <figcaption>app ထဲ ထည့်မယ့် Forwarding tab — Bot Token + allowlist chat_id စာရင်း + proxy ကွက်။ ဒါထက် ပိုလိုတာ မရှိဘူး။</figcaption>
+  </figure>
+
+  <figure class="figure">
+    <div style="max-width:380px; margin:0 auto; border:1px solid var(--border); border-radius:18px; overflow:hidden; background:#0e1621">
+      <div style="background:#17212b; padding:12px 16px; display:flex; align-items:center; gap:10px">
+        <div style="width:34px; height:34px; border-radius:50%; background:#2b5278; display:flex; align-items:center; justify-content:center">🤖</div>
+        <div>
+          <div style="font-size:14px; font-weight:700">My OTP Bot</div>
+          <div style="font-size:11.5px; color:#6ab3f3">bot · allowlist ၃ ယောက်</div>
+        </div>
+      </div>
+      <div style="padding:14px; display:flex; flex-direction:column; gap:10px; min-height:290px">
+        <div style="align-self:center; font-size:11px; color:#6ab3f3; background:rgba(0,0,0,.25); border-radius:12px; padding:3px 12px">ဒီနေ့</div>
+        <div style="align-self:flex-start; background:#2b5278; border-radius:12px 12px 12px 4px; padding:8px 12px; max-width:85%">
+          <div style="font-size:11px; color:#a1c1e8">SIM 12 · MPT · Wave Money</div>
+          <div style="font-size:12px; margin:3px 0">🔐 သင့် OTP ကုဒ်</div>
+          <div style="font-size:20px; font-weight:800; font-family:monospace; letter-spacing:2px">483920</div>
+          <div style="font-size:10px; color:#a1c1e8; text-align:right">၁၄:၃၂ · OTP bot မှ</div>
+        </div>
+        <div style="align-self:flex-start; background:#2b5278; border-radius:12px 12px 12px 4px; padding:8px 12px; max-width:85%">
+          <div style="font-size:11px; color:#a1c1e8">SIM 03 · Ooredoo · KBZPay</div>
+          <div style="font-size:12px; margin:3px 0">🔐 အတည်ပြုကုဒ်</div>
+          <div style="font-size:20px; font-weight:800; font-family:monospace; letter-spacing:2px">7 2 9 4</div>
+          <div style="font-size:10px; color:#a1c1e8; text-align:right">၁၄:၃၅ · OTP bot မှ</div>
+        </div>
+        <div style="align-self:center; font-size:11px; color:#6ab3f3; background:rgba(0,0,0,.25); border-radius:12px; padding:3px 12px">START နှိပ်ထားပါက စာရောက်လာမယ်</div>
+      </div>
+    </div>
+    <figcaption>bot ရဲ့ စကားပြောခန်း — OTP တစ်ခုကို ပူဖောင်းတစ်ခု — ဘယ် SIM၊ ဘယ်ဆက်သွယ်ရေး၊ ဘယ်ဝန်ဆောင်မှု၊ ကုဒ်၊ အချိန်။</figcaption>
+  </figure>
+</section>
+
+<!-- ==================== အကြံပြုချက် ==================== -->
+<section id="advice">
+  <h2 class="sec"><span class="num">၇</span>လမ်းညွှန် အကြံပြုချက် — တည်ဆောက်စဉ်အဆင့်</h2>
+  <p class="lead">အောက်ပါအစီအစဉ်ကို ဒီလိုစီထားတာက — အဆင့်တိုင်းက ကိုယ်တိုင်တစ်ခုတည်း အသုံးဝင်အောင်၊ နောက်မှာ ဘာမှ ပြန်မပစ်ရအောင်ပါ။</p>
+
+  <table>
+    <tr><th style="width:70px">အဆင့်</th><th>ဘာလဲ</th><th>အလုပ်ပမာဏ</th><th>ဒီစဉ်အတိုင်းဖြစ်ရတဲ့အကြောင်း</th></tr>
+    <tr>
+      <td><b>၀</b></td>
+      <td><b>Telegram forwarder — MVP</b> (ဒီစာတမ်း)</td>
+      <td><span class="tag ok">သေး</span></td>
+      <td>အနည်းဆုံး code နဲ့ အများဆုံး အားသာချက် — <code>sms:new</code> event နေရာမှာ HTTP ခေါ်ဆိုမှုတစ်ခုပဲ ထည့်ရတယ်။ အခြားအရာ ဘာမှမပြောင်းဘူး။</td>
+    </tr>
+    <tr>
+      <td>၁</td>
+      <td>ခိုင်ခန့်အောင်လုပ်ခြင်း — 429 ကိုင်တွယ်မှု၊ internet ပြတ်လျှင် ပြန်ပို့တဲ့ queue၊ log ထဲ token ဖျောက်ခြင်း</td>
+      <td><span class="tag ok">သေး</span></td>
+      <td>MVP ကို တကယ့် network အခြေအနေနဲ့ ရှင်သန်အောင် လုပ်ပေးတယ် (ပြီးတော့ AGENTS.md ရဲ့ log ထဲ လျှို့မှတ်မထားရ စည်းမျဉ်းနဲ့လည်း ကိုက်တယ်)။</td>
+    </tr>
+    <tr>
+      <td>၂</td>
+      <td>message မှတ်တမ်း အမြဲတမ်းသိမ်း (SQLite) + ရှာဖွေမှု</td>
+      <td><span class="tag mid">အလယ်အလတ်</span></td>
+      <td>RAM ထဲပဲ ရှိတဲ့ မှတ်တမ်းက app ရဲ့ အကြီးဆုံး အားနည်းချက် — Telegram မှတ်တမ်းနဲ့လည်း တွဲသွားတယ်။</td>
+    </tr>
+    <tr>
+      <td>၃</td>
+      <td>ပို့ရမယ့်နေရာ များရန် — group အများ၊ SIM အလိုက် စည်းမျဉ်း ("KBZPay SIM → ငွေစာရင်းအဖွဲ့")</td>
+      <td><span class="tag mid">အလယ်အလတ်</span></td>
+      <td>တစ်နေရာ အလုပ်လုပ်ပြီးရင် N နေရာက ဇယားတစ်ခုပဲ ဖြစ်သွားတယ် — ဒါပေမယ့် ပထမ အခြေခံ အလုပ်လုပ်ပြီးမှ။</td>
+    </tr>
+    <tr>
+      <td>၄</td>
+      <td>HTTP API / web dashboard — ကိုယ့်စနစ်တွေထဲ တိုက်ရိုက်ချိတ်ဖို့</td>
+      <td><span class="tag bad">ကြီး</span></td>
+      <td>အလေးဆုံးရွေးချယ်စရာ — အခြား software တွေက OTP တွေကို ပရိုဂရမ်နဲ့ ယူသုံးမှသာ တန်ဖိုးရှိတယ်။</td>
+    </tr>
+  </table>
+
+  <div class="note">
+    💡 <b>ရိုးရိုးသားသား အကြံပြုချက် —</b> အဆင့် ၀ ကို ဒီစာတမ်းမှာ ဖော်ပြထားတဲ့အတိုင်း တည်ဆောက်ပြီး ၂ ပတ်လောက် တကယ့်အသုံးနဲ့ စမ်းကြည့်ပါ။ ရှေ့ဆောင်ပုံစံ၊ ပူဖောင်းပုံစံ၊ ဖျောက်တာ — အားလုံးကို အသုံးပြုပြီးမှ ပြင်ရတာ စရိတ်သက်သာတယ်။ အဆင့် ၀ က တကယ့်အလုပ်လုပ်မှု မမြင်ခင် အဆင့် ၃ ကို ဒီဇိုင်းမဆွဲနဲ့။
+  </div>
+</section>
+
+<!-- ==================== FAQ ==================== -->
+<section id="faq">
+  <h2 class="sec"><span class="num">၈</span>မေးလေ့ရှိတဲ့ မေးခွန်းများ</h2>
+
+  <div class="qa"><div class="q">အဖွဲ့ဝင်တိုင်း bot ကို ဖွင့်ပြီး Start နှိပ်ရမလား?</div>
+  <div class="a"><b>ဟုတ်တယ်၊ တစ်ခါတည်းပဲ။</b> Telegram စည်းမျဉ်းအရ bot တွေက ပြောစမှာ ပထမဆုံးစကားပြောလို့မရဘူး — user က bot ကို ဖွင့်ပြီး Start နှိပ်မှ အဲဒီ user ဆီ စာပို့ခွင့် ပွင့်တယ်။ တစ်ခါနှိပ်ပြီးရင်တော့ နောက်တစ်ခါ မလိုတော့ဘူး။</div></div>
+
+  <div class="qa"><div class="q">ဘယ်သူမဆို bot ကို ရှာတွေ့ပြီး စတင်ခွင့်တောင်းရင် ဘာဖြစ်မလား?</div>
+  <div class="a">ဘာမှမဖြစ်ဘူး။ bot ရဲ့ ပို့ရမယ့်စာရင်းက allowlist ထဲကပဲ။ Start နှိပ်လို့ ရှိလာတဲ့ chat_id က allowlist ထဲ မပါရင် — <b>တိတ်ဆိတ်နေမယ်</b>။ ဘယ်သူ့ဆီကမှ ဘာမှ မထုတ်ပေးဘူး။</div></div>
+
+  <div class="qa"><div class="q">တစ်ယောက်ယောက်က bot အတုဆောက်ပြီး အတု OTP ထည့်နိုင်မလား?</div>
+  <div class="a">Telegram ရဲ့ ပုံမှန်နည်းလမ်းနဲ့ဆို မရဘူး — bot အနေနဲ့ စာပို့ဖို့အတွက် token လိုတယ်၊ အဲဒါက ကိုယ့် PC ထဲမှာပဲရှိတယ်။ PC ကို ကာကွယ်တာ = token ကို ကာကွယ်တာ။ Token ယိုစိမ့်ခဲ့ရင် @BotFather ရဲ့ <code>/revoke</code> နဲ့ ချက်ချင်း သတ်ပြီး အသစ်တွေ့လို့ရတယ်။</div></div>
+
+  <div class="qa"><div class="q">PC မှာ internet မရှိရင် ဘာဖြစ်မလား?</div>
+  <div class="a">OTP ပို့တာ ခဏရပ်မယ်။ SMS တွေကတော့ SIM တွေထဲနဲ့ app ထဲ ဆက်စုနေမယ်။ အဆင့် ၁ ရဲ့ ပြန်ပို့ queue နဲ့ internet ပြန်လာရင် ကျန်တာတွေ ဆက်ပို့မယ်။ အဲဒီအကြာမှာ SIM အကွက်တွေ မပြည့်အောင်ကတော့ ၁၀ မိနစ်ကြာတစ်ကြိမ် သုတ်သင်မှုက ထိန်းပေးထားတယ်။</div></div>
+
+  <div class="qa"><div class="q">မြန်မာစာ OTP တွေနဲ့လည်း အလုပ်လုပ်မလား?</div>
+  <div class="a">ဟုတ်တယ် — decoder က UCS-2 မြန်မာစာကို ကိုင်တွယ်ပြီးသားပြီး <code>extract_otp</code> က မြန်မာဂဏန်း (၀၁၂၃…) တွေကိုပါ အသိအမှတ်ပြုတယ်။ ပို့တဲ့ပူဖောင်းထဲမှာ မူရင်းစာသား အတိုင်းပါလာမယ်။</div></div>
+
+  <div class="qa"><div class="q">ဘယ်လောက်မြန်မြန် ရောက်မလား?</div>
+  <div class="a">SMS ရောက်ကနေ ဖုန်းမြည်တဲ့အထိ ~၃–၈ စက္ကန့်ပါ။ app က စက္ကန့်တစ်ချက်အောက်မှာ decode ပြီးသား၊ forwarder က ချက်ချင်းပုံစံချ၊ queue ကလည်း burst မဟုတ်ရင် ဘာမှ မထပ်ထည့်ဘူး။ ပုံမှန်အခြေအနေဆို — ဝင်းဒိုးပြောင်းဖို့ မကုန်ခင်မှာပဲ ဖုန်းသံကြားရတယ်။</div></div>
+
+  <div class="qa"><div class="q">OTP တွေအတွက် Telegram က ဘေးကင်းလား?</div>
+  <div class="a">ကောင်းတဲ့အဆင့်အထိ — လမ်းမှာ TLS ပါတယ်၊ ဒါပေမယ့် ကြားခံ chat တွေမှာ end-to-end တိုက်ရိုက်ရှိမထားဘူး၊ မှတ်တမ်းတွေ Telegram server ပေါ်မှာ သိမ်းတယ်။ ဒီဇိုင်းထဲ ထည့်ထားတဲ့ အကာအကွယ်တွေက — token ကို local မှာပဲသိမ်းတာ၊ log ထဲ ဖျောက်တာ၊ ပို့လို့မရဘူးဖြစ်သွားရင် ချက်ချင်း ပိတ်ချင်ရတဲ့ စနစ်။ အများစုအဖွဲ့တွေအတွက် အဆင်ပြေမှုက ကျန်တဲ့အန္တရာယ်ထက် ပိုကြီးတယ် — ဒါပေမယ့် သိနားလည်ပြီး ဆုံးဖြတ်သင့်တဲ့အရာပါ။</div></div>
+
+  <div class="qa"><div class="q">ဘာကြောင့် Telegram လဲ — တခြားနည်းတွေ မရှိဘူးလား?</div>
+  <div class="a">ရှိတယ် — email၊ ကိုယ်ပိုင် server၊ LAN web app။ Telegram ကို ရွေးတဲ့အကြောင်းက — အဲဒါထက် တည်ဆောက်ရလွယ်တာ၊ တကယ့် push ပါတာ၊ ကမ္ဘာအနှံ့ အလုပ်လုပ်တာ၊ setup အားလုံး မလိုတာ၊ အဖွဲ့ဝင်တိုင်း အလေ့အကျင့်အရ စာလုံးတွေ့တာနဲ့ အသံတွေ့တာပါ။</div></div>
+</section>
+
+<footer style="margin-top:56px; padding-top:20px; border-top:1px solid var(--border); color:var(--muted); font-size:13px">
+  <p><b>SIM Bank SMS Reader — Telegram OTP Bot ဒီဇိုင်းအဆိုပြုချက် (မြန်မာ)</b></p>
+  <p style="margin:6px 0">ဒီဇိုင်း ရည်မှန်းချက်များသာ — ဒီ feature အတွက် code မရေးသေးပါ၊ မပြောင်းသေးပါ။ ရင်းမြစ်များ — Telegram Bot API စာရွက်စာတမ်းများ၊ project source code (<code>sms-tauri</code> v1.4.0၊ <code>Memory/05-feature-roadmap.md</code>)။</p>
+</footer>
+
+</div>
+</body>
+</html>
