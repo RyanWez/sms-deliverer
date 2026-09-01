@@ -96,7 +96,7 @@ A Settings switch that does nothing is worse than no switch: it teaches the oper
 Behaviour changes that touch README-documented facts (probe timeouts, AT flow, status formats, command lists) are synced in README.md in the same change. Real bug fixes get a `Memory/03` entry. For anything needing the bank physically attached, follow `Memory/04 §G` (Hardware Live-Check Playbook) rather than inventing a check.
 
 ## Reference
-`Memory/01`–`06`, six docs, Burmese: 01 GitHub CLI/auth · 02 release automation (§5 platform policy) · 03 troubleshooting casebook + latent traps · 04 conventions, verification loop, §D command cheatsheet, §G hardware playbook, §H inert-switch rule · 05 roadmap, Settings decisions ledger, the two hard refusals · 06 git/feature-branch workflow. `Memory/README.md` is the index.
+`Memory/01`–`07`, seven docs, Burmese: 01 GitHub CLI/auth · 02 release automation (§5 platform policy) · 03 troubleshooting casebook + latent traps · 04 conventions, verification loop, §D command cheatsheet, §G hardware playbook, §H inert-switch rule · 05 roadmap, Settings decisions ledger, the two hard refusals · 06 git/feature-branch workflow · 07 next-release plan from the v1.5.0 hardware field test (§A what the run proved and what stayed unproven, §B–§D the v1.6.0 and v1.5.1 items with file:line evidence). `Memory/README.md` is the index.
 
 When searching, note that `src-tauri/src/.mimosa/hook-state/` holds gitignored snapshot copies of source files. Grep hits there are stale duplicates — ignore them.
 
