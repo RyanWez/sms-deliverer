@@ -226,9 +226,9 @@ COM39: deleted 5 msg(s)
 ### D.2 USSD rejection warning က **code** ကိုပဲ ပြတယ် — **command** ကို မပြဘူး
 
 ```
-18:39:31.846  COM38: USSD *88# rejected (+CME ERROR: 4)
-18:39:31.861  COM38: USSD *88# rejected (+CME ERROR: 4)
-18:39:36.585  (success on the *124# fallback)
+18:39:31.846  COM38: USSD *88# rejected (+CME ERROR: 100)
+18:39:31.861  COM38: USSD *88# rejected (+CME ERROR: 100)
+18:39:36.585  COM38: SIM number ***573      ← *124# fallback အောင်မြင်
 ```
 
 - 15 ms အကွာမှာ **တစ်လုံးမကွာ တူတဲ့ line ၂ ခု** — duplicate log လို ဖတ်ရတယ်။
@@ -248,6 +248,39 @@ COM39: deleted 5 msg(s)
   number မပါတဲ့ string ပဲ** ဖြစ်တာမို့ Info level မှာ ဘေးမရှိဘူး (`AT+CUSD` ရဲ့ တကယ့်
   reply body က debug မှာပဲ ကျန်ရမယ် — AGENTS.md Logging refusal)။ `fix:` → **v1.5.1**
 
+### D.3 `LiveEvent::Closed` က ready count ကို မလျှော့ဘူး — status line နဲ့ badge တွက်မတည့်ဘူး
+
+ဒါက `05 §C.6` (L3) ကိုယ်တိုင်ပါ။ ဒါပေမဲ့ **v1.5.0 က ဒါကို ပိုမြင်သာစေပြီး ပိုရောက်လွယ်
+စေတယ်** ဆိုတာ ဒီမှာ မှတ်ထားရမယ် — အဲ့ဒါကြောင့် C.6 ထဲ ဆက်ချန်ထားတာထက် v1.5.1 ထဲ
+ဆွဲထည့်တာ တန်တယ်။
+
+- **Symptom:** worker တစ်ခု လုံးလုံး ထွက်သွားရင် (transport သေတာ ဒါမှမဟုတ် panic)
+  status line က အဲ့ port ကို `Live N/N ready` ထဲ **ဆက် ရေတွက်နေတယ်**
+- **သက်သေ:** offline/`Reconnecting` arm (`src-tauri/src/commands/mod.rs:1051`) က
+  `st.live_ports_ready.retain(|p| p != &port)` လုပ်တယ်။ `Closed` arm (`:1184`) က
+  `p.live_ready = false` (`:1191`) ရော `st.live_failed.push` (`:1193`) ရော လုပ်ပေမယ့်
+  **`live_ports_ready` ကို မထိဘူး**၊ ပြီးတော့ `live_status` (`:532` — count ကို
+  `live_ports_ready.len()` ကနေ ယူတယ်) ကိုလည် ပြန်မခေါ်ဘဲ `status_text` ကို
+  `"{port} FAILED: {e}"` နဲ့ တိုက်ရိုက် လဲပစ်တယ် (`:1194`)
+- **Frontend က ကိုယ်တိုင် ပြန်မှန်တယ်၊ Rust က မမှန်ဘူး:** `Closed` arm က `ports:updated`
+  emit လုပ်တာမို့ `src/lib/services/api.ts:207` / `:223` က `readyPorts` ကို
+  `items.filter(p => p.live_ready)` နဲ့ ပြန်တွက်တယ် — ဆိုတော့ **badge က မှန်တယ်**
+  (`Live 33/34`)၊ **Rust ကနေ လာတဲ့ status line က မှားတယ်** (`Live 34/34 ready`)။
+  ဖန်သားပြင် တစ်ခုတည်းပေါ် counter ၂ ခု တွက်မတည့်ဘဲ ရှိနေတာ ဖြစ်တယ်
+- **v1.5.0 က ဘာလို့ ပိုဆိုးလာလဲ — ၂ ချက်:**
+  1. **#17 က `statusText` ကို Inbox footer ပေါ် တင်လိုက်တယ်** — အရင်က Ports page မှာပဲ
+     မြင်ရတဲ့ မှားနေတဲ့ ကိန်းက အခု **operator အလုပ်လုပ်တဲ့ main page ပေါ်** ရောက်ပြီ
+  2. **#18 က panic ကို `Closed` ကနေ report လုပ်စေတယ်** (`live::WORKER_PANIC`) — ဆိုတော့
+     v1.5.0 မှာ အသစ် ရောက်လာနိုင်တဲ့ panic path က **ready count မလျှော့တဲ့ အဲ့ဒီ arm
+     တစ်ခုတည်းဆီ** တည့်တည့် ဝင်တယ်။ Worker panic ဖြစ်ရင် row က အနီ ဖြစ်မယ်၊ ဒါပေမဲ့
+     status line က `34/34 ready` လို့ ဆက် ပြောနေမယ်
+- **အကြံ:** `Closed` arm မှာ `st.live_ports_ready.retain(|p| p != &port);` ထည့်ပြီး
+  `status_text` ကို `live_status(&st, port_count)` ကနေ ပြန်တည်ပါ (`{port} FAILED: {e}`
+  က `live_failed` ကနေ ပြပြီးသားမို့ ပျောက်မသွားဘူး)။ **`live_offline` ထဲ ထည့်မထည့်ကို
+  တမင် ဆုံးဖြတ်ရမယ်** — `Closed` က "modem မရှိဘူး" မဟုတ်ဘဲ "worker သေတယ်" ဖြစ်တာမို့
+  `no modem` အဖြစ် ရေတွက်ရင် လွဲမှားချက် အသစ် ဖြစ်မယ်။ Test: `Closed` ပြီးနောက်
+  `live_status` က ready ကို လျှော့ကြောင်း။ `fix:` → **v1.5.1**
+
 ---
 
 ## E. ဒီ plan ထဲ **မပါတာ** (ဆုံးဖြတ်ပြီးသား deferral တွေ — ဒီမှာ ပြန်မရေးဘူး)
@@ -255,7 +288,8 @@ COM39: deleted 5 msg(s)
 | Item | ဘယ်မှာ ရှိလဲ |
 |---|---|
 | `developer.autoScroll` — ဆုံးဖြတ်ရသေးတဲ့ setting တစ်ခုတည်း | `05 §C.3` |
-| L1–L4 limitation ၄ ခု (renamed stick၊ live thread pool မရှိတာ၊ `Closed` over-count၊ liveness re-probe မရှိတာ) | `05 §C.4`–`§C.7` |
+| L1, L2, L4 limitation (renamed stick၊ live thread pool မရှိတာ၊ liveness re-probe မရှိတာ) | `05 §C.4`၊ `§C.5`၊ `§C.7` |
+| ~~L3 `Closed` over-count~~ — **ဒီ plan ထဲ ဆွဲထည့်လိုက်ပြီ**၊ §D.3 ကြည့် | `05 §C.6` → `§D.3` |
 | Supervisor ၄ ခုကို `run_port_pool` အဖြစ် ပေါင်းတာ — **အစဉ်လိုက် အနောက်ဆုံး** (§C က ဒီ entry ရဲ့ down payment) | `05 §C.10` |
 | `main` ruleset မရှိတာ + updater release-draft flip | `02 §6` |
 
@@ -265,7 +299,7 @@ COM39: deleted 5 msg(s)
 
 | Release | ပါဝင်တာ | Commit type | Risk | Hardware လိုလား |
 |---|---|---|---|---|
-| **v1.5.1** | §C (cleanup status line က "no modem" ကို failure အဖြစ် ရေတာ) + §D.1 (`msg(s)` unit ၂ မျိုး) + §D.2 (USSD rejection line) | အားလုံး `fix:` | **နိမ့်** — counter/wording ပဲ၊ **behaviour ပြောင်းတာ မရှိဘူး** | မလို (unit test နဲ့ လုံလောက်) |
+| **v1.5.1** | §C (cleanup status line က "no modem" ကို failure အဖြစ် ရေတာ) + §D.1 (`msg(s)` unit ၂ မျိုး) + §D.2 (USSD rejection line) + §D.3 (`Closed` က ready count မလျှော့တာ) | အားလုံး `fix:` | **နိမ့်** — counter/wording ပဲ၊ **behaviour ပြောင်းတာ မရှိဘူး** | မလို (unit test နဲ့ လုံလောက်) |
 | **v1.6.0** | §B (live worker command mailbox — Delete / Clear All / Get SIM Numbers ကို live ဖွင့်ထားစဉ် လုပ်နိုင်တာ) | `feat:` | **မြင့်** — live loop timing ပြောင်းတယ် | **လိုတယ် — `04 §G` playbook**၊ ပြီးတော့ `Memory/03` case entry အသစ် |
 
 > **အစဉ်လိုက်:** v1.5.1 ကို အရင် ထုတ်ပါ။ ဒါက risk နိမ့်ပြီး operator ရဲ့ status line ကို
