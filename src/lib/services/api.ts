@@ -224,16 +224,19 @@ export const api = {
         console.info(`[api] Port ${event.payload.port} has no modem: ${event.payload.error}`);
       });
 
-      await listen<{ found: number; total: number }>('detect:done', (event) => {
+      await listen<{ found: number; total: number; unknown: number }>('detect:done', (event) => {
         liveStore.detectBusy = false;
-        const { found, total } = event.payload;
+        const { found, total, unknown } = event.payload;
+        // Ports the probe could not reach keep their previous selection and
+        // liveness, so they must not be described as deselected or as empty.
+        const skipped = unknown > 0 ? ` ${unknown} port(s) could not be probed.` : '';
         if (found === 0) {
-          toast('Warning', 'No modems found', `Probed ${total} port(s); none answered.`);
+          toast('Warning', 'No modems found', `Probed ${total} port(s); none answered.${skipped}`);
         } else {
           toast(
-            'Success',
+            unknown > 0 ? 'Warning' : 'Success',
             'Detect complete',
-            `${found} of ${total} port(s) have a modem. The rest were deselected.`
+            `${found} of ${total} port(s) have a modem. Empty slots were deselected.${skipped}`
           );
         }
       });
@@ -391,8 +394,18 @@ export const api = {
     if (!isTauri()) {
       liveStore.detectBusy = true;
       setTimeout(() => {
+        // Three outcomes, matching the backend's verdict: a modem answered, the
+        // slot proved empty, or the probe could not reach the port at all. The
+        // last one keeps its previous selection and liveness and carries a
+        // reason, so the preview shows that row the way the desktop app does.
         portsStore.set(
-          portsStore.items.map((p, i) => ({ ...p, alive: i % 3 === 0, checked: i % 3 === 0 }))
+          portsStore.items.map((p, i) => {
+            if (i % 7 === 3) {
+              return { ...p, live_error: 'Cannot open port: Device or resource busy' };
+            }
+            const alive = i % 3 === 0;
+            return { ...p, alive, checked: alive, live_error: null };
+          })
         );
         liveStore.detectBusy = false;
         toast('Success', 'Detect complete', 'Simulated probe finished.');
