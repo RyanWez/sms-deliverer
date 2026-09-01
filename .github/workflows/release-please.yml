@@ -9,6 +9,16 @@ permissions:
 
 name: release-please
 
+# Two pushes to main in quick succession used to start two overlapping runs.
+# Run A's sync-cargo-lock checks out the release branch at one SHA, run B's
+# release-please force-pushes over it, and run A's plain `git push` then fails
+# as a non-fast-forward — leaving the release PR with an unsynced Cargo.lock and
+# a red `--locked` check until someone re-runs the job. Serialising instead of
+# cancelling: a half-finished release PR is worse than a queued one.
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release-please:
     runs-on: ubuntu-latest
@@ -83,5 +93,26 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add src-tauri/Cargo.lock
           git commit -m "chore: sync Cargo.lock with version ${VERSION}"
-          git push origin "HEAD:${VERSION_REF}"
+          # release-please force-pushes this branch, so the tip can have moved
+          # since checkout even with the concurrency group (it only serialises
+          # this workflow, not a manual force-push or a re-run). Replay our one
+          # commit onto the current tip rather than pushing a stale parent, and
+          # never force: whatever release-please wrote there is authoritative.
+          for attempt in 1 2 3; do
+            if git push origin "HEAD:${VERSION_REF}"; then
+              echo "Pushed the lockfile bump on attempt ${attempt}."
+              exit 0
+            fi
+            echo "Push rejected on attempt ${attempt} — rebasing onto the branch tip."
+            git fetch origin "${VERSION_REF}"
+            git rebase "origin/${VERSION_REF}"
+            # The rebase may drop our commit if release-please has meanwhile
+            # written the same lockfile version itself.
+            if git diff --quiet "origin/${VERSION_REF}" -- src-tauri/Cargo.lock; then
+              echo "Cargo.lock already matches the branch tip — nothing left to push."
+              exit 0
+            fi
+          done
+          echo "::error::Could not push the Cargo.lock bump after 3 attempts."
+          exit 1
 
