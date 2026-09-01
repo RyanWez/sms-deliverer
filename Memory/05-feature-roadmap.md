@@ -141,10 +141,24 @@ window (default ၂ နာရီ) ထက် ပိုအသက်ရှည်တ
 
 ## C. Deferred — သဘောတူထားတဲ့ **အစဉ်လိုက်** (next session ဒီ order နဲ့ ဆက်ပါ)
 
-> **v1.4.0 အခြေအနေ:** C.1 (theme) နဲ့ C.2 (port auto-refresh) ၂ ခုလုံး **ပြီးသွားပြီ** —
-> ဆုံးဖြတ်ရသေးတဲ့ setting က C.3 တစ်ခုပဲ။ ပြီးသွားတဲ့ ၂ ခုကို history အဖြစ် ချန်ထားတယ်
-> (ဖျက်လိုက်ရင် blocker တွေက ဘာလို့ blocker ဖြစ်ခဲ့တာလဲ ဆိုတာ ပျောက်သွားမယ်)။
-> **C.4–C.7 က v1.4.0 ကုဒ်ပေါ် စစ်ပြီး ရွှေ့ထားတဲ့ limitation အသစ် ၄ ခု (L1–L4)။**
+> **v1.5.0 အခြေအနေ:** C.1 (theme) နဲ့ C.2 (port auto-refresh) က **v1.4.0 မှာ ပြီးသွားပြီ**၊
+> C.8 (backend outcome တွေ operator ဆီ ရောက်အောင်) နဲ့ C.9 (toast cap + coalesce) က
+> **v1.5.0 မှာ ပြီးသွားပြီ** — ဆုံးဖြတ်ရသေးတဲ့ setting က **C.3 တစ်ခုပဲ** ကျန်တယ်။
+> ပြီးသွားတဲ့ဟာတွေကို history အဖြစ် ချန်ထားတယ် (ဖျက်လိုက်ရင် blocker တွေက ဘာလို့ blocker
+> ဖြစ်ခဲ့တာလဲ ဆိုတာ ပျောက်သွားမယ်)။
+> **C.4–C.7 (L1–L4) က v1.5.0 မှာလည် ပွင့်နေတဲ့ limitation အတိုင်း** — v1.5.0 ကုဒ်ပေါ်
+> ပြန်စစ်ပြီး၊ ဒါပေမဲ့ သတိထားရမှာ ၂ ချက်:
+> (၁) အဲ့ entry တွေရဲ့ file:line သက်သေက **v1.4.0 ကုဒ်ပေါ် မှတ်ခဲ့တာ** — #17–#20 က
+> `src-tauri/src/commands/mod.rs` ကို ရှည်စေတာမို့ လိုင်းနံပါတ်တွေ ရွှေ့သွားပြီ
+> (`merge_ports` → `:187`၊ `live_status` → `:532`၊ `start_live` ရဲ့ per-port spawn → `:1007`၊
+> `Closed` arm → `:1184`) — item ကို **နာမည်နဲ့** ရှာပါ၊ နံပါတ်နဲ့ မရှာနဲ့။
+> (၂) အကြောင်းအရာ တကယ် ပြောင်းသွားတာ **C.4 တစ်ခုပဲ**: #19 ကနေ `live_error` က refresh အတွင်း
+> tty name တူမှ carry ဖြစ်သွားပြီ (`mod.rs:236`) ဆိုတော့ "error text ပျောက်တယ်" အပိုင်း ပိတ်ပြီ။
+> ဒါပေမဲ့ `live_ready` က name ပြောင်းရင် carry မလုပ်တာ (`:221`) နဲ့ `Reconnecting` arm က
+> row ကို **name နဲ့ ရှာနေတာ** (`:1067`၊ lookup `:1072`) ကျန်နေတာမို့ **`CONNECTING…` ထာဝရ
+> ကျန်တဲ့ symptom က မပြေဘူး**။
+> **v1.5.0 ရဲ့ ကျန် PR (#12/#13/#15/#18/#19/#20) က backlog feature မဟုတ်ဘူး၊ bug fix တွေ** —
+> ဒါကြောင့် သူတို့ အသေးစိတ်က ဒီဖိုင်မှာ မဟုတ်ဘဲ **doc 03** မှာ ရှိတယ် (case §14–§17၊ trap T4/T5)။
 
 ### C.1 ✅ **DONE (v1.4.0):** Theme Dark/Light တကယ် အလုပ်လုပ်အောင် လုပ်ပြီး
 
@@ -293,7 +307,7 @@ store ကို settings ကနေ **seed** လုပ်ရမယ်၊ ပြ�
   **probe က ကျရှုံးပြီးသား branch** အတွက်ပဲ (Offline latch ဝင်ပြီးသား port)၊ Ready
   ဖြစ်သွားပြီးသား port အတွက် မဟုတ်ဘူး
 
-### C.8 ✅ **DONE:** Backend outcome တွေ operator ဆီ ရောက်အောင် — event contract ရဲ့ ကျိုးနေတဲ့ အပိုင်း
+### C.8 ✅ **DONE (v1.5.0):** Backend outcome တွေ operator ဆီ ရောက်အောင် — event contract ရဲ့ ကျိုးနေတဲ့ အပိုင်း
 
 **ပြဿနာ:** Rust က event ၁၈ မျိုး emit တယ်၊ frontend က ၁၆ ခုပဲ နားစွင့်တယ် —
 `export:saved` နဲ့ `sim_cleanup:done` က listener **လုံးဝ မရှိ**။ ပြီးတော့ နားစွင့်ပေမယ့်
@@ -331,7 +345,7 @@ store ကို settings ကနေ **seed** လုပ်ရမယ်၊ ပြ�
 (`live.svelte.ts:13`) ပြီးတော့ coalesce မလုပ်ခဲ့ဘူး။ `live:reconnecting` toast ထည့်လိုက်တာက
 ဒီ ချောင်းကို **ပိုနီးစပ်စေခဲ့တယ်**။
 
-### C.9 ✅ **DONE:** Toast column ကို ဘောင်ခတ်တာ + တူတဲ့ notice တွေ ပေါင်းတာ
+### C.9 ✅ **DONE (v1.5.0):** Toast column ကို ဘောင်ခတ်တာ + တူတဲ့ notice တွေ ပေါင်းတာ
 
 **ပြဿနာ:** `addToast` က `toasts = [...toasts, t]` — cap မရှိ၊ dedupe မရှိ။ Toast တစ်ခုက
 ၄ စက္ကန့် ရှင်ပြီး `.toast-container` က `max-height` မရှိတဲ့ fixed bottom-right column
@@ -360,6 +374,48 @@ store ကို settings ကနေ **seed** လုပ်ရမယ်၊ ပြ�
 **Preview မှာ အတည်ပြုပြီး:** Refresh ၁၀ ခါ ဆက်တိုက် → card **၁** ခု `Refreshed (10)`,
 container height 127px မှာ ရပ်တယ် (အရင်က card ၁၀ ခု စီမယ်)။ Cap ကိုယ်တိုင်ကို preview မှာ
 မရောက်နိုင်ဘူး — synthetic app က distinct title ၂ ခုပဲ ထုတ်တာမို့၊ ဒါကို unit test က ဖမ်းတယ်
+
+### C.10 Supervisor ၄ ခုကို `run_port_pool` အဖြစ် ပေါင်းတာ — **တမင် ရွှေ့ထားတာ** (bug မဟုတ်ဘူး)
+
+v1.5.0 မှာ လုပ်မလုပ် စဉ်းစားပြီး **သဘောတူ ချန်ထားလိုက်တဲ့ code refactor တစ်ခုတည်း**။ အရင်က
+doc 03 §T5 Rule ၃ မှာ passing note အဖြစ်ပဲ ရှိခဲ့တာကို ဒီမှာ entry အဖြစ် တင်လိုက်တယ်။
+
+**ပုံစံ ထပ်တူ ဖြစ်နေတာ (= duplication debt):** port-heavy command ၄ ခုက structure တူတူ —
+`Arc<Mutex<Vec<String>>>` work queue + `take_port` + worker cap + per-port `catch_unwind` +
+supervisor က join ပြီး busy flag ရှင်း၊ status line တည်၊ `*:done` emit:
+
+| Command | supervisor | worker | per-port `catch_unwind` | cap |
+|---|---|---|---|---|
+| `detect_ports` | `src-tauri/src/commands/mod.rs:376` | `:391` | `:393` | `MAX_CONCURRENT_PROBES` = 32 (`:134`) |
+| `start_scan` | `:611` | `:620` | `:627` | `MAX_CONCURRENT_PORTS` = 16 (`:128`) |
+| `get_sim_numbers` (USSD) | `:750` | `:764` | `:766` | `MAX_CONCURRENT_PORTS` |
+| `cleanup_sim_storage` | `:1568` | `:1579` | `:1581` | `MAX_CONCURRENT_PORTS` |
+
+Live supervisor (`:997`၊ per-port spawn `:1007`၊ `run_live` ရဲ့ `catch_unwind` `:1214`) က
+cap **မရှိဘူး** (§C.5) ဆိုတော့ ပေါင်းရင် သူပါ ဒီ pool ထဲ ဝင်လာမယ် — အဲ့ဒါက C.5 ကိုပါ
+တစ်ပြိုင်နက် ဖြေမယ့် ဆွဲအား။
+
+**Blocker — panic-accounting policy ၄ မျိုး တကယ် မတူတာ** (boilerplate မဟုတ်ဘူး၊ behaviour):
+
+| Command | port တစ်ခု panic ဖြစ်ရင် ဘာ လုပ်လဲ |
+|---|---|
+| scan | `failed_notes.push("{port} (worker panicked)")` **+** `scan_done += 1` (`:628`–`:633`) — status line မှာ ပေါ်တယ် |
+| ussd | `done` ကိုပဲ တိုးတယ် (`:769`–`:772`) — ဆိုတော့ panic ဖြစ်တဲ့ port က "number မတွေ့ဘူး" လို့ ဖတ်တယ် |
+| cleanup | failure counter တိုးတယ် (`:1599`–`:1602`) |
+| detect | #19 ကတည်းက `ProbeVerdict::of(&port, probed)` (`:396`၊ enum `:306`၊ `of` `:319`) — panic က **`Inconclusive`**၊ ဒါကြောင့် `alive`/`checked`/`iccid`/`sim_dir` **လေးခုလုံး မထိရ** (`:429`၊ `:456`) |
+
+**ဆိုတော့ naive merge က behaviour-normalising refactor ဖြစ်တယ်:** policy တစ်ခု ရွေးလိုက်ရင်
+ကျန် ၃ ခုရဲ့ semantic ပြောင်းတယ်။ အဆိုးဆုံးက detect — crashed probe ကို "dead" အဖြစ်
+ချုံ့ပစ်လိုက်ရင် **doc 03 case §16 ကို ပြန်မွေးတာ** ဖြစ်မယ် (momentary EBUSY တစ်ခုနဲ့ bank ရဲ့
+slot→ICCID hint ပျောက်တာ)။ တကယ် လုပ်ရင် per-port `on_panic` callback နဲ့ policy ကို caller
+ဆီ ချန်ရမယ် — pool ထဲ hardcode မလုပ်ရ။
+
+**ဘာလို့ အစဉ်လိုက် အနောက်ဆုံးလဲ:** risk အမြင့်ဆုံး (diff က "ကုဒ် သိမ်းတာ" ပုံပေါက်ပြီး
+semantic ပြောင်းနိုင်တာ)၊ ပြီးတော့ **operator မြင်ရမယ့် value က သုည**။ ဒါကြောင့် C.3
+(ဆုံးဖြတ်ချက် လိုတာ) နဲ့ C.4–C.7 (operator တကယ် မြင်ရတဲ့ အပေါက်) အားလုံး ဒီအရင်။
+
+**bug မဟုတ်ဘူး:** supervisor ၄ ခုက အခု အလုပ်လုပ်တယ်၊ exit path ကို `BusyGuard` (§T5) က
+ပိတ်ပြီးသား၊ per-port `catch_unwind` လည်း ၄ ခုလုံးမှာ ရှိပြီးသား။ ကျန်တာက duplication ပဲ။
 
 ## D. Dropped — feature အဖြစ်ပါ **ပြန်မမွေးရ**
 
