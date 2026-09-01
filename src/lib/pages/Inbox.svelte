@@ -5,6 +5,7 @@
   import MessageDetail from '$lib/components/MessageDetail.svelte';
   import Pagination from '$lib/components/Pagination.svelte';
   import { messagesStore } from '$lib/stores/messages.svelte';
+  import { liveStore } from '$lib/stores/live.svelte';
 
   let lastActiveTrigger: HTMLElement | null = $state(null);
 
@@ -36,6 +37,22 @@
       <FilterBar />
       <MessageTable />
       <Pagination />
+      <!--
+        Every long-running backend outcome lands in `liveStore.statusText`, and
+        until now the only place it was rendered was the Ports page footer — so
+        an operator who deleted from the Inbox never saw the delete verdict.
+        Same markup and same `page-footer` class as Ports.svelte.
+      -->
+      <footer class="page-footer font-mono">
+        <span class="tabular-nums whitespace-nowrap shrink-0">
+          {messagesStore.items.length} message{messagesStore.items.length === 1 ? '' : 's'}
+        </span>
+        {#if liveStore.statusText}
+          <span class="text-primary truncate min-w-0 flex-1 text-right" title={liveStore.statusText}>
+            {liveStore.statusText}
+          </span>
+        {/if}
+      </footer>
     </section>
     <MessageDetail oncloseFocusReturn={() => lastActiveTrigger?.focus()} />
   </div>

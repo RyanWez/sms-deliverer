@@ -1275,7 +1275,22 @@ pub fn delete_selected(
             "messages:removed",
             &serde_json::json!({ "ids": removed_ids }),
         );
-        let _ = app2.emit("delete:done", &serde_json::json!({}));
+        // The verdict as numbers, not as the display string. A partial delete is
+        // the outcome the operator most needs to hear about, and the status text
+        // it used to be carried in is rendered on the Ports page only — so
+        // deleting from the Inbox looked identical whether 10 of 10 slots were
+        // freed or 2. `kept` counts rows still on the card, `failed_ports` the
+        // ports whose modem refused outright.
+        let _ = app2.emit(
+            "delete:done",
+            &serde_json::json!({
+                "requested": wanted,
+                "freed": gone,
+                "removed": removed_ids.len(),
+                "kept": kept,
+                "failed_ports": fail,
+            }),
+        );
         let _ = app2.emit("status:update", &serde_json::json!({ "text": text }));
     });
     Ok("Delete started".into())
