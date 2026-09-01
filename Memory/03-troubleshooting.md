@@ -297,9 +297,10 @@
 ## ⚠️ Latent Traps (မဖြစ်သေးဘူး၊ ဒါပေမဲ့ ချောင်းနေတာ)
 
 Case မဟုတ်သေးပါ — 2026-08-30 settings cleanup (`fbd7b8b`) လုပ်ရင်း တွေ့ခဲ့တဲ့ ချောင်း ၃ ခု
-(T1–T2 settings layer၊ T3 decoder)၊ ပြီးတော့ 2026-08-31 audit ကနေ T4 (retention layer)။
+(T1–T2 settings layer၊ T3 decoder)၊ ပြီးတော့ 2026-08-31 audit ကနေ T4 (retention layer) နဲ့
+T5 (busy-flag layer)။
 Symptom မရှိသေးလို့ fix မလုပ်ခဲ့ဘူး၊ ဒါပေမဲ့ နောက်ဆို ရှင်းပြရ ခက်တဲ့ bug ဖြစ်လာနိုင်တယ်။
-**T3 က v1.4.0 မှာ၊ T4 က ဒီအောက်မှာ ကုဒ် ပြင်ပြီးသွားပြီ** — T1/T2 က ပြင်ရသေး။
+**T3 က v1.4.0 မှာ၊ T4/T5 က ဒီအောက်မှာ ကုဒ် ပြင်ပြီးသွားပြီ** — T1/T2 က ပြင်ရသေး။
 
 ### T1. `deepMerge` က **stored** key တွေကို iterate တာ — ဖျက်ထားတဲ့ setting က profile ထဲ မပျောက်
 
@@ -401,6 +402,58 @@ feature ပဲ သေတယ်
 - **Rule ၃:** Worker thread ထဲက panic ကို `catch_unwind` နဲ့ ဖမ်းထားတာက **root cause ကို
   ဖုံးတယ်**။ `Worker crashed` ဆိုတဲ့ message က operator အတွက် ဘာမှ မဖြေရှင်းပေးဘူး —
   panic ဖြစ်နိုင်တဲ့ input ကို worker ထဲ မရောက်ခင် ဖယ်ပါ
+
+### T5. Busy flag က panic path မှာ မရှင်းတာ — restart မလုပ်မချင်း "Busy" (**ပြင်ပြီး**)
+
+**Symptom (field မှာ မဖြစ်သေးဘူး):** operation တစ်ခု panic ဖြစ်ရင် `port_busy()` က ထာဝရ
+`true` ကျန်တယ် → Scan / Live / Get SIM / Delete / Cleanup / Detect **အားလုံး** `Busy` ပြန်တယ်၊
+app restart မလုပ်မချင်း ပြန်မကောင်းဘူး။ Log မှာ panic တစ်ခုပဲ ပါမယ်၊ ဘာလို့ ပိတ်နေတာလဲ ဆိုတာ
+UI မှာ ဘာမှ မပြဘူး
+
+- **Root Cause:** busy flag ၆ ခုလုံးကို **ordinary statement** နဲ့ ရှင်းခဲ့တယ် (`:369, :506,
+  :642, :1051, :1222, :1395`) — unwind မှာ မဟုတ်ဘူး။ ဆိုတော့ per-port `catch_unwind`
+  အပြင်ဘက်မှာ panic ဖြစ်ရင် flag က ကျန်တယ်။ ကိစ္စ ၂ ခု အထင်ရှားဆုံး:
+  1. **`delete_selected`** — `catch_unwind` က modem loop ကိုပဲ ဝိုင်းထားတယ်။ အဲ့နောက်က
+     bookkeeping (`confirmed_removals`, `kept` တွက်တာ) မှာ panic ဖြစ်ရင် `delete_busy` ကျန်
+  2. **`start_live`** — supervisor thread မှာ `catch_unwind` **လုံးဝ မရှိခဲ့ဘူး**၊ ပြီးတော့
+     သူက `live_on` **နဲ့** `live_stop` နှစ်ခုလုံး ပိုင်တယ်။ Join နဲ့ clear အကြား panic ဖြစ်ရင်
+     နှစ်ခုလုံး ကျန်တယ် — `live_stop.is_some()` က `port_busy()` ရဲ့ အစိတ်အပိုင်း ဖြစ်တာမို့
+     gate က နှစ်ဆ ပိတ်တယ်
+  3. Live per-port worker မှာလည် `catch_unwind` မရှိခဲ့ဘူး — panic ဖြစ်ရင် `join()` က
+     တိတ်တဆိတ် စားလိုက်တယ်၊ port ကို failed လို့ မမှတ်ဘူး၊ **LIVE badge က အစိမ်း ကျန်ပြီး
+     message တစ်ခုမှ မဖမ်းဘူး**
+- **Fix — `BusyGuard` (Drop guard):** `{ state: SharedState, clear: fn(&mut AppStateInner) }`။
+  `lock_state` က poison-recovering ဖြစ်တာမို့ panic ပြီးလည် lock ရတယ် (ဒါက guard ကို
+  အလုပ်လုပ်စေတဲ့ အချက်)။ **Repo ရဲ့ ပထမဆုံး `impl Drop`** ဖြစ်တယ်
+- **အရေးကြီး — happy path ကို မထိဘူး:** ရှိပြီးသား inline clear တွေ အတိုင်း ထားတယ်။
+  Command တစ်ချို့က အဲ့ တူတဲ့ lock ထဲမှာ ထပ်အလုပ် လုပ်တယ် (`sim_dir.save()`, status line
+  တည်တာ) — အဲ့ ordering ကို ပြောင်းတာ ဒီ guard ရဲ့ အလုပ် မဟုတ်ဘူး။ ဆိုတော့ `clear` က
+  **idempotent** ဖြစ်ရမယ်၊ guard က **panic path မှာပဲ** တကယ် အလုပ်လုပ်တယ်
+- **Guard ကို command ထဲမှာ တည်ပြီး closure ထဲ `move` လုပ်ပါ** — `thread::spawn` ကိုယ်တိုင်
+  panic ဖြစ်ရင်တောင် closure (နဲ့ guard) က အဲ့ unwind အတွင်း drop ဖြစ်ပြီး flag ရှင်းမယ်။
+  Closure **အထဲမှာ** တည်ရင် ဒီကိစ္စ လွတ်သွားမယ်
+- **`AppStateInner` shape မပြောင်းဘူး** (guard က `Arc` ကိုင်တယ်) — ဒါကြောင့် struct literal
+  ၃ ခု (`new_shared_state`, `idle_state`, `live_state`) နဲ့
+  `port_busy_covers_every_operation_that_owns_a_port` ရဲ့ `[fn(&mut AppStateInner); 6]`
+  array က မပြင်ဘဲ compile ဖြစ်တယ်။ **ရည်ရွယ်ချက်ရှိရှိ ဒီဇိုင်း**
+- **Live worker panic ကို မြင်စေတယ်:** `live::WORKER_PANIC` ("Live worker crashed — see the
+  log") ကို `live_error` အဖြစ် တင်ပြီး `live_failed` ထဲ ထည့်၊ `ports:updated` emit တယ်။
+  **`modem::NOT_RESPONDING` နဲ့ ရောမထားပါ** — အဲ့ဒါ တစ်ခုတည်းသာ `alive = Some(false)`
+  သတ်မှတ်ခွင့် ရှိတယ်၊ worker crash က slot ထဲ SIM ရှိလား မရှိလား ဘာမှ မပြောဘူး
+- **Test ၄ ခု:** `busy_guard_releases_the_gate_on_an_unwind`,
+  `..._on_a_normal_return`, `busy_guard_is_a_no_op_once_the_flag_is_already_clear`
+  (guard က တခြား operation ရဲ့ flag ကို မထိရ), `busy_guard_releases_both_live_flags`
+- **Rule ၁:** **"exit path တိုင်းမှာ ရှင်းတယ်" ဆိုတာ နေရာ ၅-၆ ခုမှာ မှတ်ထားရတာ မဟုတ်ဘဲ
+  structural ဖြစ်ရမယ်။** Flag ကို ပိုင်တဲ့ type တစ်ခု ထားလိုက်ရင် "မေ့သွားတာ" က compile
+  ဖြစ်နိုင်တဲ့ အခြေအနေ မဟုတ်တော့ဘူး
+- **Rule ၂:** `catch_unwind` ရဲ့ **အတိုင်းအတာ** ကို စစ်ပါ။ Loop ကိုပဲ ဝိုင်းထားတာက loop
+  အပြင်က bookkeeping ကို မကာဘူး — `delete_selected` က အဲ့ဒီ ကိစ္စ
+- **Rule ၃:** **Scope မဟုတ်တာကို scope မဟုတ်ဘူးလို့ ရေးထားပါ။** Supervisor ၄ ခုကို
+  `run_port_pool` အဖြစ် ပေါင်းတာ ဒီ change ထဲ မပါဘူး: panic policy **၄ မျိုး မတူ**တယ်
+  (scan: `failed_notes` push + `done` တိုး · ussd: `done` ပဲ တိုး, ဆိုတော့ panic ဖြစ်တဲ့ port က
+  "မတွေ့ဘူး" လို့ ဖတ်တယ် · cleanup: failure counter တိုး · detect: **dead လို့ သတ်မှတ်ပြီး
+  `sim_dir` slot ရှင်းပစ်တယ်**)။ ပေါင်းရင် policy တစ်ခု ရွေးရမယ် ဒါမှမဟုတ် per-port
+  on-panic callback ထည့်ရမယ် — ဒါက behaviour-normalising refactor ဖြစ်တာမို့ သီးသန့် change
 
 ## Bonus UX Notes
 

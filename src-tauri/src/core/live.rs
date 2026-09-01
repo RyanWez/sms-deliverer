@@ -46,6 +46,15 @@ pub enum LiveEvent {
 const RECONNECT_MIN: Duration = Duration::from_secs(2);
 const RECONNECT_MAX: Duration = Duration::from_secs(30);
 
+/// `live_error` text for a worker that unwound instead of exiting through
+/// `LiveEvent::Closed`. It reads like the transport failures beside it on
+/// purpose: what the operator needs to know is that this port has stopped
+/// monitoring, and the reason is in the log. It must never be confused with
+/// `modem::NOT_RESPONDING`, which is the only reason allowed to set
+/// `alive = Some(false)` — a crash here says nothing about whether a SIM is in
+/// the slot.
+pub const WORKER_PANIC: &str = "Live worker crashed — see the log";
+
 /// Re-probe cadence for a port where nothing answers. An empty slot is a stable
 /// condition rather than a transient glitch, so this is deliberately slower than
 /// the reconnect backoff — but a stick inserted mid-session is still picked up
