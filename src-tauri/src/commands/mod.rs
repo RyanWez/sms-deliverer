@@ -9,6 +9,8 @@ use std::thread;
 use std::time::Duration;
 use tauri::Emitter;
 
+pub mod telegram;
+
 pub struct AppStateInner {
     pub sim_dir: SimDirectory,
     pub next_id: u64,

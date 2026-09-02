@@ -177,6 +177,70 @@
       ],
     },
     {
+      id: "forwarding",
+      label: "Forwarding",
+      icon: "rocket" as IconName,
+      description: "Push OTPs to a private Telegram group",
+      fields: [
+        {
+          key: "botToken",
+          label: "Bot Token",
+          description:
+            "The token @BotFather gave you, in the form 123456789:AA… Stored in this profile as plain text like every other setting — it is not encrypted. If it ever leaks, run /revoke in @BotFather.",
+          type: "secret" as const,
+          bind: "forwarding",
+          placeholder: "123456789:AA…",
+        },
+        {
+          key: "verifyToken",
+          label: "Verify Token",
+          description: "Ask Telegram who this token belongs to, without sending anything",
+          type: "button" as const,
+          action: "verifyTelegramToken",
+          buttonText: "Verify",
+          variant: "secondary",
+        },
+        {
+          key: "chatId",
+          label: "Destination Group ID",
+          description:
+            "Where every forwarded message goes. Add the bot to your private group, then press Detect — membership in that group is the whole permission model.",
+          type: "text" as const,
+          bind: "forwarding",
+          placeholder: "-1001234567890",
+        },
+        {
+          key: "detectGroup",
+          label: "Detect Group ID",
+          description:
+            "Reads the group the bot was most recently added to. Telegram keeps that notice for 24 hours only; after that, send /start@your_bot in the group first.",
+          type: "button" as const,
+          action: "detectTelegramGroup",
+          buttonText: "Detect",
+          variant: "primary",
+        },
+        {
+          key: "proxyUrl",
+          label: "SOCKS5 Proxy",
+          description:
+            "Only for networks that block api.telegram.org. Example: socks5h://127.0.0.1:9050 — leave empty to connect directly. An MTProto proxy link will not work here; those only serve Telegram's own apps.",
+          type: "text" as const,
+          bind: "forwarding",
+          placeholder: "socks5h://127.0.0.1:9050",
+        },
+        {
+          key: "sendTest",
+          label: "Send Test Message",
+          description:
+            "Proves the token, the group ID, the bot's membership and the network path in one shot",
+          type: "button" as const,
+          action: "sendTelegramTest",
+          buttonText: "Send Test",
+          variant: "secondary",
+        },
+      ],
+    },
+    {
       id: "advanced",
       label: "Advanced",
       icon: "wrench" as IconName,
@@ -210,6 +274,22 @@
     settingsGroups.some((g) => g.id === requested) ? requested! : "general",
   );
   let appVersion = $state<string | null>(null);
+  /**
+   * Whether the bot token is shown in the clear. Off by default so the field is
+   * not readable over a shoulder, but toggleable because the operator has to be
+   * able to confirm a paste — and hiding it forever would only hide it from the
+   * person who is allowed to see it.
+   */
+  let revealSecrets = $state(false);
+  /**
+   * Which button-field action is mid-flight, or `null`.
+   *
+   * The Telegram actions are network calls with a 15-second timeout, so without
+   * this the operator has no way to tell a pressed button from an unpressed one
+   * and presses again — which fires a second request, and for Detect can consume
+   * the update that the first call was going to read.
+   */
+  let pendingAction = $state<string | null>(null);
 
   onMount(async () => {
     try {
@@ -224,6 +304,16 @@
   );
 
   async function handleAction(action: string) {
+    if (pendingAction) return;
+    pendingAction = action;
+    try {
+      await runAction(action);
+    } finally {
+      pendingAction = null;
+    }
+  }
+
+  async function runAction(action: string) {
     if (action === "reset") {
       if (
         await nativeConfirm("Reset all settings to defaults? This cannot be undone.", {
@@ -251,6 +341,12 @@
       await api.openLogFolder();
     } else if (action === "clearLogs") {
       await api.clearLogs();
+    } else if (action === "verifyTelegramToken") {
+      await api.verifyTelegramToken();
+    } else if (action === "detectTelegramGroup") {
+      await api.detectTelegramGroup();
+    } else if (action === "sendTelegramTest") {
+      await api.sendTelegramTest();
     }
   }
 
@@ -415,6 +511,7 @@
                     class={f.variant === "danger"
                       ? (f.action === "reset" ? "btn-danger-quiet shrink-0" : "btn-danger shrink-0")
                       : "btn-primary shrink-0"}
+                    disabled={pendingAction !== null}
                     onclick={() => handleAction(f.action)}
                   >
                     {f.action === "reset" ? "Reset" : f.action === "clearMessages" ? "Clear" : "Action"}
@@ -441,11 +538,17 @@
                         : "btn-primary"}
                     <button
                       class="{btnClass} shrink-0 inline-flex items-center justify-center gap-2 disabled:opacity-60 disabled:pointer-events-none text-xs sm:text-sm px-3.5 py-1.5 min-w-[76px]"
+                      disabled={pendingAction !== null}
                       onclick={() => handleAction(field.action)}
                     >
-                      {field.buttonText ?? 'Execute'}
+                      {#if pendingAction === field.action}
+                        <Icon name="loader" size={14} class="animate-spin" />
+                        <span>Working…</span>
+                      {:else}
+                        {field.buttonText ?? 'Execute'}
+                      {/if}
                     </button>
-                  {:else if field.type === "checkbox" || field.type === "select" || field.type === "number"}
+                  {:else if field.type === "checkbox" || field.type === "select" || field.type === "number" || field.type === "text" || field.type === "secret"}
                     <label
                       class="flex-1 min-w-[200px] cursor-pointer"
                       for={fieldId(selectedGroup, field)}
@@ -458,7 +561,7 @@
                         >{field.description}</span
                       >
                     </label>
-                    <div class="shrink-0 flex items-center">
+                    <div class="shrink-0 flex items-center gap-2">
                       {#if field.type === "checkbox"}
                         <input
                           id={fieldId(selectedGroup, field)}
@@ -532,6 +635,44 @@
                             }
                           }}
                         />
+                      {:else if field.type === "text" || field.type === "secret"}
+                        <input
+                          id={fieldId(selectedGroup, field)}
+                          type={field.type === "secret" && !revealSecrets ? "password" : "text"}
+                          class="input w-[220px] sm:w-[260px] max-w-full text-xs sm:text-sm font-mono"
+                          autocomplete="off"
+                          spellcheck="false"
+                          placeholder={(field as any).placeholder ?? ""}
+                          value={getNestedValue(
+                            settingsStore,
+                            `${field.bind}.${field.key}`,
+                          )}
+                          onchange={(e) => {
+                            const target = e.target as HTMLInputElement;
+                            // Trimmed on the way in: a pasted token or group id
+                            // routinely carries a trailing space, and Telegram
+                            // answers a bare 401 for it. Rust trims again — the
+                            // store is rehydrated from localStorage and this is
+                            // convenience, not validation.
+                            const value = target.value.trim();
+                            setNestedValue(
+                              settingsStore,
+                              `${field.bind}.${field.key}`,
+                              value,
+                            );
+                            const setter = setterFor(field.bind);
+                            if (setter) setter({ [field.key]: value });
+                          }}
+                        />
+                        {#if field.type === "secret"}
+                          <button
+                            type="button"
+                            class="text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2 shrink-0"
+                            onclick={() => (revealSecrets = !revealSecrets)}
+                          >
+                            {revealSecrets ? "Hide" : "Show"}
+                          </button>
+                        {/if}
                       {/if}
                     </div>
                   {/if}
@@ -553,6 +694,9 @@
             Theme and column visibility apply immediately.
           {:else if selectedGroup.id === "updates"}
             Updates are fetched from the official release endpoint only.
+          {:else if selectedGroup.id === "forwarding"}
+            Forwarding needs Live mode running and the app window open. The bot posts
+            only to the group above and never reads private chats.
           {:else}
             Changes are saved automatically.
           {/if}

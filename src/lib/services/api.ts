@@ -13,7 +13,28 @@ import {
   dropBufferedIds,
   selectRowsToAdd,
 } from '$lib/utils/message-buffer';
+import {
+  previewDetectGroup,
+  previewSendTest,
+  previewVerifyToken,
+} from '$lib/utils/telegram-preview';
 import type { SmsItem, ToastData, PortInfo, LogEntry } from '$lib/types';
+
+/** What `detect_telegram_group` answers with. Mirrors `DetectedGroupDto` in Rust. */
+interface TelegramGroup {
+  chatId: string;
+  title: string;
+  /** `group` or `supergroup`. A basic group's id changes when it is upgraded. */
+  kind: string;
+}
+
+/** What `send_telegram_test` answers with. Mirrors `TelegramTestResult` in Rust. */
+interface TelegramTestResult {
+  bot: string;
+  /** Set when the group had been upgraded and Telegram supplied a new chat id. */
+  migratedChatId: string | null;
+}
+
 
 let nextToastId = 1;
 let initialized = false;
@@ -698,6 +719,109 @@ export const api = {
       await invoke('cleanup_sim_storage', { retentionHours });
     } catch (e) {
       console.debug('[api] SIM cleanup skipped:', e);
+    }
+  },
+
+  /**
+   * Confirm the bot token by asking Telegram who the bot is.
+   *
+   * Kept separate from the group check because a wrong token and a missing group
+   * are the two ways setup fails and they have nothing to do with each other:
+   * one is fixed in @BotFather, the other in the group.
+   */
+  async verifyTelegramToken() {
+    const { botToken, proxyUrl } = settingsStore.forwarding;
+    try {
+      const bot = isTauri()
+        ? await (async () => {
+            const { invoke } = await import('@tauri-apps/api/core');
+            return invoke<string>('verify_telegram_token', {
+              token: botToken,
+              proxyUrl: proxyUrl || null,
+            });
+          })()
+        : await previewVerifyToken(botToken);
+      toast('Success', 'Bot Token Verified', `Telegram knows this token as ${bot}.`);
+      return true;
+    } catch (e) {
+      toast('Danger', 'Bot Token Rejected', String(e));
+      return false;
+    }
+  },
+
+  /**
+   * Ask Telegram which group the bot was most recently added to, and save it.
+   *
+   * A plain `group` is reported with a warning rather than silently accepted: its
+   * chat id changes the moment the group is upgraded to a supergroup — which
+   * happens on its own when someone enables auto-delete or admin-only posting —
+   * and forwarding would then stop with no visible cause.
+   */
+  async detectTelegramGroup() {
+    const { botToken, proxyUrl } = settingsStore.forwarding;
+    try {
+      const group = isTauri()
+        ? await (async () => {
+            const { invoke } = await import('@tauri-apps/api/core');
+            return invoke<TelegramGroup>('detect_telegram_group', {
+              token: botToken,
+              proxyUrl: proxyUrl || null,
+            });
+          })()
+        : await previewDetectGroup(botToken);
+      settingsStore.setForwarding({ chatId: group.chatId });
+      if (group.kind === 'supergroup') {
+        toast('Success', 'Group Found', `Forwarding to "${group.title}" (${group.chatId}).`);
+      } else {
+        toast(
+          'Warning',
+          'Group Found — Upgrade It',
+          `"${group.title}" is a basic group. Its ID changes if it is ever upgraded to a supergroup, which stops forwarding silently. Turn on the group's auto-delete timer now to upgrade it, then press Detect again.`,
+        );
+      }
+      return true;
+    } catch (e) {
+      toast('Danger', 'No Group Detected', String(e));
+      return false;
+    }
+  },
+
+  /**
+   * Post a test message, which proves token, group id, bot membership and the
+   * network path in one go.
+   *
+   * If the group had already been upgraded and its id changed underneath the
+   * saved value, Telegram hands back the replacement and the backend retries with
+   * it; all that is left here is to store the new id. The operator is told it
+   * happened rather than asked to fix it.
+   */
+  async sendTelegramTest() {
+    const { botToken, chatId, proxyUrl } = settingsStore.forwarding;
+    try {
+      const result = isTauri()
+        ? await (async () => {
+            const { invoke } = await import('@tauri-apps/api/core');
+            return invoke<TelegramTestResult>('send_telegram_test', {
+              token: botToken,
+              chatId,
+              proxyUrl: proxyUrl || null,
+            });
+          })()
+        : await previewSendTest(botToken, chatId);
+      if (result.migratedChatId) {
+        settingsStore.setForwarding({ chatId: result.migratedChatId });
+        toast(
+          'Success',
+          'Test Message Delivered',
+          `Sent as ${result.bot}. The group had been upgraded to a supergroup, so its ID was updated to ${result.migratedChatId}.`,
+        );
+      } else {
+        toast('Success', 'Test Message Delivered', `Sent to the group as ${result.bot}.`);
+      }
+      return true;
+    } catch (e) {
+      toast('Danger', 'Test Message Failed', String(e));
+      return false;
     }
   },
 };

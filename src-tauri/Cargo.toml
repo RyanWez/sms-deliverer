@@ -23,3 +23,28 @@ hex = "0.4"
 directories = "5"
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
+# Already compiled into this binary via tauri-plugin-updater; declared directly
+# so the Telegram forwarder can use it. The feature set deliberately mirrors the
+# updater's (`default-features = false` + `rustls-no-provider`, which reuses the
+# ring-backed rustls the updater already pulls) and adds only two things:
+# `blocking`, because this crate's workers are OS threads doing blocking I/O
+# rather than async tasks, and `socks`, which is what makes a `socks5h://` proxy
+# work when an ISP blocks api.telegram.org.
+#
+# Do not switch this to default features. `default-tls` selects the aws-lc-rs
+# crypto provider, which drags in aws-lc-sys and a cmake + C toolchain build step
+# — 22 extra crates and a new way for the Windows CI leg to fail, for a TLS stack
+# this binary already has.
+reqwest = { version = "0.13.4", default-features = false, features = [
+    "blocking",
+    "json",
+    "rustls-no-provider",
+    "socks",
+] }
+# `rustls-no-provider` leaves the crypto provider to the process, and reqwest
+# *panics* when it builds a client and none is installed. This is the same
+# ring-backed rustls tauri-plugin-updater already depends on (and the same
+# provider it installs for itself), so declaring it adds no crates — it makes the
+# requirement explicit and lets `telegram::build_client` install it on its own
+# instead of depending on the updater having run first.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }

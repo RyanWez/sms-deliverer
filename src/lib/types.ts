@@ -115,6 +115,28 @@ export interface SettingsState {
     enabled: boolean;
     autoScroll: boolean;
   };
+  /**
+   * Telegram destination for forwarded messages.
+   *
+   * Three fields only, and every one of them drives a button that exists today
+   * (Verify / Detect Group ID / Send Test Message). The switches the design doc
+   * shows alongside them — enable forwarding, OTP-only, mask codes — arrive with
+   * the forwarder itself, because a switch that does nothing teaches the
+   * operator that Settings lies (`Memory/04 §H`).
+   */
+  forwarding: {
+    /**
+     * The @BotFather token. Stored in `localStorage` in the clear, like every
+     * other setting: there is no keychain integration in this app, and the UI
+     * must not imply otherwise. Anyone with the token can post to the group, so
+     * @BotFather's `/revoke` is the recovery path.
+     */
+    botToken: string;
+    /** Destination group id, e.g. `-1001234567890`. Kept as text: it goes back to Telegram verbatim. */
+    chatId: string;
+    /** `socks5h://host:port` for networks that block api.telegram.org. Empty means direct. */
+    proxyUrl: string;
+  };
 }
 
 export const DEFAULT_SETTINGS: SettingsState = {
@@ -140,6 +162,11 @@ export const DEFAULT_SETTINGS: SettingsState = {
   developer: {
     enabled: false,
     autoScroll: true,
+  },
+  forwarding: {
+    botToken: '',
+    chatId: '',
+    proxyUrl: '',
   },
 };
 

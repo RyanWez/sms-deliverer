@@ -86,6 +86,7 @@ export function createSettingsStore() {
     get appearance() { return settings.appearance; },
     get updates() { return settings.updates; },
     get developer() { return settings.developer; },
+    get forwarding() { return settings.forwarding; },
 
     setGeneral(v: Partial<SettingsState['general']>) {
       settings = { ...settings, general: { ...settings.general, ...v } };
@@ -106,6 +107,10 @@ export function createSettingsStore() {
     },
     setDeveloper(v: Partial<SettingsState['developer']>) {
       settings = { ...settings, developer: { ...settings.developer, ...v } };
+      saveSettings(settings);
+    },
+    setForwarding(v: Partial<SettingsState['forwarding']>) {
+      settings = { ...settings, forwarding: { ...settings.forwarding, ...v } };
       saveSettings(settings);
     },
 

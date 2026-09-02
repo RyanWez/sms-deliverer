@@ -38,6 +38,7 @@
   - [Linux Permissions & Port Access](#linux-permissions--port-access)
   - [Resolving ModemManager Conflicts on Linux](#resolving-modemmanager-conflicts-on-linux)
   - [AT Command Execution Flow](#at-command-execution-flow)
+- [Telegram Forwarding](#-telegram-forwarding)
 - [Safety & Operational Guidelines](#-safety--operational-guidelines)
 - [Build, Check & Testing Commands](#-build-check--testing-commands)
 - [Project Architecture](#-project-architecture)
@@ -73,6 +74,7 @@ By leveraging **Tauri v2** and **Rust** on the backend paired with **Svelte 5** 
   - Batch message deletion directly from SIM storage (`AT+CMGD`).
 - **Cryptographically Secured Auto-Updater**: Native Tauri auto-updater integration with minisign cryptographic signature verification. Settings → Updates presents the release notes for a found version before anything is downloaded, and keeps the download and the install as separate steps so the restart happens when the operator chooses it rather than mid-shift. Manual checks are rate limited to one request per minute.
 - **Synthetic Browser Preview**: Built-in mock data provider allowing full frontend development and UI inspection inside standard web browsers without needing physical hardware connected. The updater joins in: a dev-only preview release exercises the notes box, the download progress and the restart prompt without cutting a real release.
+- **Telegram Group Forwarding**: Settings → Forwarding pushes messages to one private Telegram group over a single outbound HTTPS connection, with an optional SOCKS5 proxy for networks that block `api.telegram.org`. Membership of that group *is* the permission model — the app stores one destination id and no per-person list, so access is granted and revoked with Telegram's own group tools. The bot is push-only, has no commands, and stays silent in private chats. Setup is verified in three steps (Verify token → Detect group → Send test) rather than by waiting for the first real OTP to find out. See [Telegram Forwarding](#-telegram-forwarding).
 
 ---
 
@@ -342,6 +344,66 @@ from:
 | Scan (`read_port`) | `+CMGF=0` 4 s → `+CSCS` 4 s → `CMGL="ALL"` 15 s → 24 s | ~1.6 s |
 | Get SIM (`get_sim_number`) | `ATE0`/`CSCS` 6 s → `CUSD=2`/`CNUM` 3.5 s → `CREG?`/`CSQ` 8 s → `*88#` 9 s → `*124#` 9 s → 38 s | ~1.6 s |
 | Live startup | `+CMGF=0` 4 s → `CNMI` 3 s → `CMGL="ALL"` 15 s → 22 s | ~1.6 s |
+
+---
+
+## 📨 Telegram Forwarding
+
+Settings → **Forwarding** configures a Telegram bot that pushes messages into one
+private group, so a code is on every team member's phone instead of only on the
+screen of whoever is sitting at the bank.
+
+**The group is the allowlist.** The app holds exactly one destination chat id and
+nothing else — no per-person list. Whoever an admin invites to that group receives
+everything; whoever is removed receives nothing more, immediately, using Telegram's
+own group tools. The bot is push-only: it has no commands and never answers a
+private chat, so a stranger who finds its username gets silence.
+
+### Setup
+
+1. Create the bot with [@BotFather](https://t.me/BotFather) and copy the token.
+2. Create a **private** group and add the bot to it. No admin rights are needed.
+3. Paste the token into **Bot Token** and press **Verify** — this asks Telegram
+   who the token belongs to and reports the bot's `@name`.
+4. Press **Detect** to fill in the group id.
+5. Press **Send Test** to prove the token, the id, the bot's membership and the
+   network path in one shot.
+
+Two things about step 4 that will otherwise look like bugs:
+
+- Telegram keeps the "bot was added to a group" notice for **24 hours only**. If
+  Detect finds nothing, send `/start@your_bot` inside the group and press it
+  again — with Group Privacy at its default the bot cannot see ordinary group
+  chatter, so a command addressed to it is the reliable way to produce a fresh
+  update.
+- If Detect reports a **basic group**, upgrade it. A basic group's chat id changes
+  the moment it becomes a supergroup — which happens on its own when someone
+  enables auto-delete or admin-only posting. The app heals this when it happens
+  (Telegram returns the replacement id and it is saved automatically), but
+  starting out as a supergroup avoids the round trip.
+
+### Reaching api.telegram.org
+
+The app makes one outbound HTTPS connection to `api.telegram.org:443`. Nothing
+listens and nothing accepts inbound traffic.
+
+Where an ISP blocks that host, fill in **SOCKS5 Proxy** (`socks5h://127.0.0.1:9050`).
+Bot API traffic works through a SOCKS5 proxy. An MTProto proxy link will **not**
+work here — those serve Telegram's own client apps, not the Bot API.
+
+### What it costs you
+
+- **Every group member sees every message.** That is the design: shared visibility
+  over compartmentalisation. Protect group invites like passwords, and restrict
+  "Add Members" to admins.
+- **History lives on Telegram's servers**, not just in the app's 2-hour window.
+  Turn on the group's auto-delete timer if that matters.
+- **The bot token is stored in the clear**, like every other setting in this app —
+  there is no keychain integration and the UI does not pretend otherwise. Anyone
+  with the token can post to the group; `/revoke` in @BotFather is the recovery
+  path. The token never reaches a log: it lives in the request URL, so every error
+  leaving the Telegram module is redacted before it can reach `app.log` or the
+  Logs page.
 
 ---
 

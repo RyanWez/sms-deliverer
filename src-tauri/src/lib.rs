@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod core;
 pub mod logging;
+pub mod telegram;
 
 use tauri::Manager;
 
@@ -39,6 +40,9 @@ pub fn run() {
             commands::open_log_folder,
             commands::purge_expired_messages,
             commands::cleanup_sim_storage,
+            commands::telegram::verify_telegram_token,
+            commands::telegram::detect_telegram_group,
+            commands::telegram::send_telegram_test,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
