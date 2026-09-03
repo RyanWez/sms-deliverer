@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/RyanWez/sms-deliverer/compare/v1.6.0...v1.6.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* do not read a call centre number as an OTP ([8837a64](https://github.com/RyanWez/sms-deliverer/commit/8837a64d0864e05ab6a9f6ffc1b5e46c2f84dc7a))
+
 ## [1.6.0](https://github.com/RyanWez/sms-deliverer/compare/v1.5.0...v1.6.0) (2026-09-03)
 
 
