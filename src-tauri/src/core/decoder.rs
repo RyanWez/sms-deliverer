@@ -169,16 +169,69 @@ pub fn extract_otp(text: &str) -> Option<String> {
     if !KEYWORD_RE.is_match(&normalized) {
         return None;
     }
+    let bytes = normalized.as_bytes();
     for re in [&*P1, &*P2, &*P3, &*P4] {
-        if let Some(cap) = re.captures(&normalized) {
-            return cap.get(1).map(|m| m.as_str().to_string());
+        // Every match is considered, not just the first: a date earlier in the
+        // sentence must not hide the real code later in it.
+        for cap in re.captures_iter(&normalized) {
+            if let Some(m) = cap.get(1) {
+                if !in_date_or_time(bytes, m.start(), m.end()) {
+                    return Some(m.as_str().to_string());
+                }
+            }
         }
     }
     None
 }
 
-fn normalize_myanmar_digits(text: &str) -> String {
-    text.chars()
+/// Characters that join the fields of a date, a time, or a decimal.
+const FIELD_SEPARATORS: &[u8] = b"/:-.";
+
+/// Whether a captured digit run is one field of a date or a time rather than a
+/// code — `2026` in `2026/09/03`.
+///
+/// A login notification carries the words the keyword gate looks for ("do not
+/// share your OTP with anyone") while carrying no code at all, so `P4` used to
+/// return the year off the timestamp and the operator got `2026` on a phone.
+///
+/// A separator on its own is not enough to disqualify a run: `G-123456` and
+/// `code -123456` are ordinary. What identifies a date or a time is the **1–2
+/// digit field** on the far side of the separator, which is why the neighbouring
+/// run is measured rather than merely detected. That keeps `1234-5678` — a code
+/// some services do send in two halves — out of this rule.
+///
+/// Byte indices are safe to inspect directly: no byte of a multi-byte UTF-8
+/// sequence can equal an ASCII separator or digit, so Burmese text cannot be
+/// misread as one.
+fn in_date_or_time(bytes: &[u8], start: usize, end: usize) -> bool {
+    let joined_before = start >= 2
+        && FIELD_SEPARATORS.contains(&bytes[start - 1])
+        && matches!(digit_run_ending_at(bytes, start - 1), 1 | 2);
+    let joined_after = end < bytes.len()
+        && FIELD_SEPARATORS.contains(&bytes[end])
+        && matches!(digit_run_starting_at(bytes, end + 1), 1 | 2);
+    joined_before || joined_after
+}
+
+/// Length of the run of digits ending immediately before `end`.
+fn digit_run_ending_at(bytes: &[u8], end: usize) -> usize {
+    let mut n = 0;
+    while n < end && bytes[end - 1 - n].is_ascii_digit() {
+        n += 1;
+    }
+    n
+}
+
+/// Length of the run of digits starting at `start`.
+fn digit_run_starting_at(bytes: &[u8], start: usize) -> usize {
+    let mut n = 0;
+    while start + n < bytes.len() && bytes[start + n].is_ascii_digit() {
+        n += 1;
+    }
+    n
+}
+
+fn normalize_myanmar_digits(text: &str) -> String {    text.chars()
         .map(|c| {
             if ('\u{1040}'..='\u{1049}').contains(&c) {
                 char::from_u32('0' as u32 + (c as u32 - '\u{1040}' as u32)).unwrap_or(c)
@@ -926,6 +979,51 @@ mod tests {
     }
 
     // ── OTP extraction ──
+
+    /// The field failure this guard exists for: a MyID login notification, which
+    /// opens the keyword gate on its own "do not share your OTP" warning while
+    /// containing no code, and used to hand back the year off its timestamp.
+    #[test]
+    fn a_login_notification_with_a_date_is_not_an_otp() {
+        let burmese = "လူကြီးမင်း သည် 2026/09/03 21:59:21 ရက်တွင် ANDROID samsung \
+                       SM-A125F version samsung ဖြင့် MyID သို့ Logged in ဝင်သည်။ \
+                       OTP ကို မည်သူ့မျှ မမျှဝေရန်သတိရပါ။";
+        assert_eq!(extract_otp(burmese), None);
+    }
+
+    #[test]
+    fn a_date_does_not_hide_a_real_code_later_in_the_message() {
+        assert_eq!(
+            extract_otp("On 2026/09/03 your verification code is 481902"),
+            Some("481902".into())
+        );
+        assert_eq!(
+            extract_otp("Login at 21:59 on 03-09-2026. Code 774213 expires soon."),
+            Some("774213".into())
+        );
+    }
+
+    /// Both orders of a date have to be rejected: the year leads in
+    /// `2026/09/03` and trails in `09/03/2026`.
+    #[test]
+    fn a_year_is_rejected_at_either_end_of_a_date() {
+        assert_eq!(extract_otp("Your code request on 2026/09/03 failed"), None);
+        assert_eq!(extract_otp("Your code request on 09/03/2026 failed"), None);
+        assert_eq!(extract_otp("Your code request on 2026-09-03 failed"), None);
+    }
+
+    /// A separator alone must not disqualify a run — only a 1–2 digit field on
+    /// the far side of it does. Otherwise ordinary code formats stop working.
+    #[test]
+    fn a_dash_or_dot_next_to_a_code_is_still_a_code() {
+        assert_eq!(extract_otp("G-483920 is your Google code"), Some("483920".into()));
+        assert_eq!(extract_otp("Your code is 483920."), Some("483920".into()));
+        assert_eq!(
+            extract_otp("Your verification code: 1234-5678"),
+            Some("1234".into()),
+            "a code split in half is not a date"
+        );
+    }
 
     #[test]
     fn otp_english_keywords() {

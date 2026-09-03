@@ -189,27 +189,15 @@ default ကနေ ရမယ် — migration မလိုဘူး။
 
 ---
 
-## G. Field test မှာ တွေ့တဲ့ **ကျန်နေတဲ့ ပြဿနာ ၁ ခု** — OTP false positive
+## G. Field test မှာ တွေ့တဲ့ OTP false positive — ✅ **ပြင်ပြီး** (`03 §21`)
 
-**`2026` ကို OTP လို့ ဖတ်တာ။** 21:59 မှာ MyID ရဲ့ **login notification** (OTP message
-မဟုတ်ဘူး) ကို forward လုပ်ပြီး OTP badge မှာ `2026` ပြတယ် — အဲဒါက message ထဲက
+**`2026` ကို OTP လို့ ဖတ်ခဲ့တာ။** 21:59 မှာ MyID ရဲ့ **login notification** (OTP message
+မဟုတ်ဘူး) ကို forward လုပ်ပြီး OTP badge မှာ `2026` ပြခဲ့တယ် — message ထဲက
 **ရက်စွဲ `2026/09/03` ရဲ့ ခုနှစ်** ပါ။
 
-**ဘာလို့ ဖြစ်လဲ (`decoder::extract_otp` cascade):**
-1. `KEYWORD_RE` gate က **ဖွင့်လိုက်တယ်** — message ထဲ "OTP" ပါတယ်၊ ဒါပေမယ့် အဲဒါက
-   *"OTP ကို မည်သူ့မျှ မမျှဝေရန်"* ဆိုတဲ့ **သတိပေးစာ** ဖြစ်တယ်၊ code မဟုတ်ဘူး
-2. `P1` (keyword ပြီး ၂၄ လုံးအတွင်း digit) — မတွေ့ဘူး
-3. `P2`/`P3` — ၆ လုံး run မရှိဘူး
-4. **`P4` (bare 4–8 digits)** က `2026` ကို ဖမ်းလိုက်တယ်
-
-**Forwarding က ဒါကို ပိုဆိုးစေတယ်:** အရင်က UI ပေါ်မှာ တစ်ယောက်ပဲ မြင်တာ၊ အခု
-team တစ်ခုလုံးရဲ့ ဖုန်းဆီ ရောက်တယ်၊ ပြီးတော့ ၂၀/min ဘောင်ကိုပါ စားတယ်။
-
-**အကြံပြု fix (သီးသန့် change၊ `03` case entry နဲ့):** `P4` (ပြီးတော့ `P3`) မှာ
-**ရက်စွဲ/အချိန် context ကို ဖယ်**ပါ — digit run ရဲ့ ဘေးမှာ `/`, `:`, `-` ရှိရင်
-(`2026/09/03`, `21:59:21`) OTP မဟုတ်ဘူး။ Test case: ဒီ MyID login notification
-ကိုယ်တိုင်။ **Gate ကို မထိရ၊ cascade ကို operator-editable မလုပ်ရ** (`05 §B.1`)。
-
-**Regression မဟုတ်ဘူး:** `extract_otp` ကို ဒီ change တွေ မထိခဲ့ဘူး — forwarding က
-ရှိပြီးသား behaviour ကို ပိုမြင်သာစေတာပါ။
+**Fix:** `decoder::in_date_or_time()` guard ထည့်လိုက်တယ် — separator (`/ : - .`) ရဲ့
+တစ်ဖက်မှာ digit ၁-၂ လုံး field ရှိရင် အဲဒီ run က ရက်စွဲ/အချိန် field ဖြစ်တယ်၊ OTP
+မဟုတ်ဘူး။ `extract_otp` က `captures_iter()` သုံးတာမို့ ရှေ့မှာ ရက်စွဲ ရှိရင် နောက်မှာ
+ရှိတဲ့ တကယ့် code ကို ဖျောက်မပစ်ဘူး။ Gate ရော cascade ရော **မထိထားဘူး**
+(`05 §B.1` hard refusal)。Test ၄ ခု။ အသေးစိတ် `03 §21`。
 

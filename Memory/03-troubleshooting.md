@@ -508,6 +508,47 @@
 - **Rule ၂:** Security အကြံပြုချက် ရေးတဲ့အခါ **ဘယ် setting ကို မထိရဘူး** ဆိုတာပါ ရေးပါ။
   "Add Members ကို ကန့်သတ်ပါ" လို့ ပြောလိုက်တာ Send Messages ပါ ပိတ်စေခဲ့တယ်
 
+## 2️⃣1️⃣ `extract_otp` က ရက်စွဲထဲက ခုနှစ် `2026` ကို OTP လို့ ဖတ်တာ — login notification ကို forward မိတာ
+
+- **Symptom (field, 2026-09-03 21:59):** MyID ရဲ့ **login notification** (OTP message
+  မဟုတ်ဘူး) ကို Telegram group ထဲ forward လုပ်ပြီး OTP badge မှာ **`2026`** ပြတယ်။
+  Message ထဲမှာ `2026/09/03 21:59:21` ဆိုတဲ့ ရက်စွဲ ပါတယ် — code မပါဘူး
+- **Root Cause — cascade ရဲ့ အဆုံးဆတ် `P4` က ရက်စွဲကို ဖမ်းတာ:**
+  1. `KEYWORD_RE` gate က **ဖွင့်လိုက်တယ်** — message ထဲ "OTP" ပါတယ်၊ ဒါပေမယ့် အဲဒါက
+     *"OTP ကို မည်သူ့မျှ မမျှဝေရန်"* ဆိုတဲ့ **သတိပေးစာ** ပါ။ Notification တွေက
+     ကိုယ်တိုင် keyword ကို သယ်လာတယ် — gate ကို ဖြတ်ဖို့ code ရှိရမယ် လို့ မဆိုလိုဘူး
+  2. `P1` (keyword ပြီး ၂၄ လုံးအတွင်း digit) မတွေ့ဘူး · `P2`/`P3` မတွေ့ဘူး
+  3. **`P4` (`\b[0-9]{4,8}\b`)** က `2026` ကို ဖမ်းလိုက်တယ် — `\b` က `/` ဘေးမှာ
+     boundary ဖြစ်တာမို့ ရက်စွဲ field က bare digit run နဲ့ **မခွဲခြားနိုင်ဘူး**
+- **`Memory/05 §B.1` က ဒါကို ကြိုမြင်ထားခဲ့တယ်:** "P3/P4 က bare digit ကို match တယ်၊
+  keyword gate ရှိလို့ပဲ safe တယ် · promotional SMS ရဲ့ balance, **ရက်စွဲ**, number
+  fragment တွေ match လာမယ်" — အဲဒီ ရက်စွဲ case က field မှာ တကယ် ပေါ်လာတာ
+- **Forwarding က ဒါကို ပိုဆိုးစေတယ် (ဒါပေမယ့် regression မဟုတ်ဘူး):** `extract_otp` ကို
+  Telegram change တွေ **မထိခဲ့ဘူး** — v1.5.0 ကတည်းက ဒီအတိုင်း။ အရင်က screen ပေါ်မှာ
+  တစ်ယောက်ပဲ မြင်တာ၊ အခု team တစ်ခုလုံးရဲ့ ဖုန်းဆီ ရောက်တယ်၊ ပြီးတော့ ၂၀/min ဘောင်ကိုပါ စားတယ်
+- **Fix — `in_date_or_time()` guard, cascade ကို မထိဘဲ:**
+  * `extract_otp` က `captures()` ကနေ **`captures_iter()`** ဖြစ်သွားတယ် — ရှေ့မှာ ရက်စွဲ
+    ရှိရင် နောက်မှာ ရှိတဲ့ **တကယ့် code ကို ဖျောက်မပစ်ဘူး**
+  * `FIELD_SEPARATORS` = `/ : - .`。 Separator **တစ်ခုတည်း**နဲ့ မဖျက်ဘူး —
+    ဖျက်ရမယ့် အချက်က separator ရဲ့ တစ်ဖက်မှာ **digit ၁-၂ လုံး field** ရှိတာ ဖြစ်တယ်။
+    ဒါက `G-483920` (Google), `code 483920.`, `1234-5678` (code ကို ၂ ခြမ်း ခွဲပို့တာ)
+    တွေကို **ဆက်အလုပ်လုပ်စေတယ်**
+  * Byte index ကို တိုက်ရိုက် စစ်လို့ ရတယ်: multi-byte UTF-8 sequence ရဲ့ byte
+    တစ်ခုမှ ASCII separator/digit နဲ့ မတူဘူး — မြန်မာစာ က ရက်စွဲလို မဖတ်မိဘူး
+- **Gate နဲ့ cascade ကို မထိထားဘူး** (`05 §B.1` hard refusal) — guard က
+  **filter တစ်ခုပဲ**၊ pattern အသစ် မဟုတ်ဘူး
+- **Test ၄ ခု:** `a_login_notification_with_a_date_is_not_an_otp` (မြန်မာစာ message
+  အစစ်)၊ `a_date_does_not_hide_a_real_code_later_in_the_message`၊
+  `a_year_is_rejected_at_either_end_of_a_date` (`2026/09/03` နဲ့ `09/03/2026` နှစ်မျိုးလုံး)၊
+  `a_dash_or_dot_next_to_a_code_is_still_a_code`
+- **Rule ၁:** Keyword gate က "ဒီ message က code ပါတယ်" လို့ **မဆိုလိုဘူး** —
+  "code အကြောင်း ပြောတယ်" လို့ပဲ ဆိုလိုတယ်။ Notification၊ သတိပေးစာ၊ ကြော်ငြာ တွေက
+  keyword ကို ကိုယ်တိုင် သယ်လာတယ်
+- **Rule ၂:** `\b` က digit run ကို **context ကနေ မခွဲပေးဘူး**။ Bare-digit pattern
+  ရေးရင် ဘေးတစ်ဝိုက်ကို ကိုယ်တိုင် စစ်ရမယ်
+- **Rule ၃:** `captures()` (ပထမဆုံး match) က pattern တစ်ခုမှာ match အများ ဖြစ်နိုင်ရင်
+  **ဆုံးရှုံးမှု ဖန်တီးတယ်** — ရက်စွဲကို ဖယ်လိုက်တာနဲ့ ကျန်တဲ့ match တွေဆီ ဆက်သွားရမယ်
+
 ## ⚠️ Latent Traps (မဖြစ်သေးဘူး၊ ဒါပေမဲ့ ချောင်းနေတာ)
 
 Case မဟုတ်သေးပါ — 2026-08-30 settings cleanup (`fbd7b8b`) လုပ်ရင်း တွေ့ခဲ့တဲ့ ချောင်း ၃ ခု
