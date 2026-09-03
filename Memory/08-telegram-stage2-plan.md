@@ -1,9 +1,27 @@
-# 📨 Telegram Forwarding — Stage 2 Plan (နောက် session အတွက် handoff)
+# 📨 Telegram Forwarding — Stage 1 + Stage 2 (implementation record)
 
-> **ရေးတဲ့ရက်:** 2026-09-03 · **အခြေအနေ:** Stage 1 (Bot Configuration) ပြီးပြီး၊ hardware ပေါ် အတည်ပြီး
-> **ဒီ doc ရဲ့ ရည်ရွယ်ချက်:** Stage 2 (တကယ် message forward လုပ်တာ) ကို ဆက်လုပ်တဲ့ agent /
-> developer အတွက် — ဘာ ရှိပြီးသားလဲ၊ ဘာ ကျန်နေလဲ၊ **ဘယ်အရာကို မလုပ်ရလဲ**။
+> **ရေးတဲ့ရက်:** 2026-09-03 · **အခြေအနေ:** Stage 1 **ပြီး၊ hardware အတည်ပြီး** ·
+> Stage 2 **code ပြီး၊ hardware မစမ်းရသေး** (§F ကြည့်)
 > Roadmap entry က `05 §၁.၁`၊ dependency trap က `03 §18`။
+>
+> **⚠️ ဒီ doc က plan ကနေ record ဖြစ်သွားပြီ။** §B/§C က ဘာလို့ ဒီလို ရေးလိုက်တာလဲ
+> ဆိုတဲ့ အကြောင်းရင်းတွေ ဖြစ်တယ် — implementation က အဲဒီအတိုင်း ပြီးသွားပြီ။
+> §E (မလုပ်ရတာ) က **အသက်ဝင်နေတုန်း** ဖြစ်တယ်။
+
+## Stage 2 — ရေးပြီးသွားတဲ့ file တွေ
+
+| File | ပါဝင်တာ |
+|---|---|
+| `src-tauri/src/forwarder.rs` **(အသစ်)** | `ForwardItem` · `ForwarderHandle::deliver` (non-blocking, filter, `MAX_QUEUE`=500 oldest-drop) · `Forwarder::shutdown` (final flush) · `take_work` / `requeue` (coalescing + edit boundary, pure) · `format_one` / `format_batch` / `clip` / `origin` · sender thread (`MIN_INTERVAL`=3.5s, `MAX_BATCH`=10, 429 honour, migration heal, `catch_unwind`) · test ၁၅ |
+| `src-tauri/src/telegram.rs` | `edit_message` ထပ်ထည့် (`message is not modified` = success) |
+| `src-tauri/src/commands/telegram.rs` | `ForwardingConfigDto` + `split()` |
+| `src-tauri/src/commands/mod.rs` | `start_live(retention_hours, forwarding)` · supervisor thread မှာ forwarder start/shutdown · `Sms` arm **၂ ခုလုံး** `deliver` |
+| `src/lib/types.ts` | `forwarding.{enabled, forwardOtp, forwardNonOtp}` ထပ်ထည့် |
+| `src/lib/services/api.ts` | `forwardingArgs()` · `startLive` က ပို့တာ · `forward:failed` / `forward:migrated` listener |
+| `src/lib/pages/Settings.svelte` | switch ၃ ခု (§D အတိုင်း) |
+
+**Validation:** Rust test **202** · frontend test 89 · clippy `-D warnings` သန့် ·
+`--locked` release check မှန် · `npm run check` 0/0。
 
 ---
 

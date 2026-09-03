@@ -136,6 +136,19 @@ export interface SettingsState {
     chatId: string;
     /** `socks5h://host:port` for networks that block api.telegram.org. Empty means direct. */
     proxyUrl: string;
+    /**
+     * Master switch. Off means `start_live` is told nothing about Telegram and no
+     * forwarder thread is started at all, rather than one that discards its queue.
+     */
+    enabled: boolean;
+    /** Forward messages a code was extracted from. */
+    forwardOtp: boolean;
+    /**
+     * Forward messages with no code. Off by default: a bank of 64 SIMs collecting
+     * promotional SMS would spend Telegram's 20-messages-per-minute group budget
+     * on traffic nobody came to read, delaying the codes behind it.
+     */
+    forwardNonOtp: boolean;
   };
 }
 
@@ -167,6 +180,9 @@ export const DEFAULT_SETTINGS: SettingsState = {
     botToken: '',
     chatId: '',
     proxyUrl: '',
+    enabled: false,
+    forwardOtp: true,
+    forwardNonOtp: false,
   },
 };
 

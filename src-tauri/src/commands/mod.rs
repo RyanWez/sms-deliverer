@@ -938,6 +938,7 @@ pub fn start_live(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     retention_hours: Option<f64>,
+    forwarding: Option<telegram::ForwardingConfigDto>,
 ) -> Result<String, String> {
     let retention = retention_from_hours(retention_hours);
     let ports = {
@@ -999,6 +1000,14 @@ pub fn start_live(
     thread::spawn(move || {
         let _busy = busy;
         let port_count = ports.len();
+        // One forwarder for the whole bank, started before any worker so no
+        // message can arrive before there is a queue to take it. `None` means
+        // forwarding is off or unconfigured, and every `deliver` below is then
+        // skipped rather than dropped inside a queue nobody drains.
+        let forwarder = forwarding
+            .map(crate::commands::telegram::ForwardingConfigDto::split)
+            .and_then(|(cfg, filters)| crate::forwarder::start(app.clone(), cfg, filters));
+        let fwd = forwarder.as_ref().map(crate::forwarder::Forwarder::handle);
         let mut handles = Vec::with_capacity(port_count);
         for port in ports {
             let stop = Arc::clone(&shared_stop);
@@ -1006,6 +1015,7 @@ pub fn start_live(
             let st3 = Arc::clone(&state_clone);
             let app2 = app.clone();
             let app3 = app.clone();
+            let fwd2 = fwd.clone();
             handles.push(thread::spawn(move || {
                 let sender = move |evt: crate::core::live::LiveEvent| match evt {
                     crate::core::live::LiveEvent::Ready { port } => {
@@ -1146,12 +1156,38 @@ pub fn start_live(
                                     && message.text.starts_with(&it.message.text)
                             })
                             .map(|idx| st.messages[idx].id);
+                        // The SIM's own number, read while the lock is already
+                        // held. A forwarded bubble names the line rather than a
+                        // tty that renumbers on the next hotplug.
+                        let sim = st
+                            .ports
+                            .iter()
+                            .find(|p| p.name == message.port)
+                            .map(|p| p.sim_number.clone())
+                            .filter(|s| !s.trim().is_empty());
                         let item = SmsItem {
                             id: existing.unwrap_or_else(|| st.take_next_id()),
                             message: message.clone(),
                             otp: otp.clone(),
                             is_new,
                         };
+                        // Both arms forward. Hooking only the `None` arm — the
+                        // one that emits `sms:new` — looks right and silently
+                        // loses every concatenated message: the completion of a
+                        // fragment already on screen takes the `Some` arm, and
+                        // Myanmar text fits 70 characters per part in UCS-2, so
+                        // that is the ordinary case for a Burmese OTP. The
+                        // forwarder keys on `item.id`, which is the same for
+                        // both, and turns the second one into an edit of the
+                        // bubble the first produced.
+                        let job = fwd2.as_ref().map(|_| crate::forwarder::ForwardItem {
+                            id: item.id,
+                            port: message.port.clone(),
+                            sim,
+                            from: message.from.clone(),
+                            body: message.text.clone(),
+                            otp: otp.clone(),
+                        });
                         match existing {
                             Some(_) => {
                                 if let Some(idx) = st
@@ -1181,6 +1217,13 @@ pub fn start_live(
                                     }),
                                 );
                             }
+                        }
+                        // Queued after the emit, outside the lock: `deliver` is
+                        // non-blocking, but the UI must never wait on anything
+                        // network-shaped to show a code the operator can already
+                        // read on screen.
+                        if let (Some(h), Some(job)) = (fwd2.as_ref(), job) {
+                            h.deliver(job);
                         }
                     }
                     crate::core::live::LiveEvent::Closed { port, error } => {
@@ -1241,6 +1284,12 @@ pub fn start_live(
         }
         for h in handles {
             let _ = h.join();
+        }
+        // Every port is joined, so nothing can queue any more. Flushing here
+        // rather than dropping the queue means a code that arrived a second
+        // before Stop still lands.
+        if let Some(f) = forwarder {
+            f.shutdown();
         }
         let text;
         {

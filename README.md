@@ -368,6 +368,28 @@ private chat, so a stranger who finds its username gets silence.
 4. Press **Detect** to fill in the group id.
 5. Press **Send Test** to prove the token, the id, the bot's membership and the
    network path in one shot.
+6. Switch on **Forward to Telegram**, then start Live mode.
+
+The forwarding settings are read when Live mode **starts**, so changing the token,
+the group or the filters takes a Stop → Start to apply. This matches how the
+retention window already behaves.
+
+### What arrives, and how fast
+
+One bubble per message while the bank is quiet: the code in a tap-to-copy block,
+the SIM's own number, the sender, and the message body.
+
+Under load the queue **coalesces** — several codes in one message. That is not a
+cosmetic choice. Telegram accepts about 20 messages per minute into a group, so
+one-bubble-per-code with three-second pacing sits exactly on the ceiling, and a
+64-stick bank taking a burst would build a backlog that delivers codes after they
+expire. The limit counts messages rather than codes, so packing up to ten per
+message removes throughput as the constraint. A `429` is honoured by waiting out
+the `retry_after` Telegram supplies.
+
+A concatenated SMS — the normal shape for Burmese text, which fits 70 characters
+per part in UCS-2 — is posted as its first fragment and then **edited in place**
+once the rest arrives, rather than appearing twice.
 
 Two things about step 4 that will otherwise look like bugs:
 
@@ -396,6 +418,10 @@ work here — those serve Telegram's own client apps, not the Bot API.
 - **Every group member sees every message.** That is the design: shared visibility
   over compartmentalisation. Protect group invites like passwords, and restrict
   "Add Members" to admins.
+- **Forwarding needs Live mode running and the app window open.** There is no tray
+  icon, so closing the window ends the process and the forwarding with it.
+- **Messages without a code are not forwarded** unless you switch that on, and it
+  spends the same 20-per-minute budget the codes need.
 - **History lives on Telegram's servers**, not just in the app's 2-hour window.
   Turn on the group's auto-delete timer if that matters.
 - **The bot token is stored in the clear**, like every other setting in this app —

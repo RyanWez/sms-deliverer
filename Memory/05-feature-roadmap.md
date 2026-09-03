@@ -59,21 +59,18 @@ Settings ထဲ လူ စီမံတဲ့ field လုံးဝ မလို�
    ရှိသလို ရေးထားတယ်။ Token က URL path ထဲ ပါတာမို့ `redact` က module ကနေ ထွက်တဲ့
    error တိုင်းကို ဖြတ်တယ် (case §18 ကြည့်)
 
-**Stage 2 — ကျန်နေတာ (ဒီ change ထဲ မပါ):**
-* Live event hook။ `sms:new` **တစ်ခုတည်း** မလုံလောက်ဘူး: concat SMS က partial ကို အရင်
-  ပြပြီး ပြည့်စုံတာ ရောက်လာတဲ့အခါ `commands/mod.rs:1137-1146` က prefix match နဲ့ ရှာပြီး
-  `messages:updated` ထွက်တယ် — `sms:new` **မထွက်ဘူး**။ မြန်မာစာက UCS-2 မှာ part တစ်ခု
-  ၇၀ လုံးပဲ ဆံ့တာမို့ ဒါ ရှားတဲ့ case မဟုတ်ဘူး။ Branch ၂ ခုလုံး hook ရမယ်၊ ပြီးတော့
-  Telegram ရဲ့ `message_id` ကို `SmsItem.id` နဲ့ တွဲမှတ်ထားရင် update ကို bubble အသစ်
-  မပို့ဘဲ `editMessageText` နဲ့ ပြင်လို့ ရတယ်
-* Paced/coalescing queue။ Group တစ်ခုကို **၁ မိနစ် message ၂၀** (Telegram FAQ)။ "၃ စက္ကန့်
-  တစ်ခါ" က limit **အောက် မဟုတ်ဘူး၊ ထိနေတာ** — port ၆၄ ခု burst တစ်ခါ လာရင် queue
-  ရှည်ပြီး OTP သက်တမ်းကုန်မှ ရောက်တယ်။ ဖြေရှင်းချက်: queue တိုးလာရင် OTP အများကို
-  message တစ်ခုထဲ **coalesce** (limit က message ကို ရေတာ) — `utils/toast-queue.ts` နဲ့
-  တူတဲ့ principle
-* Switch ၃ ခု (`Enable forwarding`, `OTP only`, `Forward non-OTP`) — **Stage 2 နဲ့အတူပဲ**
-  ထည့်ရမယ် (doc 04 §H)။ `Forward non-OTP` က default **off** (ကြော်ငြာ SMS နဲ့ ဘောင် ပြည့်မယ်)
-* Thread ID (forum topic) · generic webhook + Discord · offline retry queue
+**Stage 2 — ✅ code ပြီးပြီ (hardware မစမ်းရသေး) · အသေးစိတ် `08`:**
+* Live event hook — `Sms` arm **၂ ခုလုံး** `deliver` လုပ်တယ်။ Forwarder က `item.id` ကို
+  key ထားပြီး ဒုတိယအခေါက်ကို `editMessageText` အဖြစ် ပြောင်းတယ် (bubble အသစ် မထပ်ဘူး)
+* Coalescing queue — `forwarder.rs`: `MIN_INTERVAL` 3.5s (≈17/min, ၂၀ ဘောင်အောက်)၊
+  `MAX_BATCH` 10၊ `MAX_QUEUE` 500 (ပြည့်ရင် **အရင်ဆုံးဝင်တာကို** ဖျက် — အသက်တမ်း
+  ကုန်ဖွယ် အရှိဆုံး)၊ `retry_after` honour၊ migration heal + `forward:migrated` event
+* Switch ၃ ခု — `enabled` / `forwardOtp` (default on) / `forwardNonOtp` (default **off**)
+* `ForwardingConfigDto` က `start_live` argument အဖြစ် လာတယ် (`retention_hours` precedent) —
+  ဆိုတော့ token/group ပြောင်းရင် **Stop → Start** လိုတယ်၊ UI မှာ ရေးထားတယ်
+
+**ကျန်နေတာ:**
+* Thread ID (forum topic) · generic webhook + Discord · disk-backed offline retry queue
 * Tray icon။ §၁ ရဲ့ ကတိက "ကွန်ပျူတာရှေ့ မရှိရင်တောင်" ဖြစ်ပေမယ့် window ပိတ်ရင် app
   ပြီးသွားတယ်။ `general.minimizeToTray` ကို tray code မရှိလို့ ဖျက်ခဲ့တာ (§A) — ဆိုတော့
   tray က ဒီ ကတိရဲ့ **prerequisite**၊ optional မဟုတ်ဘူး

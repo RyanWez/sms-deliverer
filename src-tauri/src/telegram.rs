@@ -269,6 +269,34 @@ pub fn send_message(
 }
 
 /// Confirm the token by asking Telegram who the bot is, returning its `@name`.
+/// Rewrite a message already posted, in place.
+///
+/// This is how a concatenated SMS avoids becoming two bubbles: the fragment is
+/// posted, and the completed text edits it. Telegram answers
+/// `400 message is not modified` when the text is byte-identical, which happens
+/// if a completion decodes to exactly the fragment — that is a success as far as
+/// the operator is concerned, so it is reported as one.
+pub fn edit_message(
+    client: &reqwest::blocking::Client,
+    config: &TelegramConfig,
+    message_id: i64,
+    html: &str,
+) -> Result<(), SendError> {
+    let payload = serde_json::json!({
+        "chat_id": config.chat_id,
+        "message_id": message_id,
+        "text": html,
+        "parse_mode": "HTML",
+        "link_preview_options": { "is_disabled": true },
+    });
+    match post(client, &config.bot_token, "editMessageText", &payload) {
+        Ok(_) => Ok(()),
+        Err(SendError::Other(msg)) if msg.contains("message is not modified") => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Confirm the token by asking Telegram who the bot is, returning its `@name`.
 ///
 /// Worth its own call: it separates "this token is wrong" from "no group found",
 /// which are the two ways setup goes wrong and have completely different fixes.

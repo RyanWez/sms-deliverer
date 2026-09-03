@@ -16,7 +16,7 @@
 | [05-feature-roadmap.md](./05-feature-roadmap.md) | Feature backlog + **Settings Controls Decisions Ledger** (ဖျက်ခဲ့တာ ၁၁ ခု၊ hard refusal ၂ ခု၊ deferred order၊ desktop-notification feasibility) |
 | [06-git-workflow.md](./06-git-workflow.md) | Feature branch workflow — branch → commit → push → PR → squash merge, CI trigger matrix |
 | [07-next-release-plan.md](./07-next-release-plan.md) | v1.5.0 field test ရဲ့ အဖြေ → နောက် release ၂ ခု (v1.5.1 fix ၄ ခု၊ v1.6.0 live command mailbox) |
-| [08-telegram-stage2-plan.md](./08-telegram-stage2-plan.md) | **Telegram forwarding Stage 2 handoff** — Stage 1 က ဘာ ရှိပြီးသားလဲ · အခက်အခဲ ၄ ခု (hook point၊ 20/min limit၊ thread model၊ config lifetime) · ရေးရမယ့် အစဉ်လိုက် ၆ ဆင့် · **မလုပ်ရတာ ၉ ခု** · hardware test ၄ ခု |
+| [08-telegram-stage2-plan.md](./08-telegram-stage2-plan.md) | **Telegram forwarding — Stage 1 + Stage 2 implementation record** · ဆုံးဖြတ်ချက် အကြောင်းရင်း ၄ ခု (hook point၊ 20/min limit၊ thread model၊ config lifetime) · **မလုပ်ရတာ ၉ ခု (အသက်ဝင်နေတုန်း)** · hardware test ၄ ခု (မစမ်းရသေး) |
 
 ## ⚡ TL;DR — ဒီ Project ရဲ့ Golden Rules
 

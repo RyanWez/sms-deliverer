@@ -35,6 +35,33 @@ interface TelegramTestResult {
   migratedChatId: string | null;
 }
 
+/**
+ * The forwarding block `start_live` receives, or `null` to run without a
+ * forwarder at all.
+ *
+ * Sent at start rather than read from a Rust-side copy, which is what keeps user
+ * preferences in one place (the settings store) — the same arrangement
+ * `retentionHours` uses. The consequence, and it is documented in the UI: a token
+ * changed mid-session takes a Stop → Start to apply.
+ *
+ * `null` when the master switch is off, when either credential is blank, or when
+ * both message filters are off — in each of those cases a forwarder could only
+ * ever discard what it was handed.
+ */
+function forwardingArgs() {
+  const f = settingsStore.forwarding;
+  if (!f.enabled) return null;
+  if (!f.botToken.trim() || !f.chatId.trim()) return null;
+  if (!f.forwardOtp && !f.forwardNonOtp) return null;
+  return {
+    botToken: f.botToken,
+    chatId: f.chatId,
+    proxyUrl: f.proxyUrl || null,
+    forwardOtp: f.forwardOtp,
+    forwardNonOtp: f.forwardNonOtp,
+  };
+}
+
 
 let nextToastId = 1;
 let initialized = false;
@@ -347,6 +374,26 @@ export const api = {
         toast('Danger', 'Export failed', event.payload.error);
       });
 
+      // Forwarding failures are operational feedback, so they are not gated on
+      // `notifications.enabled` — that switch mutes OTP announcements only.
+      // Repeats collapse in the toast queue, which is what keeps one dead
+      // network from stacking a card per queued message.
+      await listen<{ error: string }>('forward:failed', (event) => {
+        toast('Danger', 'Telegram Forward Failed', event.payload.error);
+      });
+
+      // The group was upgraded to a supergroup and Telegram handed back its new
+      // id. The forwarder is already using it; persisting it here is what stops
+      // the next Start from going back to the dead one.
+      await listen<{ chatId: string }>('forward:migrated', (event) => {
+        settingsStore.setForwarding({ chatId: event.payload.chatId });
+        toast(
+          'Info',
+          'Telegram Group ID Updated',
+          `The group became a supergroup, so forwarding moved to ${event.payload.chatId}. Nothing to do.`,
+        );
+      });
+
       // Without this the desktop app said nothing at all on success, so a
       // written file and a cancelled dialog looked the same. The browser
       // preview already toasted, so this is also a parity fix.
@@ -474,6 +521,16 @@ export const api = {
       liveStore.totalPorts = portsStore.items.filter(p => p.checked).length;
       liveStore.readyPorts = portsStore.items.filter(p => p.checked).map(p => p.name);
       if (!silent) toast('Success', 'Live Started', 'Simulated live mode active');
+      // Parity: say whether the forwarder would have started, since the preview
+      // cannot show it any other way and a silent no-op is exactly the confusion
+      // the real Settings page is trying to avoid.
+      if (settingsStore.forwarding.enabled && !forwardingArgs()) {
+        toast(
+          'Warning',
+          'Forwarding Not Configured',
+          'Telegram forwarding is switched on but the token, group ID or message filters are incomplete — nothing would be forwarded.',
+        );
+      }
       return;
     }
     try {
@@ -487,7 +544,10 @@ export const api = {
       liveStore.readyPorts = [];
       // Live workers own their ports exclusively, so they do their own SIM
       // pruning — they need the retention window up front.
-      await invoke('start_live', { retentionHours: settingsStore.general.retentionHours });
+      await invoke('start_live', {
+        retentionHours: settingsStore.general.retentionHours,
+        forwarding: forwardingArgs(),
+      });
     } catch (e) {
       liveStore.on = false;
       liveStore.totalPorts = 0;

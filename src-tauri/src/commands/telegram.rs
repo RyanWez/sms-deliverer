@@ -11,7 +11,7 @@
 //! park an async executor thread either.
 
 use crate::telegram::{self, DetectedGroup, SendError, TelegramConfig};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Run a blocking Telegram call off the async executor.
 async fn offload<T, F>(job: F) -> Result<T, String>
@@ -42,6 +42,47 @@ fn host_label() -> String {
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "this PC".to_string())
+}
+
+/// Forwarding settings as they arrive from the frontend at `start_live`.
+///
+/// Carried as a command argument rather than persisted on the Rust side, which
+/// keeps `core/sim_directory.rs`'s invariant intact — user preferences live in
+/// exactly one place, the frontend settings store — and follows the precedent
+/// `retention_hours` already set.
+///
+/// The consequence is that changing a token mid-session takes a Stop → Start,
+/// exactly as changing the retention window does.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForwardingConfigDto {
+    pub bot_token: String,
+    pub chat_id: String,
+    #[serde(default)]
+    pub proxy_url: Option<String>,
+    pub forward_otp: bool,
+    pub forward_non_otp: bool,
+}
+
+impl ForwardingConfigDto {
+    /// Split into what `telegram` needs and what `forwarder` needs.
+    ///
+    /// Trimming here rather than trusting the page: the settings store is
+    /// rehydrated from `localStorage`, so a stray space around a pasted token is
+    /// normal input, not an exceptional case.
+    pub fn split(self) -> (TelegramConfig, (bool, bool)) {
+        (
+            TelegramConfig {
+                bot_token: self.bot_token.trim().to_string(),
+                chat_id: self.chat_id.trim().to_string(),
+                proxy_url: self
+                    .proxy_url
+                    .map(|p| p.trim().to_string())
+                    .filter(|p| !p.is_empty()),
+            },
+            (self.forward_otp, self.forward_non_otp),
+        )
+    }
 }
 
 /// A trimmed token, or a reason it cannot be used.

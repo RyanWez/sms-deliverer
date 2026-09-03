@@ -183,6 +183,14 @@
       description: "Push OTPs to a private Telegram group",
       fields: [
         {
+          key: "enabled",
+          label: "Forward to Telegram",
+          description:
+            "Send incoming messages to the group below while Live mode runs. Applied when Live mode starts, so a change here takes a Stop → Start.",
+          type: "checkbox" as const,
+          bind: "forwarding",
+        },
+        {
           key: "botToken",
           label: "Bot Token",
           description:
@@ -237,6 +245,21 @@
           action: "sendTelegramTest",
           buttonText: "Send Test",
           variant: "secondary",
+        },
+        {
+          key: "forwardOtp",
+          label: "Forward Messages With a Code",
+          description: "Send messages an OTP was extracted from",
+          type: "checkbox" as const,
+          bind: "forwarding",
+        },
+        {
+          key: "forwardNonOtp",
+          label: "Forward Messages Without a Code",
+          description:
+            "Send ordinary SMS too. Off by default: Telegram accepts 20 messages a minute into a group, and a bank of promotional SMS would spend that budget ahead of the codes.",
+          type: "checkbox" as const,
+          bind: "forwarding",
         },
       ],
     },
