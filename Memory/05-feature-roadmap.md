@@ -20,7 +20,7 @@
   * `Forward OTP Only` သို့မဟုတ် `Forward All Messages` စိတ်ကြိုက် ရွေးချယ်နိုင်ခြင်း။
   * Retry mechanism (Network ကျနေပါက ၃ ကြိမ်အထိ အလိုအလျောက် ပြန်ပို့ပေးခြင်း)။
 
-#### ၁.၁ အခြေအနေ — **Stage 1 (Bot Configuration) ပြီးပြီ · hardware ပေါ် အတည်ပြီး**၊ Stage 2 (forwarding) မပြီးသေး
+#### ၁.၁ အခြေအနေ — **Stage 1 + Stage 2 ပြီးပြီ · v1.6.0 မှာ ship ပြီး · hardware ပေါ် အတည်ပြီး**။ ကျန်နေတာက အောက်ဆုံး "ကျန်နေတာ" list (tray · webhook/Discord · thread id · disk-backed queue) ပဲ
 
 **Field verification (2026-09-03, bank USB တပ်ထားပြီး `npm run tauri dev`):** Verify →
 `@simbank_otp_bot`၊ Detect → `"Acti Chat" (-1004417127000)` supergroup (warning မထွက်ဘူး —
@@ -66,8 +66,11 @@ Settings ထဲ လူ စီမံတဲ့ field လုံးဝ မလို�
 > မြန်မာစာ) · outage retry (5s→10s→20s backoff) · burst coalescing (`🔐 2 new messages`)。
 > Log masking နဲ့ token redaction နှစ်ခုလုံး တကယ့် failure ပေါ်မှာ ကိုင်တယ်။ အသေးစိတ် `08 §F`。
 >
-> **ကျန်နေတဲ့ ပြဿနာ ၁ ခု (regression မဟုတ်ဘူး):** `extract_otp` က MyID login
-> notification ရဲ့ ရက်စွဲ `2026/09/03` ကနေ `2026` ကို OTP လို့ ဖတ်တယ် — `08 §G`。
+> **Field test မှာ တွေ့တဲ့ OTP false positive ၂ ခု — ၂ ခုလုံး ပြင်ပြီး:** `extract_otp` က
+> MyID login notification ရဲ့ ရက်စွဲ `2026/09/03` ကနေ `2026` (v1.6.0 မှာ ပြင်၊ `03 §21`)၊
+> ပြီးတော့ KBZPay logout notification ရဲ့ Call Center နံပါတ် `3211` (v1.6.1 မှာ ပြင်၊
+> `03 §22`) ကို OTP လို့ ဖတ်ခဲ့တာ။ ၂ ခုလုံး guard အသစ်နဲ့ ပြင်ခဲ့တယ် — gate ရော cascade ရော
+> မထိဘူး (§B.1 hard refusal)。
 * Live event hook — `Sms` arm **၂ ခုလုံး** `deliver` လုပ်တယ်။ Forwarder က `item.id` ကို
   key ထားပြီး ဒုတိယအခေါက်ကို `editMessageText` အဖြစ် ပြောင်းတယ် (bubble အသစ် မထပ်ဘူး)
 * Coalescing queue — `forwarder.rs`: `MIN_INTERVAL` 3.5s (≈17/min, ၂၀ ဘောင်အောက်)၊

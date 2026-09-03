@@ -84,7 +84,7 @@ By leveraging **Tauri v2** and **Rust** on the backend paired with **Svelte 5** 
 
 ### General Prerequisites
 
-- **Node.js**: v18.0.0+ or v20.0.0+ (LTS recommended)
+- **Node.js**: v22.0.0+ (required, not just recommended — the frontend tests run on Node's built-in runner with `--experimental-strip-types`)
 - **Rust**: `rustc` and `cargo` (1.75.0+ / 2021 edition)
 - **C/C++ Build Toolchain**: Native compilation tools for your OS.
 
@@ -498,7 +498,8 @@ npm run preview
 # Fast compile & syntax check
 cargo check --manifest-path src-tauri/Cargo.toml
 
-# Run all unit tests (decoder, AT parser, modem probe, reassembly, logging)
+# Run all unit tests (decoder & OTP guards, AT parser, modem probe, reassembly,
+# retention, SIM directory, logging, Telegram client, forwarder queue)
 cargo test --manifest-path src-tauri/Cargo.toml
 
 # Run Clippy linter for code health and warnings
@@ -514,33 +515,50 @@ cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 
 ```
 sms-tauri/
-├── src/                          # Svelte 5 Frontend
+├── src/                              # Svelte 5 Frontend
 │   ├── lib/
-│   │   ├── components/           # UI components (MessageTable, FilterBar, NavRail, etc.)
-│   │   ├── pages/                # Views (Inbox, Ports, Settings)
-│   │   ├── services/             # Tauri IPC bridge & synthetic data layer
-│   │   ├── stores/               # Svelte 5 runes-based reactive state stores
-│   │   └── utils/                # Helper utilities (PDU preview, formatting, synthetic mocks)
-│   ├── App.svelte                # Root application layout
-│   └── app.css                   # Tailwind CSS & global styling
-├── src-tauri/                    # Rust Tauri v2 Backend
-│   ├── icons/                    # Application icons (.ico, .icns, .png)
+│   │   ├── components/               # TitleBar, Sidebar, Toolbar, FilterBar, MessageTable,
+│   │   │                             #   MessageDetail, PortDetail, Pagination, ToastContainer,
+│   │   │                             #   UpdateDock, UpdateCard, Icon
+│   │   ├── pages/                    # Views (Inbox, Ports, Logs, Settings)
+│   │   ├── services/                 # api.ts — the only invoke/listen boundary; dialog,
+│   │   │                             #   updater, updater-preview
+│   │   ├── stores/                   # Runes state (messages, ports, live, logs, settings,
+│   │   │                             #   navigation, updater)
+│   │   ├── utils/                    # csv, port, port-refresh, message-buffer, toast-queue,
+│   │   │                             #   telegram-preview, release-notes, update-policy,
+│   │   │                             #   format, tauri, synthetic (+ *.test.ts alongside)
+│   │   ├── icons.ts                  # Inline SVG path table
+│   │   └── types.ts                  # Shared wire types & settings shape
+│   ├── App.svelte                    # Root application layout & background timers
+│   ├── main.ts                       # Svelte 5 mount entrypoint
+│   └── app.css                       # Tailwind layers & both theme variable blocks
+├── src-tauri/                        # Rust Tauri v2 Backend
+│   ├── capabilities/default.json     # ACL — no fs/shell/http; all I/O sits behind commands
+│   ├── icons/                        # Application icons (.ico, .icns, .png)
 │   ├── src/
-│   │   ├── commands/             # Tauri IPC command handlers
-│   │   ├── core/                 # Core engine modules
-│   │   │   ├── at.rs             # AT command line-oriented serial transport
-│   │   │   ├── decoder.rs        # PDU / 7-bit / UCS-2 decoder & regex OTP extractor
-│   │   │   ├── modem.rs          # Serial port discovery & batch reader
-│   │   │   ├── reassemble.rs     # Concatenated multi-part SMS reassembly
-│   │   │   ├── live.rs           # Background live listener & notification dispatcher
-│   │   │   └── settings.rs       # Persistent application settings
-│   │   ├── logging.rs            # Thread-safe dual logger (stdout + file)
-│   │   ├── lib.rs                # Tauri builder & plugin registration
-│   │   └── main.rs               # Desktop executable entrypoint
-│   ├── Cargo.toml                # Rust dependencies & crate metadata
-│   └── tauri.conf.json           # Tauri v2 configuration & window settings
-├── package.json                  # Node.js dependencies & scripts
-└── tsconfig.json                 # TypeScript compiler configuration
+│   │   ├── commands/
+│   │   │   ├── mod.rs                # Port / message / log commands, shared state, busy gate
+│   │   │   └── telegram.rs           # Forwarding setup (verify token, detect group, send test)
+│   │   ├── core/                     # Core engine modules
+│   │   │   ├── at.rs                 # AT command line-oriented serial transport
+│   │   │   ├── decoder.rs            # PDU / 7-bit / UCS-2 decoder & OTP extractor + guards
+│   │   │   ├── modem.rs              # Port discovery, liveness probe, reader, confirmed delete
+│   │   │   ├── reassemble.rs         # Concatenated multi-part SMS reassembly
+│   │   │   ├── live.rs               # +CMTI listener, reconnect ladder, SIM retention sweep
+│   │   │   ├── models.rs             # Shared wire types & retention policy
+│   │   │   └── sim_directory.rs      # ICCID → phone number store (sim_numbers.csv)
+│   │   ├── forwarder.rs              # Paced, coalescing Telegram send queue
+│   │   ├── telegram.rs               # Bot API client, HTML escaping, token redaction
+│   │   ├── logging.rs                # Ring buffer + rotating file logger, number masking
+│   │   ├── lib.rs                    # Tauri builder & plugin registration
+│   │   └── main.rs                   # Desktop executable entrypoint
+│   ├── Cargo.toml                    # Rust dependencies & crate metadata
+│   └── tauri.conf.json               # Tauri v2 configuration & window settings
+├── AGENTS.md                         # Working rules for agents in this repo
+├── Memory/                           # Developer knowledge base (index + 01–08, Burmese)
+├── package.json                      # Node.js dependencies & scripts
+└── tsconfig.json                     # TypeScript compiler configuration
 ```
 
 ---

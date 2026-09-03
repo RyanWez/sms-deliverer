@@ -1,8 +1,9 @@
 # 📨 Telegram Forwarding — Stage 1 + Stage 2 (implementation record)
 
-> **ရေးတဲ့ရက်:** 2026-09-03 · **အခြေအနေ:** Stage 1 **ပြီး၊ hardware အတည်ပြီး** ·
-> Stage 2 **ပြီး — OTP အစစ် group ထဲ ရောက်တာ အတည်ပြီး**၊ ကျန် test ၃ ခု (§F)
-> Roadmap entry က `05 §၁.၁`၊ dependency trap က `03 §18`။
+> **ရေးတဲ့ရက်:** 2026-09-03 · **နောက်ဆုံး update:** 2026-09-04 ·
+> **အခြေအနေ:** Stage 1 + Stage 2 **ပြီး — `v1.6.0` မှာ ship ပြီး**၊ hardware test
+> **၄ ခုလုံး အတည်ပြီး** (§F)၊ §G ရဲ့ OTP false positive ၂ ခုကို `v1.6.0` / `v1.6.1` မှာ
+> ပြင်ပြီး။ Roadmap entry က `05 §၁.၁`၊ dependency trap က `03 §18`။
 >
 > **⚠️ ဒီ doc က plan ကနေ record ဖြစ်သွားပြီ။** §B/§C က ဘာလို့ ဒီလို ရေးလိုက်တာလဲ
 > ဆိုတဲ့ အကြောင်းရင်းတွေ ဖြစ်တယ် — implementation က အဲဒီအတိုင်း ပြီးသွားပြီ။
@@ -20,8 +21,9 @@
 | `src/lib/services/api.ts` | `forwardingArgs()` · `startLive` က ပို့တာ · `forward:failed` / `forward:migrated` listener |
 | `src/lib/pages/Settings.svelte` | switch ၃ ခု (§D အတိုင်း) |
 
-**Validation:** Rust test **202** · frontend test 89 · clippy `-D warnings` သန့် ·
+**Validation (Stage 2 ရေးချိန်၊ 2026-09-03):** Rust test **202** · frontend test 89 · clippy `-D warnings` သန့် ·
 `--locked` release check မှန် · `npm run check` 0/0。
+*(v1.6.1 အလွန်မှာ Rust **214** / frontend **89** — လက်ရှိ ကိန်းကို `AGENTS.md` Validation က ကိုင်တယ်။)*
 
 ---
 
@@ -106,6 +108,13 @@ Command layer က `tx.send(...)` (non-blocking) လုပ်ရုံ။ Thread 
 retry။ `catch_unwind` နဲ့ ဝိုင်းပါ (ဒီ repo ရဲ့ per-worker pattern)၊ ပြီးတော့ panic ဖြစ်ရင်
 `live_error` ထဲ **မထည့်ရ** — အဲဒီ field က "ဒီ port က monitoring မလုပ်တော့ဘူး" လို့
 အဓိပ္ပာယ်ရတယ် (AGENTS.md backend invariants)။ Global forwarder status + toast သုံးပါ။
+
+> **တကယ် ရေးလိုက်တာ:** `mpsc` အစား `Arc<Shared>` — `Mutex<VecDeque<ForwardItem>>` +
+> `Condvar wake` + `AtomicBool stop` (`forwarder.rs:169`)。 `mpsc` က queue depth ကို
+> ဘောင်မခတ်နိုင်ဘူး၊ oldest-drop လည် မလုပ်နိုင်ဘူး — §E ရဲ့ "unbounded queue မလုပ်ရ"
+> ကို လိုက်နာရင် `VecDeque` ကို ကိုယ်တိုင် ကိုင်ရတယ်။ `deliver` က non-blocking ဖြစ်တာ၊
+> thread က park နေတာ (spin မဟုတ်) အတူတူပဲ။ ပိတ်တဲ့အခါ handle ကို drop ရုံ **မလုံလောက်** —
+> `Forwarder::shutdown` က ကျန်တာကို final message တစ်ခုအဖြစ် flush ပြီး join တယ်။
 
 ### B.4 Config lifetime
 

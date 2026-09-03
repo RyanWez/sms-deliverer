@@ -2,11 +2,28 @@
 
 > **အခြေခံ:** v1.5.0 (tag `v1.5.0`၊ signed installer စစ်ပြီး၊ PR ၇ ခု merge) ကို
 > **တကယ့် 64-port SIM bank ပေါ် operator ကိုယ်တိုင် run ခဲ့တဲ့ session** ရဲ့ log။
-> **Purpose:** ဒီ doc က backlog မဟုတ်ဘူး — **နောက် release ၂ ခု (v1.5.1 / v1.6.0) ရဲ့
+> **Purpose:** ဒီ doc က backlog မဟုတ်ဘူး — **နောက် release ၂ ခု (v1.6.2 / v1.7.0) ရဲ့
 > အကြောင်းအရာ** ကို field သက်သေနဲ့ တွဲပြီး သတ်မှတ်ထားတာ။ Feature backlog နဲ့ deferred
 > order က `05-feature-roadmap.md`၊ bug casebook က `03-troubleshooting.md`။
 > **File:line သက်သေ အားလုံး v1.5.0 ကုဒ်ပေါ် စစ်ထားတာ** — item ကို နာမည်နဲ့ ရှာပါ၊
 > နံပါတ်နဲ့ မရှာနဲ့ (`commands/mod.rs` က change တိုင်း ရှည်လာတယ်)။
+>
+> **⚠️ 2026-09-04 — version နံပါတ် ရွေ့သွားပြီ** (doc ရေးထားခဲ့တာက `v1.5.1` / `v1.6.0`)
+>
+> ဒီ doc ကို v1.5.0 အလွန်မှာ ရေးခဲ့တာ ဖြစ်ပြီး နောက် release ၂ ခုကို `v1.5.1` နဲ့
+> `v1.6.0` လို့ နာမည်ပေးထားခဲ့တယ်။ ဒါပေမဲ့ အဲ့ဒီ နံပါတ် ၂ ခုကို **တခြား အလုပ်** က
+> သွားယူလိုက်ပြီ:
+>
+> | ထုတ်ပြီးသား | ပါဝင်တာ |
+> |---|---|
+> | **v1.6.0** (2026-09-03) | Telegram group forwarding — Stage 1 + Stage 2 (`08` doc) |
+> | **v1.6.1** (2026-09-03) | Call center နံပါတ်ကို OTP လို့ မဖတ်ရ (`03 §22`) |
+>
+> ဆိုတော့ ဒီ doc ထဲက item တွေက အခု **`v1.6.2` (fix ၄ ခု) နဲ့ `v1.7.0` (live command
+> mailbox)** ဖြစ်တယ်။ **ဘယ်တစ်ခုမှ မ ship သေးဘူး** — 2026-09-04 မှာ code ပေါ် ပြန်စစ်ပြီး
+> အတည်ပြုထားတယ် (§C cleanup status line၊ §D.1 `msg(s)`၊ §D.2 USSD rejection line၊
+> §D.3 `Closed` ready count၊ §B mailbox — အားလုံး ရှိနေတုန်း)။ အောက်မှာ နံပါတ်တွေကို
+> ပြင်ပေးလိုက်ပြီ။ နောက်တစ်ခါ release ရွေ့ရင် ဒီ box ကို လိုက်ပြင်ပါ။
 
 ---
 
@@ -90,7 +107,7 @@ Slot ၂ ခုကို **live path ကနေ** တစ်ပြိုင်န�
 
 ## B. ISSUE 1 — Live mode ဖွင့်ထားရင် Delete / Clear All / Get SIM Numbers လုပ်လို့ မရဘူး
 
-**→ နောက် release ရဲ့ headline item (v1.6.0)။**
+**→ နောက် release ရဲ့ headline item (v1.7.0)။**
 
 - **Symptom:** operator က live ဖွင့်ထားစဉ် row တစ်ခု ရွေးတယ် — `Delete Selected` က
   **disabled**။ `Clear All`၊ `Get SIM Numbers` လည်း အတူတူ။ Live ကို Stop လုပ်မှ ပြန်ရတယ်
@@ -159,7 +176,7 @@ notification queue မှာ backlog တင်နိုင်တယ်။ ဒါ
   mailbox route ရှိတဲ့ command တွေအတွက်ပဲ ကျော်ရမယ် (scan က port ကို ကိုယ်တိုင် ဖွင့်တာမို့
   ဆက် ပိတ်ထားရမယ်)
 
-**Version framing:** capability အသစ် → `feat:` commit → **v1.6.0**။
+**Version framing:** capability အသစ် → `feat:` commit → **v1.7.0**။
 
 ---
 
@@ -190,12 +207,12 @@ notification queue မှာ backlog တင်နိုင်တယ်။ ဒါ
 - **အကြံ (shape):** detect လုပ်သလို "no modem" ကို "failed" ကနေ ခွဲပါ —
   ဥပမာ `SIM cleanup done. Deleted 14  |  30 empty  |  FAILED: 0`။ Counter တစ်ခု ထပ်တိုးတာ
   (`empty`) + `probe_failure`/`NOT_RESPONDING` ကို စစ်တာ + status line wording —
-  **behaviour ပြောင်းတာ မဟုတ်ဘူး** ဆိုတော့ `fix:` commit → **v1.5.1**။
+  **behaviour ပြောင်းတာ မဟုတ်ဘူး** ဆိုတော့ `fix:` commit → **v1.6.2**။
   `sim_cleanup:done` payload ထဲလည် `empty` ထည့်ပေးရင် UI က ကိုက်ညီစွာ toast လုပ်နိုင်မယ်
 
 ---
 
-## D. သေးငယ်တဲ့ item ၂ ခု — **v1.5.1 တစ်ခုတည်းထဲ**
+## D. သေးငယ်တဲ့ item ၃ ခု — **v1.6.2 တစ်ခုတည်းထဲ**
 
 ### D.1 `msg(s)` ဆိုတဲ့ unit တစ်လုံးက အရာ ၂ မျိုးကို ကိုယ်စားပြုနေတယ်
 
@@ -246,12 +263,12 @@ COM39: deleted 5 msg(s)
 - **အကြံ:** `,15` ပါလား မပါလား ပါဝင်စေပါ — ဥပမာ `USSD *88# (with ,15) rejected …` /
   `USSD *88# (bare) rejected …`၊ ဒါမှမဟုတ် `command` ကို တိုက်ရိုက် ရေး။ **OTP/subscriber
   number မပါတဲ့ string ပဲ** ဖြစ်တာမို့ Info level မှာ ဘေးမရှိဘူး (`AT+CUSD` ရဲ့ တကယ့်
-  reply body က debug မှာပဲ ကျန်ရမယ် — AGENTS.md Logging refusal)။ `fix:` → **v1.5.1**
+  reply body က debug မှာပဲ ကျန်ရမယ် — AGENTS.md Logging refusal)။ `fix:` → **v1.6.2**
 
 ### D.3 `LiveEvent::Closed` က ready count ကို မလျှော့ဘူး — status line နဲ့ badge တွက်မတည့်ဘူး
 
 ဒါက `05 §C.6` (L3) ကိုယ်တိုင်ပါ။ ဒါပေမဲ့ **v1.5.0 က ဒါကို ပိုမြင်သာစေပြီး ပိုရောက်လွယ်
-စေတယ်** ဆိုတာ ဒီမှာ မှတ်ထားရမယ် — အဲ့ဒါကြောင့် C.6 ထဲ ဆက်ချန်ထားတာထက် v1.5.1 ထဲ
+စေတယ်** ဆိုတာ ဒီမှာ မှတ်ထားရမယ် — အဲ့ဒါကြောင့် C.6 ထဲ ဆက်ချန်ထားတာထက် v1.6.2 ထဲ
 ဆွဲထည့်တာ တန်တယ်။
 
 - **Symptom:** worker တစ်ခု လုံးလုံး ထွက်သွားရင် (transport သေတာ ဒါမှမဟုတ် panic)
@@ -279,7 +296,7 @@ COM39: deleted 5 msg(s)
   က `live_failed` ကနေ ပြပြီးသားမို့ ပျောက်မသွားဘူး)။ **`live_offline` ထဲ ထည့်မထည့်ကို
   တမင် ဆုံးဖြတ်ရမယ်** — `Closed` က "modem မရှိဘူး" မဟုတ်ဘဲ "worker သေတယ်" ဖြစ်တာမို့
   `no modem` အဖြစ် ရေတွက်ရင် လွဲမှားချက် အသစ် ဖြစ်မယ်။ Test: `Closed` ပြီးနောက်
-  `live_status` က ready ကို လျှော့ကြောင်း။ `fix:` → **v1.5.1**
+  `live_status` က ready ကို လျှော့ကြောင်း။ `fix:` → **v1.6.2**
 
 ---
 
@@ -299,9 +316,9 @@ COM39: deleted 5 msg(s)
 
 | Release | ပါဝင်တာ | Commit type | Risk | Hardware လိုလား |
 |---|---|---|---|---|
-| **v1.5.1** | §C (cleanup status line က "no modem" ကို failure အဖြစ် ရေတာ) + §D.1 (`msg(s)` unit ၂ မျိုး) + §D.2 (USSD rejection line) + §D.3 (`Closed` က ready count မလျှော့တာ) | အားလုံး `fix:` | **နိမ့်** — counter/wording ပဲ၊ **behaviour ပြောင်းတာ မရှိဘူး** | မလို (unit test နဲ့ လုံလောက်) |
-| **v1.6.0** | §B (live worker command mailbox — Delete / Clear All / Get SIM Numbers ကို live ဖွင့်ထားစဉ် လုပ်နိုင်တာ) | `feat:` | **မြင့်** — live loop timing ပြောင်းတယ် | **လိုတယ် — `04 §G` playbook**၊ ပြီးတော့ `Memory/03` case entry အသစ် |
+| **v1.6.2** | §C (cleanup status line က "no modem" ကို failure အဖြစ် ရေတာ) + §D.1 (`msg(s)` unit ၂ မျိုး) + §D.2 (USSD rejection line) + §D.3 (`Closed` က ready count မလျှော့တာ) | အားလုံး `fix:` | **နိမ့်** — counter/wording ပဲ၊ **behaviour ပြောင်းတာ မရှိဘူး** | မလို (unit test နဲ့ လုံလောက်) |
+| **v1.7.0** | §B (live worker command mailbox — Delete / Clear All / Get SIM Numbers ကို live ဖွင့်ထားစဉ် လုပ်နိုင်တာ) | `feat:` | **မြင့်** — live loop timing ပြောင်းတယ် | **လိုတယ် — `04 §G` playbook**၊ ပြီးတော့ `Memory/03` case entry အသစ် |
 
-> **အစဉ်လိုက်:** v1.5.1 ကို အရင် ထုတ်ပါ။ ဒါက risk နိမ့်ပြီး operator ရဲ့ status line ကို
+> **အစဉ်လိုက်:** v1.6.2 ကို အရင် ထုတ်ပါ။ ဒါက risk နိမ့်ပြီး operator ရဲ့ status line ကို
 > ချက်ချင်း ယုံကြည်လို့ ရစေတယ် — §B ရဲ့ ကြီးမားတဲ့ change ကို debug လုပ်တဲ့အခါ
 > **status line ကို ယုံနိုင်တာက ကိရိယာ** ဖြစ်လာမယ်။
