@@ -174,6 +174,10 @@ OTP detection က `src-tauri/src/core/decoder.rs::extract_otp` — regex တစ�
    *(`KW_CONFIRM` စာလုံးပေါင်း အမှား ရှိခဲ့တယ် — v1.4.0 မှာ ပြင်ပြီး၊ doc 03 §T3)*
 3. `P1` (keyword ၂၄ char အတွင်း digit 4–8) → `P2` (digit + `is|as your|`ဖြစ်) → `P3` (bare 6-digit)
    → `P4` (bare 4–8 digit) — ဒီ **order** ကိုယ်တိုင် precision ကို ထိန်းတာ
+4. Match တစ်ခုချင်းစီကို **guard ၂ ခု** နဲ့ စစ်တယ် (pattern မဟုတ်ဘူး၊ filter ပါ):
+   `in_date_or_time()` က ရက်စွဲ/အချိန် field (`03 §21`)၊ `after_phone_label()` က call
+   center/hotline နံပါတ် (`03 §22`)။ ဖယ်လိုက်ရင် `captures_iter()` က ကျန်တဲ့ match တွေဆီ
+   ဆက်သွားတယ်
 
 UI ရဲ့ placeholder ကိုယ်တိုင် `\b(\d{4,8})\b` — ဒါက `P4` ချည်းသက်သက်၊ **gate မပါ**။ Operator က
 တစ်ခုခု ရိုးရိုး ရိုက်ထည့်လိုက်ရင် keyword gate ပျောက်တယ်၊ ပြီးတော့ promotional SMS ရဲ့ ငွေလက်ကျန်၊
