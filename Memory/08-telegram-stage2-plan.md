@@ -175,36 +175,41 @@ default ကနေ ရမယ် — migration မလိုဘူး။
 
 ---
 
-## F. Hardware test — ၂ ခု အတည်ပြီး၊ ၂ ခု ကျန်
-
-**Field run (2026-09-03 20:48, bank 64 port / modem 34 / SIM 34, KBZPay OTP အစစ်):**
-
-**Field run ၂ (21:51 + 21:54, `CHAT_WRITE_FORBIDDEN` ပြင်ပြီးနောက်):** OTP `101370` နဲ့
-`841640` **နှစ်ခုလုံး** group ထဲ ရောက်တယ် — SIM number၊ sender၊ body အားလုံးနဲ့။
-`03 §20` (bot ကို admin promote လုပ်တာ) က တကယ့် ဖြေရှင်းချက် ဖြစ်တာ အတည်ပြီး။
-Log နဲ့ Telegram bubble timestamp တူတယ် (21:51:34 / 21:54:37)。
+## F. Hardware test — ✅ ၄ ခုလုံး အတည်ပြီး (2026-09-03 ည)
 
 | # | စမ်းရမယ့်အရာ | အခြေအနေ |
 |---|---|---|
-| 1 | မြန်မာစာ ရှည်တဲ့ (concat) OTP — group ထဲ bubble **၁ ခုပဲ**၊ fragment + full ၂ ခု မဟုတ်ဘူး (`editMessageText` path) | ⏳ **မစမ်းရသေး** — English single-part SMS ပဲ ရခဲ့တယ် |
-| 2 | Live စတဲ့အခါ SIM ထဲ ရှိပြီးသား message **မ forward ဖြစ်ရ** (`Batch` arm) | ✅ **အတည်ပြီး** |
-| 3 | Port အများက burst — coalescing + OTP သက်တမ်း အတွင်း ရောက်တာ | ⏳ **မစမ်းရသေး** — OTP တွေ ၃ မိနစ် ကွာကွာ ဝင်ခဲ့တာမို့ pacing တောင် မထိခဲ့ဘူး |
-| 4 | Network ပြတ်ပြီး ပြန်လာတဲ့အခါ queue ဆက်ပို့တာ / ဘောင်ပြည့်ရင် ဘာဖြစ်တာ | ⏳ **retry code ရေးပြီး (`03 §19`)၊ field မစမ်းရသေး** |
+| 1 | concat OTP — group ထဲ bubble **၁ ခုပဲ** | ✅ **အတည်ပြီး** — 21:59:26→34 မှာ part **၄ ခု** (`idx 4,5,6,7 [concat]`)၊ `NEW SMS` **၁ ခေါက်ပဲ**၊ Telegram မှာ မြန်မာစာ အပြည့်အစုံ bubble **၁ ခု** |
+| 2 | Live စတဲ့အခါ SIM ထဲ ရှိပြီးသား message **မ forward ဖြစ်ရ** (`Batch` arm) | ✅ **အတည်ပြီး** (20:48 run) |
+| 3 | Burst — coalescing | ✅ **အတည်ပြီး** — 22:01:31 + 22:01:44 OTP ၂ ခု outage အတွင်း queue ဝင်ပြီး 22:02 မှာ `🔐 2 new messages` bubble **တစ်ခုထဲ** ရောက်တယ် |
+| 4 | Network ပြတ်ပြီး ပြန်လာတဲ့အခါ queue ဆက်ပို့တာ | ✅ **အတည်ပြီး** — 21:59:02 (`retrying in 5s` → 21:59 မှာ `145299` ရောက်တယ်) နဲ့ 22:01:46→22:01:55→22:02:09 (`5s → 10s → 20s` exponential backoff၊ ပြီးမှ ရောက်တယ်) |
 
-**#2 ရဲ့ သက်သေ (အရေးကြီးတယ်):** Live မစခင် SIM ပေါ်မှာ OTP `305938` (20:44) ရှိနေတယ်။
-Live စတဲ့အခါ log က `/dev/ttyUSB47: initial batch 1 msg(s)` (= `Batch` arm) လို့ ပြတယ်၊
-ပြီးတော့ Inbox မှာ row ၂ ခု ရှိပေမယ့် **Telegram ထဲ `894615` (20:48, `Sms` arm) တစ်ခုပဲ
-ရောက်တယ်**။ `Batch` arm ကို forward မလုပ်တာ hardware ပေါ်မှာ အတည်ဖြစ်သွားပြီ —
-မဟုတ်ရင် live စလိုက်တိုင်း SIM ထဲ ရှိပြီးသား inbox တစ်ခုလုံး group ထဲ ပုံချမယ်။
+**Multi-SIM ပါ အတည်ပြီး:** coalesced bubble မှာ `09671973972` (ttyUSB14) ပြတယ် —
+အရင် run တွေက `09671312573` (ttyUSB47)。
 
-**အခြား အတည်ပြီးတာ:**
-* `ForwardingConfigDto` plumbing — log: `Telegram forwarding on (otp=true, non_otp=false)`
-* Log masking က real OTP ပေါ်မှာ ကိုင်တယ် — `NEW SMS on /dev/ttyUSB47: from=***Pay
-  otp=found (6 digits)`။ Code ကိုယ်တိုင် log ထဲ **မပါဘူး**၊ sender ပါ mask ဖြစ်တယ်
-* `origin()` က SIM number ကို ရွေးတယ် (tty မဟုတ်ဘူး) — bubble မှာ `09671312573` ပြတယ်
-* HTML escaping — KBZPay body ရဲ့ `!` / `.` တွေ မှန်မှန် render ဖြစ်တယ်
+---
 
-**#1 ကို စမ်းချင်ရင်:** မြန်မာစာ ၇၀ လုံးထက် ပိုရှည်တဲ့ SMS တစ်ခု SIM ဆီ ပို့ပါ
-(carrier ရဲ့ promo message တွေ အများစုက အဲဒီပုံစံ)။ Group ထဲ bubble ၂ ခု ထွက်လာရင်
-`Some` arm ရဲ့ edit path မှားနေတယ် — `03` မှာ case entry ရေးပါ။
+## G. Field test မှာ တွေ့တဲ့ **ကျန်နေတဲ့ ပြဿနာ ၁ ခု** — OTP false positive
+
+**`2026` ကို OTP လို့ ဖတ်တာ။** 21:59 မှာ MyID ရဲ့ **login notification** (OTP message
+မဟုတ်ဘူး) ကို forward လုပ်ပြီး OTP badge မှာ `2026` ပြတယ် — အဲဒါက message ထဲက
+**ရက်စွဲ `2026/09/03` ရဲ့ ခုနှစ်** ပါ။
+
+**ဘာလို့ ဖြစ်လဲ (`decoder::extract_otp` cascade):**
+1. `KEYWORD_RE` gate က **ဖွင့်လိုက်တယ်** — message ထဲ "OTP" ပါတယ်၊ ဒါပေမယ့် အဲဒါက
+   *"OTP ကို မည်သူ့မျှ မမျှဝေရန်"* ဆိုတဲ့ **သတိပေးစာ** ဖြစ်တယ်၊ code မဟုတ်ဘူး
+2. `P1` (keyword ပြီး ၂၄ လုံးအတွင်း digit) — မတွေ့ဘူး
+3. `P2`/`P3` — ၆ လုံး run မရှိဘူး
+4. **`P4` (bare 4–8 digits)** က `2026` ကို ဖမ်းလိုက်တယ်
+
+**Forwarding က ဒါကို ပိုဆိုးစေတယ်:** အရင်က UI ပေါ်မှာ တစ်ယောက်ပဲ မြင်တာ၊ အခု
+team တစ်ခုလုံးရဲ့ ဖုန်းဆီ ရောက်တယ်၊ ပြီးတော့ ၂၀/min ဘောင်ကိုပါ စားတယ်။
+
+**အကြံပြု fix (သီးသန့် change၊ `03` case entry နဲ့):** `P4` (ပြီးတော့ `P3`) မှာ
+**ရက်စွဲ/အချိန် context ကို ဖယ်**ပါ — digit run ရဲ့ ဘေးမှာ `/`, `:`, `-` ရှိရင်
+(`2026/09/03`, `21:59:21`) OTP မဟုတ်ဘူး။ Test case: ဒီ MyID login notification
+ကိုယ်တိုင်။ **Gate ကို မထိရ၊ cascade ကို operator-editable မလုပ်ရ** (`05 §B.1`)。
+
+**Regression မဟုတ်ဘူး:** `extract_otp` ကို ဒီ change တွေ မထိခဲ့ဘူး — forwarding က
+ရှိပြီးသား behaviour ကို ပိုမြင်သာစေတာပါ။
 

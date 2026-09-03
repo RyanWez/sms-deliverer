@@ -61,14 +61,13 @@ Settings ထဲ လူ စီမံတဲ့ field လုံးဝ မလို�
 
 **Stage 2 — ✅ ပြီးပြီ · OTP အစစ် hardware ပေါ်မှာ ရောက်တာ အတည်ပြီး · အသေးစိတ် `08`:**
 
-> **Field run 2026-09-03 20:48** (modem 34, KBZPay OTP အစစ်): live SMS `894615` က
-> Telegram group ထဲ ရောက်တယ် — SIM number `09671312573`၊ sender၊ body အားလုံးနဲ့။
-> Live မစခင် SIM ပေါ် ရှိနေတဲ့ OTP `305938` က `Batch` arm ကနေ လာတာမို့
-> **forward မဖြစ်ဘူး** (ဒါက `08 §F` ရဲ့ test #2၊ အတည်ပြီး)။ Log masking က real code
-> ပေါ်မှာ ကိုင်တယ်: `from=***Pay otp=found (6 digits)`。
-> **21:51 + 21:54 မှာ ထပ်စမ်းတာ ၂ ခုလုံး ရောက်တယ်** (`03 §20` ပြင်ပြီးနောက်)。
-> concat/မြန်မာစာ edit path၊ burst coalescing၊ network outage recovery ၃ ခု
-> **မစမ်းရသေး** — `08 §F`。
+> **Field verification ✅ ပြီးပြီ (2026-09-03 ည, modem 34):** hardware test **၄ ခုလုံး**
+> အတည်ပြီး — single OTP · `Batch` arm မ forward တာ · concat (part ၄ ခု → bubble ၁ ခု,
+> မြန်မာစာ) · outage retry (5s→10s→20s backoff) · burst coalescing (`🔐 2 new messages`)。
+> Log masking နဲ့ token redaction နှစ်ခုလုံး တကယ့် failure ပေါ်မှာ ကိုင်တယ်။ အသေးစိတ် `08 §F`。
+>
+> **ကျန်နေတဲ့ ပြဿနာ ၁ ခု (regression မဟုတ်ဘူး):** `extract_otp` က MyID login
+> notification ရဲ့ ရက်စွဲ `2026/09/03` ကနေ `2026` ကို OTP လို့ ဖတ်တယ် — `08 §G`。
 * Live event hook — `Sms` arm **၂ ခုလုံး** `deliver` လုပ်တယ်။ Forwarder က `item.id` ကို
   key ထားပြီး ဒုတိယအခေါက်ကို `editMessageText` အဖြစ် ပြောင်းတယ် (bubble အသစ် မထပ်ဘူး)
 * Coalescing queue — `forwarder.rs`: `MIN_INTERVAL` 3.5s (≈17/min, ၂၀ ဘောင်အောက်)၊
