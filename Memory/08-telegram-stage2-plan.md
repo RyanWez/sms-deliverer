@@ -189,9 +189,9 @@ default ကနေ ရမယ် — migration မလိုဘူး။
 
 ---
 
-## G. Field test မှာ တွေ့တဲ့ OTP false positive — ✅ **ပြင်ပြီး** (`03 §21`)
+## G. Field test မှာ တွေ့တဲ့ OTP false positive ၂ ခု — ✅ **ပြင်ပြီး** (`03 §21`, `03 §22`)
 
-**`2026` ကို OTP လို့ ဖတ်ခဲ့တာ။** 21:59 မှာ MyID ရဲ့ **login notification** (OTP message
+**၁။ `2026` ကို OTP လို့ ဖတ်ခဲ့တာ။** 21:59 မှာ MyID ရဲ့ **login notification** (OTP message
 မဟုတ်ဘူး) ကို forward လုပ်ပြီး OTP badge မှာ `2026` ပြခဲ့တယ် — message ထဲက
 **ရက်စွဲ `2026/09/03` ရဲ့ ခုနှစ်** ပါ။
 
@@ -200,4 +200,15 @@ default ကနေ ရမယ် — migration မလိုဘူး။
 မဟုတ်ဘူး။ `extract_otp` က `captures_iter()` သုံးတာမို့ ရှေ့မှာ ရက်စွဲ ရှိရင် နောက်မှာ
 ရှိတဲ့ တကယ့် code ကို ဖျောက်မပစ်ဘူး။ Gate ရော cascade ရော **မထိထားဘူး**
 (`05 §B.1` hard refusal)。Test ၄ ခု။ အသေးစိတ် `03 §21`。
+
+**၂။ `3211` ကို OTP လို့ ဖတ်ခဲ့တာ (v1.6.1)。** နောက်တစ်ည 01:12 မှာ KBZPay ရဲ့ **logout
+notification** ကို forward လုပ်ပြီး OTP badge မှာ `3211` ပြခဲ့တယ် — အဲဒါ **KBZPay Call
+Center နံပါတ်** ပါ။ Gate ကို ဖွင့်ခဲ့တာ message ကိုယ်တိုင်ရဲ့ "employees will never ask
+for your OTP, PIN or NRC" သတိပေးစာ ဖြစ်တယ် — §21 နဲ့ **shape တူတူပဲ**。
+
+**Fix:** `decoder::after_phone_label()` guard (guard #၂) — number ရဲ့ ရှေ့ text က phone
+label (call center · hotline · helpline · customer service · contact · call · dial · tel ·
+phone · **ဖုန်း**) နဲ့ **အဆုံးသတ်ရင်** အဲဒီ run က ဖုန်းနံပါတ် ဖြစ်တယ်။ Window မဟုတ်ဘဲ
+**suffix** match ဖြစ်တာနဲ့ `.`/`,` ကို glue မလုပ်တာက false negative ကို ကာတယ်။ Cascade
+ကို ဒီတစ်ခါလည်း မထိဘူး。Test ၄ ခု။ အသေးစိတ် `03 §22`。
 

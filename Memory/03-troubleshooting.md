@@ -1,4 +1,4 @@
-# 03 — Troubleshooting Casebook (တကယ်ဖြစ်ခဲ့တဲ့ ၁၇ ခု)
+# 03 — Troubleshooting Casebook (တကယ်ဖြစ်ခဲ့တဲ့ ၂၂ ခု)
 
 > Format: Symptom → Root Cause → Fix → Preventive Rule. Debug ခင် ဒီထဲ အရင်ရှာပါ။
 
@@ -548,6 +548,60 @@
   ရေးရင် ဘေးတစ်ဝိုက်ကို ကိုယ်တိုင် စစ်ရမယ်
 - **Rule ၃:** `captures()` (ပထမဆုံး match) က pattern တစ်ခုမှာ match အများ ဖြစ်နိုင်ရင်
   **ဆုံးရှုံးမှု ဖန်တီးတယ်** — ရက်စွဲကို ဖယ်လိုက်တာနဲ့ ကျန်တဲ့ match တွေဆီ ဆက်သွားရမယ်
+
+## 2️⃣2️⃣ `extract_otp` က Call Center ဖုန်းနံပါတ် `3211` ကို OTP လို့ ဖတ်တာ
+
+- **Symptom (field, 2026-09-04 01:12):** KBZPay ရဲ့ **logout notification** ကို Telegram
+  group ထဲ forward လုပ်ပြီး OTP badge မှာ **`3211`** ပြတယ် — အဲဒါ KBZPay ရဲ့ **Call Center
+  နံပါတ်** ပါ။ တူတူ body က ၂ bubble ပေါ်ခဲ့တယ် (message ကိုယ်တိုင် ၂ ခါ လာတာလား ဆိုတာ
+  မစစ်ရသေးဘူး — forwarder ရဲ့ `Amend` path က id တူရင် **edit** ပဲ လုပ်တာမို့ bubble အသစ်
+  မဖန်တီးဘူး၊ ဒါကြောင့် id ၂ ခု ဖြစ်ဖွယ် ရှိတယ်)
+- **Message ထဲမှာ ရှိတာ:** `... please change your PIN immediately or contact KBZPay Call
+  Center 3211.` ပြီးတော့ `... employees will never ask for personal information such as
+  OTP, PIN, or NRC ...` — **code မပါဘူး**
+- **Root Cause — §21 နဲ့ shape တူတူ၊ ဒါပေမယ့် guard အသစ် လိုတယ်:**
+  1. `KEYWORD_RE` gate က ဖွင့်လိုက်တယ် — "PIN"၊ "OTP" ပါတယ်၊ ဒါပေမယ့် အဲဒါက *"ဘယ်တော့မှ
+     မတောင်းဘူး"* ဆိုတဲ့ **သတိပေးစာ** ပါ (§21 Rule ၁ ထပ်အတည်ဖြစ်တာ)
+  2. `PIN` ကနေ `3211` ထိ **၄၃ လုံး** ကွာတယ် — `P1` ရဲ့ ၂၄ လုံးဘောင် မမိဘူး · `P2`/`P3` မတွေ့ဘူး
+  3. **`P4` (`\b[0-9]{4,8}\b`)** က `3211` ကို ဖမ်းလိုက်တယ် — hotline က code နဲ့ **shape
+     အတိအကျ တူတယ်**၊ ရှေ့မှာ ရှိတဲ့ စကားလုံးကပဲ ခွဲပြတယ်
+- **`in_date_or_time` က ဒါကို မကာနိုင်ဘူး** — `3211` ဘေးမှာ separator မရှိဘူး၊ space နဲ့
+  full stop ပဲ။ ဒါကြောင့် **structural guard မဟုတ်ဘဲ lexical guard** လိုတယ်
+- **`Memory/05 §B.1` က ဒါကိုပါ ကြိုမြင်ထားခဲ့တယ်:** "promotional SMS ရဲ့ ငွေလက်ကျန်၊ ရက်စွဲ၊
+  **ဖုန်းနံပါတ် အပိုင်းအစ** တွေ OTP အဖြစ် match လာတယ်" — ရက်စွဲ (§21) ပြီးတော့ ဖုန်းနံပါတ်
+  (ဒီတစ်ခု)၊ ၂ ခုလုံး field မှာ တကယ် ပေါ်လာပြီ။ ကျန်တာ **ငွေလက်ကျန်** ပဲ
+- **Fix — `after_phone_label()` (guard #၂)၊ cascade ကို မထိဘဲ:**
+  * `PHONE_LABELS`: call center/centre · customer service/care · service center/centre ·
+    hotline · hot line · helpline · help line · contact · call · dial · tel · telephone ·
+    phone · **ဖုန်း**
+  * `LABEL_FILLER`: `at` · `on` · `no.` · `no` · `number` · `is` · `us` · `our` · **နံပါတ်** —
+    "Call Center **at** 3211"၊ "hotline **number is** 3211"၊ "contact **us** 3211" အတွက်
+  * **Window မဟုတ်ဘူး — suffix match:** number ရဲ့ ရှေ့ text က label နဲ့ **အဆုံးသတ်ရမယ်**။
+    Window ဆိုရင် message ထဲ ဘယ်နေရာက "call" မဆို မဆိုင်တဲ့ code ကို veto လုပ်နိုင်တယ်
+  * **`LABEL_GLUE` ထဲ `.` နဲ့ `,` မထည့်ဘူး** — အဲဒါက clause ကို ပိတ်တယ်။ "We blocked a
+    call. 123456 is your code" က code ကို **ဆက်ရရမယ်**
+  * **Word boundary:** `hotel 3211` က `tel` မဟုတ်ဘူး၊ `recall` က `call` မဟုတ်ဘူး။ ဒါပေမယ့်
+    label ရဲ့ ပထမ char က ASCII **မဟုတ်ရင်** boundary မတောင်းဘူး — မြန်မာစာက စကားလုံးကြား
+    space မခြားတာမို့ "ဖုန်းနံပါတ်" ကို ခွဲဖို့ ဒါပဲ လုပ်လို့ ရတယ်
+- **Full MSISDN က ဒီ guard မလိုဘူး:** `09…` က ၁၁ လုံး၊ `P4` က ၈ လုံးမှာ ရပ်တယ်၊ `\b` က
+  ပိုရှည်တဲ့ digit run **အတွင်း** match မလုပ်ဘူး — အဲဒါ အရင်ကတည်းက လွတ်နေတယ်။ ကျန်တာက
+  **short code** (4–8 digit) ပဲ
+- **`to_ascii_lowercase()` က byte index ကို မပြောင်းဘူး** — ASCII case fold က byte
+  အရေအတွက် တူတူပဲ၊ multi-byte sequence ကို မထိဘူး၊ ဒါကြောင့် `normalized` ကနေ ရတဲ့ match
+  offset က `lower` မှာ **တူတူ text** ကို ရည်ညွှန်းတယ်
+- **Test ၄ ခု:** `a_call_centre_number_is_not_an_otp` (KBZPay logout body အစစ်)၊
+  `a_call_centre_number_does_not_hide_the_real_code` (hotline ရှေ့၊ code နောက်)၊
+  `a_labelled_number_is_rejected_however_it_is_written` (label ၅ မျိုး + မြန်မာ
+  "ဖုန်းနံပါတ် ၃၂၁၁")၊ `a_label_in_another_clause_does_not_veto_a_code` (`.` · `,` · `hotel`)
+- **Rule ၁:** OTP false positive က **pattern ပြင်ရမယ့် ပြဿနာ မဟုတ်ဘူး** — filter ထပ်ထည့်ရမယ့်
+  ပြဿနာ ဖြစ်တယ်။ §21 နဲ့ ဒီတစ်ခု နှစ်ခုလုံး guard ပဲ ထည့်တယ်၊ `P1`–`P4` နဲ့ gate ကို
+  လက်မထိဘူး (`05 §B.1` hard refusal)
+- **Rule ၂:** Lexical guard မှာ **glue ထဲ ဘယ် punctuation ထည့်လဲ** က အဓိကပါ။ `.` ကို glue
+  လုပ်လိုက်ရင် အရင် sentence ထဲက label က နောက် sentence ရဲ့ code ကို ဖျက်တယ် — ဒီ app မှာ
+  **false negative က false positive ထက် ပိုဆိုးတယ်**: `forwardNonOtp` default က `false`
+  ဖြစ်တာမို့ OTP မတွေ့ရင် အဲဒီ message က Telegram ဆီ **လုံးဝ မရောက်ဘူး**
+- **Rule ၃:** Bank/telco notification တွေက hotline ကို **message တိုင်းမှာ** ထည့်တယ်။ `P4`
+  က bare digit ဖမ်းတဲ့အခါ hotline နဲ့ တွဲမြင်တာ **ပုံမှန်**၊ ကြုံရာ မဟုတ်ဘူး
 
 ## ⚠️ Latent Traps (မဖြစ်သေးဘူး၊ ဒါပေမဲ့ ချောင်းနေတာ)
 

@@ -7,6 +7,10 @@ const KW_KODE: &str = "\u{1000}\u{102F}\u{1012}\u{103A}";
 const KW_CONFIRM: &str = "\u{1021}\u{1010}\u{100A}\u{103A}\u{1015}\u{103C}\u{102F}";
 const KW_SECURE: &str = "\u{101C}\u{102F}\u{1036}\u{1001}\u{103C}\u{102F}\u{1036}";
 const KW_IS: &str = "\u{1016}\u{103C}\u{1005}\u{103A}";
+/// ဖုန်း — "phone", a label in front of a number to ring, not a code.
+const KW_PHONE: &str = "\u{1016}\u{102F}\u{1014}\u{103A}\u{1038}";
+/// နံပါတ် — "number", filler between that label and the digits.
+const KW_NUMBER: &str = "\u{1014}\u{1036}\u{1015}\u{102B}\u{1010}\u{103A}";
 
 static KEYWORD_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
@@ -170,12 +174,18 @@ pub fn extract_otp(text: &str) -> Option<String> {
         return None;
     }
     let bytes = normalized.as_bytes();
+    // Folded once for the phone-label lookbehind. ASCII case folding rewrites
+    // bytes in place and never touches a byte of a multi-byte sequence, so a
+    // match offset taken from `normalized` addresses the same text here.
+    let lower = normalized.to_ascii_lowercase();
     for re in [&*P1, &*P2, &*P3, &*P4] {
-        // Every match is considered, not just the first: a date earlier in the
-        // sentence must not hide the real code later in it.
+        // Every match is considered, not just the first: a date or a call-centre
+        // number earlier in the sentence must not hide the real code later in it.
         for cap in re.captures_iter(&normalized) {
             if let Some(m) = cap.get(1) {
-                if !in_date_or_time(bytes, m.start(), m.end()) {
+                if !in_date_or_time(bytes, m.start(), m.end())
+                    && !after_phone_label(&lower, m.start())
+                {
                     return Some(m.as_str().to_string());
                 }
             }
@@ -229,6 +239,95 @@ fn digit_run_starting_at(bytes: &[u8], start: usize) -> usize {
         n += 1;
     }
     n
+}
+
+/// Punctuation that can sit between a phone-number label and the number:
+/// `Call Center: 3211`, `hotline - 3211`, `call (3211)`.
+///
+/// Sentence terminators are deliberately **absent**. A full stop closes the
+/// clause the label belongs to, so `We blocked a call. 123456 is your code` has
+/// to keep its code, and a comma separates clauses the same way.
+const LABEL_GLUE: &[char] = &[
+    ' ', '\t', '\r', '\n', ':', '-', '#', '(', ')', '+', '=', '"', '\'',
+];
+
+/// Filler words between the label and the digits: `Call Center `**at**` 3211`,
+/// `hotline `**number is**` 3211`, `contact `**us**` 3211`.
+const LABEL_FILLER: &[&str] = &[
+    "at", "on", "no.", "no", "number", "is", "us", "our", KW_NUMBER,
+];
+
+/// Phrases that announce a number to ring rather than a code to type.
+///
+/// `call center` earns its own entry even though `call` is here: after the glue
+/// is peeled the text ends in `center`, not `call`.
+const PHONE_LABELS: &[&str] = &[
+    "call center",
+    "call centre",
+    "callcenter",
+    "callcentre",
+    "customer service",
+    "customer care",
+    "service center",
+    "service centre",
+    "hotline",
+    "hot line",
+    "helpline",
+    "help line",
+    "contact",
+    "call",
+    "dial",
+    "tel",
+    "telephone",
+    "phone",
+    KW_PHONE,
+];
+
+/// Whether a captured digit run is the number the message is telling the reader
+/// to ring — `3211` in `contact KBZPay Call Center 3211`.
+///
+/// A KBZPay logout notification opens the keyword gate on its own advice ("KBZ
+/// Bank employees will never ask for your OTP, PIN or NRC") while carrying no
+/// code, so `P4` used to hand back the hotline and the operator got `3211` on a
+/// phone — twice, because the same body arrives after every login.
+///
+/// Only short codes need this guard. A full MSISDN never reaches the patterns:
+/// `P4` stops at eight digits and `\b` will not match inside a longer run, so an
+/// 11-digit `09…` number is already out of reach. What is left is the 4–8 digit
+/// hotline, which has exactly the shape of a code and is told apart only by the
+/// words in front of it.
+///
+/// The label is matched as a **suffix** of the text before the run, never
+/// searched for in a window: a window would let any `call` elsewhere in the
+/// message veto a code that has nothing to do with it.
+fn after_phone_label(lower: &str, start: usize) -> bool {
+    let mut prefix = lower[..start].trim_end_matches(LABEL_GLUE);
+    // Filler is peeled one word at a time; three covers the longest real form,
+    // "call center number is 3211".
+    for _ in 0..3 {
+        let Some(shorter) = LABEL_FILLER
+            .iter()
+            .find_map(|word| strip_trailing_word(prefix, word))
+        else {
+            break;
+        };
+        prefix = shorter.trim_end_matches(LABEL_GLUE);
+    }
+    PHONE_LABELS
+        .iter()
+        .any(|label| strip_trailing_word(prefix, label).is_some())
+}
+
+/// `s` without a trailing `word`, when `word` ends `s` *as a word*.
+///
+/// The boundary check is what keeps `hotel 3211` and `recall 3211` out of the
+/// `tel` and `call` labels. It is required only of a label that starts with an
+/// ASCII letter: Burmese is written without spaces between words, so demanding a
+/// boundary before ဖုန်း would mean it never matched anything.
+fn strip_trailing_word<'a>(s: &'a str, word: &str) -> Option<&'a str> {
+    let rest = s.strip_suffix(word)?;
+    let needs_boundary = word.starts_with(|c: char| c.is_ascii_alphanumeric());
+    (!needs_boundary || !rest.ends_with(char::is_alphanumeric)).then_some(rest)
 }
 
 fn normalize_myanmar_digits(text: &str) -> String {    text.chars()
@@ -1022,6 +1121,72 @@ mod tests {
             extract_otp("Your verification code: 1234-5678"),
             Some("1234".into()),
             "a code split in half is not a date"
+        );
+    }
+
+    /// The second field failure of the same shape: a KBZPay logout notification
+    /// opens the keyword gate on its own advice ("employees will never ask for
+    /// your OTP, PIN or NRC"), carries no code, and used to hand back the
+    /// call-centre short code printed in the paragraph above it.
+    #[test]
+    fn a_call_centre_number_is_not_an_otp() {
+        let kbzpay = "(KBZPay) You have successfully logged out of this device and \
+                      completed logging into your new device.\n\nIf you did not perform \
+                      this action, please change your PIN immediately or contact KBZPay \
+                      Call Center 3211.\n\nPlease note that KBZ Bank employees will never \
+                      ask for personal information such as OTP, PIN, or NRC. To protect \
+                      yourself from fraud, do not share your personal information with \
+                      anyone.";
+        assert_eq!(extract_otp(kbzpay), None);
+    }
+
+    /// The sibling body from the same sender, and the reason the hotline is
+    /// skipped rather than the scan stopped: here the hotline comes first and the
+    /// real code follows it.
+    #[test]
+    fn a_call_centre_number_does_not_hide_the_real_code() {
+        let kbzpay = "(KBZPay) You are attempting to login from a new device and if this \
+                      request seems suspicious, please contact KBZPay Call Center at 3211. \
+                      Your OTP: 831245 (Do not share it with anyone)";
+        assert_eq!(extract_otp(kbzpay), Some("831245".into()));
+    }
+
+    /// The label forms these messages actually use. The first two are matched by
+    /// `P1`, not the bare-digit fallback — a hotline can sit close enough to a
+    /// keyword to be read as the code that keyword announced.
+    #[test]
+    fn a_labelled_number_is_rejected_however_it_is_written() {
+        for body in [
+            "Please change your PIN or call 3211 now",
+            "For help with your PIN, our hotline: 3211",
+            "Your account is locked. Customer service no. 3211 for a new PIN.",
+            "Suspicious code request? Dial 1876.",
+            "Contact us 3211 to reset your PIN",
+        ] {
+            assert_eq!(extract_otp(body), None, "{body}");
+        }
+        // ကုဒ် အတွက် ဖုန်းနံပါတ် ၃၂၁၁ — "phone number 3211 for the code". The
+        // Myanmar digits are folded to ASCII before the patterns run, so the
+        // label in front of them has to be recognised in Myanmar too.
+        let burmese = "\u{1000}\u{102F}\u{1012}\u{103A} \u{1021}\u{1010}\u{103D}\u{1000}\u{103A} \u{1016}\u{102F}\u{1014}\u{103A}\u{1038}\u{1014}\u{1036}\u{1015}\u{102B}\u{1010}\u{103A} \u{1043}\u{1042}\u{1041}\u{1041}";
+        assert_eq!(extract_otp(burmese), None);
+    }
+
+    /// A label only counts when it runs into the number. A full stop or a comma
+    /// closes the clause it belongs to, and `hotel` is not `tel`.
+    #[test]
+    fn a_label_in_another_clause_does_not_veto_a_code() {
+        assert_eq!(
+            extract_otp("We blocked a call. 123456 is your code"),
+            Some("123456".into())
+        );
+        assert_eq!(
+            extract_otp("If you get a call, 123456 is your code"),
+            Some("123456".into())
+        );
+        assert_eq!(
+            extract_otp("Your code for hotel 481902"),
+            Some("481902".into())
         );
     }
 
