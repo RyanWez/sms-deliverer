@@ -20,6 +20,64 @@
   * `Forward OTP Only` သို့မဟုတ် `Forward All Messages` စိတ်ကြိုက် ရွေးချယ်နိုင်ခြင်း။
   * Retry mechanism (Network ကျနေပါက ၃ ကြိမ်အထိ အလိုအလျောက် ပြန်ပို့ပေးခြင်း)။
 
+#### ၁.၁ အခြေအနေ — **Stage 1 (Bot Configuration) ပြီးပြီ · hardware ပေါ် အတည်ပြီး**၊ Stage 2 (forwarding) မပြီးသေး
+
+**Field verification (2026-09-03, bank USB တပ်ထားပြီး `npm run tauri dev`):** Verify →
+`@simbank_otp_bot`၊ Detect → `"Acti Chat" (-1004417127000)` supergroup (warning မထွက်ဘူး —
+ထွက်သင့်တဲ့အခါ ထွက်တာကို basic group `-5258368202` နဲ့ အရင် အတည်ပြုပြီး)၊ Send Test →
+group ထဲ message တကယ် ရောက်တယ် (`✅ SIM Bank SMS Reader / Forwarding is configured. /
+Host: localhost`)။ Detect က **`my_chat_member` primary path** ကနေ အလုပ်လုပ်တယ် —
+`/start@…` fallback ကို မလိုဘဲ ("You added SIM Bank OTP" update က ၂၄ နာရီ အတွင်း ရှိနေတာ)။
+`pick_group` ရဲ့ `kind` classification၊ HTML escaping၊ `host_label()` fallback chain
+(`HOSTNAME` unset → `/etc/hostname`) အားလုံး field ပေါ်မှာ အတည်ပြီး။
+
+ဆုံးဖြတ်ချက်: destination က **private group တစ်ခုတည်း**။ Group membership ကိုယ်တိုင်က
+allowlist ဖြစ်တယ် — app က chat id **တစ်ခုပဲ** သိမ်းတယ်၊ per-person list မရှိဘူး။ ဆိုတော့
+Settings ထဲ လူ စီမံတဲ့ field လုံးဝ မလိုဘူး (add/remove က Telegram ထဲမှာ)။
+
+**Stage 1 — ပါပြီးသားတွေ:**
+* `src-tauri/src/telegram.rs` — client (`build_client`, SOCKS5)၊ `send_message`၊ `get_me`၊
+  `detect_group`၊ error taxonomy (`SendError::{Migrated, RateLimited, Other}`)၊
+  `redact`၊ `escape_html`။ Test ၂၀
+* `src-tauri/src/commands/telegram.rs` — command ၃ ခု: `verify_telegram_token`၊
+  `detect_telegram_group`၊ `send_telegram_test`။ `port_busy()` **မစစ်ဘူး** (serial မထိဘူး —
+  bank live ဖြစ်နေစဉ် setup လုပ်ရတာမို့ "Busy" ပြရင် monitoring ရပ်ခိုင်းရမယ်)။ Test ၅
+* Frontend: `settings.forwarding` (`botToken`, `chatId`, `proxyUrl`)၊ Settings page ရဲ့
+  `forwarding` group၊ `api.ts` method ၃ ခု၊ `utils/telegram-preview.ts` (browser parity)။ Test ၁၀
+
+**ဆုံးဖြတ်ချက် ၃ ခု (ပြန်မဆွေးနွေးရ):**
+1. **`parse_mode: HTML`၊ Markdown မဟုတ်ဘူး။** Message body က attacker-controlled —
+   bank ကို SMS ပို့နိုင်တဲ့ သူတိုင်း ရွေးနိုင်တယ်။ `*`/`_`/backtick ပါလာရင် Markdown mode က
+   send တစ်ခုလုံးကို `400 can't parse entities` နဲ့ ငြင်းတယ် = **OTP တိတ်တဆိတ် မရောက်တာ**။
+   HTML က စာလုံး ၃ လုံးပဲ escape လုပ်ရတယ် (`escape_html`) ပြီးတော့ `<code>` က client
+   အားလုံးမှာ tap-to-copy
+2. **Supergroup migration ကို auto-heal လုပ်တယ်၊ operator ကို မပြောဘူး။** Telegram က
+   `parameters.migrate_to_chat_id` နဲ့ id အသစ် ပြန်ပေးတယ် — `send_telegram_test` က
+   **တစ်ခါပဲ** retry လုပ်ပြီး frontend က id အသစ်ကို save တယ်။ "Detect ပြန်နှိပ်ပါ" လို့
+   ခိုင်းတာ မလိုဘူး
+3. **Token က plaintext `localStorage` — UI မှာ လိမ်လည်မပြရ။** keyring integration မရှိဘူး၊
+   ရှိသလို ရေးထားတယ်။ Token က URL path ထဲ ပါတာမို့ `redact` က module ကနေ ထွက်တဲ့
+   error တိုင်းကို ဖြတ်တယ် (case §18 ကြည့်)
+
+**Stage 2 — ကျန်နေတာ (ဒီ change ထဲ မပါ):**
+* Live event hook။ `sms:new` **တစ်ခုတည်း** မလုံလောက်ဘူး: concat SMS က partial ကို အရင်
+  ပြပြီး ပြည့်စုံတာ ရောက်လာတဲ့အခါ `commands/mod.rs:1137-1146` က prefix match နဲ့ ရှာပြီး
+  `messages:updated` ထွက်တယ် — `sms:new` **မထွက်ဘူး**။ မြန်မာစာက UCS-2 မှာ part တစ်ခု
+  ၇၀ လုံးပဲ ဆံ့တာမို့ ဒါ ရှားတဲ့ case မဟုတ်ဘူး။ Branch ၂ ခုလုံး hook ရမယ်၊ ပြီးတော့
+  Telegram ရဲ့ `message_id` ကို `SmsItem.id` နဲ့ တွဲမှတ်ထားရင် update ကို bubble အသစ်
+  မပို့ဘဲ `editMessageText` နဲ့ ပြင်လို့ ရတယ်
+* Paced/coalescing queue။ Group တစ်ခုကို **၁ မိနစ် message ၂၀** (Telegram FAQ)။ "၃ စက္ကန့်
+  တစ်ခါ" က limit **အောက် မဟုတ်ဘူး၊ ထိနေတာ** — port ၆၄ ခု burst တစ်ခါ လာရင် queue
+  ရှည်ပြီး OTP သက်တမ်းကုန်မှ ရောက်တယ်။ ဖြေရှင်းချက်: queue တိုးလာရင် OTP အများကို
+  message တစ်ခုထဲ **coalesce** (limit က message ကို ရေတာ) — `utils/toast-queue.ts` နဲ့
+  တူတဲ့ principle
+* Switch ၃ ခု (`Enable forwarding`, `OTP only`, `Forward non-OTP`) — **Stage 2 နဲ့အတူပဲ**
+  ထည့်ရမယ် (doc 04 §H)။ `Forward non-OTP` က default **off** (ကြော်ငြာ SMS နဲ့ ဘောင် ပြည့်မယ်)
+* Thread ID (forum topic) · generic webhook + Discord · offline retry queue
+* Tray icon။ §၁ ရဲ့ ကတိက "ကွန်ပျူတာရှေ့ မရှိရင်တောင်" ဖြစ်ပေမယ့် window ပိတ်ရင် app
+  ပြီးသွားတယ်။ `general.minimizeToTray` ကို tray code မရှိလို့ ဖျက်ခဲ့တာ (§A) — ဆိုတော့
+  tray က ဒီ ကတိရဲ့ **prerequisite**၊ optional မဟုတ်ဘူး
+
 ---
 
 ### ၂။ Interactive AT Command Console & Signal Strength Indicator
@@ -69,6 +127,13 @@
 
 `otp` group တစ်ခုလုံး + သူ့ `setOtp` setter ပါ ပျောက်တယ်။ `otpPattern` က `type: "text"` တစ်ခုတည်း
 ဖြစ်ခဲ့လို့ Settings page ရဲ့ shared text-input branch ပါ လိုက်ဖျက်ခဲ့တယ်။
+
+> **Update — text input branch ပြန်ရှိပြီ (§၁.၁ Stage 1):** Settings page မှာ `type: "text"`
+> နဲ့ `type: "secret"` branch ကို ပြန်ထည့်လိုက်တယ် — `forwarding` group ရဲ့ `botToken`,
+> `chatId`, `proxyUrl` အတွက်။ ဒါက `otpPattern` ဆုံးဖြတ်ချက်ကို **မဖျက်ဘူး**: §B.1 က
+> ငြင်းပယ်ထားတာ *text input* မဟုတ်ဘူး၊ **cascade တစ်ခုလုံးကို အစားထိုးတဲ့
+> operator-editable OTP regex** ကို ငြင်းတာ။ Field ၃ ခုစလုံး တကယ့် behaviour ကို
+> ခေါ်တဲ့ ခလုတ် (Verify / Detect / Send Test) နဲ့ တွဲပါလာတယ်။
 
 | Field | အရင် label | ဘာလို့ ဖျက်လိုက်တာလဲ |
 |---|---|---|

@@ -384,6 +384,50 @@
   `AT+CMGL="ALL"` က hardcode ဖြစ်နေတာမို့ ပေါင်းလိုက်တာနဲ့ PDU-mode caller ဆီမှာ တိတ်တဆိတ်
   degrade ဖြစ်မယ် — parameter အဖြစ် ထုတ်လိုက်တာက အဲ့ဒါကို ဖြေရှင်းတယ်
 
+## 1️⃣8️⃣ `reqwest` ကို dependency အသစ် ထည့်လိုက်တာနဲ့ crate ၂၂ ခု + cmake/C toolchain တက်လာတာ၊ ပြီးတော့ client တည်ဆောက်ရင် panic ဖြစ်တာ
+
+- **Symptom (ဆက်တွဲ ၂ ခု):** Telegram forwarder အတွက် `reqwest = { version = "0.13.4",
+  features = ["blocking", "json", "socks"] }` လို့ ရေးလိုက်တယ်။ Compile က အောင်မြင်တယ်၊
+  test အားလုံး pass တယ် — ဒါပေမယ့်
+  ၁။ `Cargo.lock` က package **501 → 523** ဖြစ်သွားတယ် (`aws-lc-rs`, `aws-lc-sys`, `cmake`,
+  `fs_extra`, `h2`, `encoding_rs`, `chacha20`, `core-foundation` …)။ `aws-lc-sys` က
+  **cmake + C compiler** လိုတယ် — Windows CI leg အတွက် failure mode အသစ်
+  ၂။ `default-features = false` + `rustls-no-provider` နဲ့ ပြန်ပြင်လိုက်တာနဲ့ crate မတက်တော့ဘူး၊
+  ဒါပေမယ့် `build_client()` က **panic** ဖြစ်တယ်:
+  `No rustls crypto provider is configured. When using the rustls-no-provider feature you must
+  install a crypto provider before building a Client`
+- **Root Cause:** `reqwest` ရဲ့ default features ထဲ `default-tls` ပါတယ် → `rustls` →
+  `__rustls-aws-lc-rs` (aws-lc-rs provider)၊ ပြီးတော့ `charset` (encoding_rs)၊ `http2` (h2)၊
+  `system-proxy`။ ဒါပေမယ့် `tauri-plugin-updater` က reqwest ကို **`default-features = false`,
+  features `["json", "stream"]` + `rustls-no-provider`** နဲ့ သုံးပြီး `rustls` ကို
+  `features = ["ring"]` နဲ့ ဆွဲတယ် — ဆိုတော့ ဒီ binary ထဲ **ring-backed rustls ရှိပြီးသား**၊
+  ငါက ဒုတိယ provider တစ်ခုလုံး ဆွဲထည့်လိုက်တာ။
+  `rustls-no-provider` က process-level provider ကို caller ဆီ လွှဲတယ် — updater က
+  `updater.rs:446` မှာ `CryptoProvider::get_default().is_none()` ဆိုရင် install တယ်၊ ဒါပေမယ့်
+  **updater ပြေးမှ**။ Operator က Verify ကို updater မပြေးခင် နှိပ်ရင် provider မရှိဘူး → panic
+- **Fix:** feature set ကို updater နဲ့ **အတိအကျ တူ**စေပြီး လိုတာ ၂ ခုပဲ ထပ်ထည့်တယ်
+  (`blocking` — ဒီ crate က OS thread နဲ့ blocking I/O သုံးတယ်၊ async task မဟုတ်ဘူး ·
+  `socks` — feature list က `socks = []`၊ crate တစ်ခုမှ မတက်ဘူး)။ ပြီးတော့ `rustls` ကို
+  direct dep အဖြစ် (ring, default-features off — lock ထဲ ရှိပြီးသား) ထည့်ပြီး
+  `telegram::ensure_crypto_provider()` (`std::sync::Once`) က `build_client` အတွင်းမှာ
+  install လုပ်တယ် — updater ကို မမှီခိုဘူး။ `install_default()` က ရှိပြီးသားဆိုရင် `Err`
+  ပြန်တယ်၊ အဲဒါ မျှော်လင့်ထားတာမို့ `let _ =`
+- **ရလဒ်:** `Cargo.lock` diff က **line ၃ ခုပဲ** (`futures-sink`, `futures-channel` edge ၂ ခု +
+  `sms-tauri` ရဲ့ `reqwest` entry)။ Crate အသစ် **သုည**
+- **Test:** `build_client_succeeds_with_no_proxy` (provider ကို ဖမ်းတာ — panic ဖြစ်လို့
+  ဒီ trap ကို CI မှာ တွေ့တယ်၊ operator က Verify နှိပ်တဲ့အခါ မဟုတ်ဘူး)၊
+  `build_client_accepts_a_socks5h_proxy` (`socks` feature ကျွတ်သွားရင် fail — ပိတ်ထားတဲ့
+  network မှာ ဒီ feature ကို အသုံးဝင်စေတဲ့ setting တစ်ခုတည်း)၊
+  `build_client_treats_a_blank_proxy_as_direct`၊ `build_client_rejects_a_malformed_proxy`
+- **Rule ၁:** Dependency အသစ် ထည့်ပြီးတာနဲ့ **`Cargo.lock` ရဲ့ package အရေအတွက်ကို တိုက်ပါ**
+  (`grep -c '^\[\[package\]\]'`)။ "Cargo.lock ထဲ ရှိပြီးသားပါ" ဆိုတာ **feature set တူတာကို
+  မဆိုလိုဘူး** — crate တူပေမယ့် feature မတူရင် transitive tree က တခြားဖြစ်တယ်
+- **Rule ၂:** Crate တစ်ခုကို plugin တစ်ခုက ဆွဲထားပြီးသားဆိုရင် **အဲဒီ plugin ရဲ့ Cargo.toml ကို
+  ဖတ်ပြီး feature set ကို ကူးပါ**။ ခန့်မှန်းရင် ဒုတိယ TLS stack တစ်ခုလုံး ဆွဲမိတယ်
+- **Rule ၃:** `*-no-provider` / `*-no-default` လို feature တွေက **runtime setup ကို caller ဆီ
+  လွှဲတယ်**။ Compile ဖြစ်တာက အလုပ်လုပ်တာ မဟုတ်ဘူး — client/handle တည်ဆောက်တဲ့ test
+  တစ်ခု ရေးပါ (network မလိုဘူး၊ hardware မလိုဘူး)
+
 ## ⚠️ Latent Traps (မဖြစ်သေးဘူး၊ ဒါပေမဲ့ ချောင်းနေတာ)
 
 Case မဟုတ်သေးပါ — 2026-08-30 settings cleanup (`fbd7b8b`) လုပ်ရင်း တွေ့ခဲ့တဲ့ ချောင်း ၃ ခု
