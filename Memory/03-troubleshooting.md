@@ -474,6 +474,40 @@
   `getent ahostsv4|v6`)。 ဒီ case မှာ IPv6 route ပျက်နေတာ တွေ့တယ် — ဒါပေမယ့် တွေ့ပြီးမှ
   fallback က ကိုင်နေတာလည် သက်သေရလို့ **connector ကို မထိတာ** ဆုံးဖြတ်နိုင်ခဲ့တယ်
 
+## 2️⃣0️⃣ Forwarding က `CHAT_WRITE_FORBIDDEN` နဲ့ ရပ်တာ — Send Test ပါ မရဘူး၊ ဒါပေမယ့် code မှားတာ မဟုတ်ဘူး
+
+- **Symptom:** အလုပ်လုပ်နေခဲ့တဲ့ setup မှာ (20:48 ရောက်ခဲ့တယ်) 21:39 မှာ forward အားလုံး
+  ရပ်တယ်၊ **Send Test ခလုတ်ပါ** မရဘူး:
+  `Telegram forward failed: Telegram rejected the request: Bad Request: CHAT_WRITE_FORBIDDEN`。
+  Token မှန်တယ် (Verify ရတယ်)၊ chat id မှန်တယ်၊ network ကောင်းတယ်
+- **Root Cause — code မဟုတ်ဘူး၊ group setting:** bot က group ထဲ ရှိပေမယ့် **post လုပ်ခွင့်
+  မရှိတော့ဘူး**။ ဖြစ်နိုင်တာ ၂ ခု:
+  1. Group ရဲ့ **Permissions → Send Messages ကို ပိတ်လိုက်တာ**။ အဲဒါက ordinary member
+     တွေကို တားတယ် — ပြီးတော့ **bot က ordinary member ပဲ**
+  2. Bot ကို group ကနေ ဖယ်လိုက်တာ
+- **ဒီ case က ဘယ်လို ဖြစ်လာလဲ:** `05 §၁.၁` ရဲ့ trade-off list မှာ "group invite ကို
+  password လို ကာကွယ်ပါ · Add Members ကို admin ပဲ ခွင့်ပြုပါ" လို့ ရေးထားတယ်။ Owner က
+  Permissions ကို လာပြင်တဲ့အခါ **Send Messages ပါ လိုက်ပိတ်မိတာ** — ဒါက ကိုယ့်
+  လုံခြုံရေး အကြံပြုချက် ကိုယ်တိုင် ဖန်တီးလိုက်တဲ့ failure mode ဖြစ်တယ်
+- **Fix (Telegram ဘက်):** bot ကို **admin promote** လုပ်ပါ — admin က member restriction
+  ကို မခံရဘူး၊ ပြီးတော့ bot က `sendMessage` တစ်ခုပဲ သုံးတာမို့ ပိုတဲ့ အခွင့်အရေး မလိုဘူး။
+  ဒါမှမဟုတ် Send Messages ကို ပြန်ဖွင့်ပါ
+- **Fix (code ဘက်) — error message ကို လုပ်ရမယ့်အလုပ် ဖြစ်အောင်:** `rejection_hint()`
+  ထည့်လိုက်တယ်။ Telegram ရဲ့ string က **diagnosis တစ်ခုလုံး** ဖြစ်ပေမယ့် ဘာလုပ်ရမလဲ
+  မပြောဘူး — `CHAT_WRITE_FORBIDDEN` ဖတ်တဲ့ operator က group Permissions ဆီ
+  ကြည့်ရမယ်ဆိုတာ သိစရာ အကြောင်း မရှိဘူး။ အခု toast မှာ Telegram ရဲ့ မူရင်း စာသား
+  (search လုပ်ဖို့) **ရော** ဖြေရှင်းချက် **ရော** ပါတယ်။ `CHAT_WRITE_FORBIDDEN` /
+  `NOT ENOUGH RIGHTS` · `KICKED` · `CHAT NOT FOUND` · `UNAUTHORIZED` ·
+  `CAN'T PARSE ENTITIES` ၅ မျိုး cover တယ် (case-insensitive)
+- **Classification မှန်ခဲ့တယ်:** `§19` ရဲ့ `Rejected` အဖြစ် သတ်မှတ်တာ **မှန်တယ်** —
+  ဘယ်လောက် retry လုပ်လည် group permission ပြန်မပွင့်ဘူး။ Retry လုပ်ခဲ့ရင် queue က
+  ပိတ်နေပြီး ကျန်တဲ့ OTP အားလုံး နောက်မှာ တန်းစီနေမယ်
+- **Rule ၁:** Third-party API ရဲ့ error string ကို **အတိအကျ ပြရမယ်** (search လုပ်ဖို့)၊
+  ဒါပေမယ့် **သူတစ်ခုတည်း မပြရဘူး**။ Operator လိုတာက "ဘာ ဖြစ်တာလဲ" မဟုတ်ဘူး၊
+  "ဘာ လုပ်ရမလဲ" ဖြစ်တယ်
+- **Rule ၂:** Security အကြံပြုချက် ရေးတဲ့အခါ **ဘယ် setting ကို မထိရဘူး** ဆိုတာပါ ရေးပါ။
+  "Add Members ကို ကန့်သတ်ပါ" လို့ ပြောလိုက်တာ Send Messages ပါ ပိတ်စေခဲ့တယ်
+
 ## ⚠️ Latent Traps (မဖြစ်သေးဘူး၊ ဒါပေမဲ့ ချောင်းနေတာ)
 
 Case မဟုတ်သေးပါ — 2026-08-30 settings cleanup (`fbd7b8b`) လုပ်ရင်း တွေ့ခဲ့တဲ့ ချောင်း ၃ ခု

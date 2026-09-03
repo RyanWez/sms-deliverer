@@ -186,6 +186,41 @@ struct ApiParameters {
     retry_after: Option<u64>,
 }
 
+/// Turn Telegram's machine wording for a refusal into the action the operator
+/// has to take.
+///
+/// Worth the table because these strings are the whole diagnosis and none of
+/// them say what to do: `CHAT_WRITE_FORBIDDEN` is what a group shows after
+/// someone turns Send Messages off in Permissions, and an operator reading it
+/// raw has no reason to look there. The hints are short because they land in a
+/// toast next to the original wording, which is still what to search for.
+fn rejection_hint(description: &str) -> Option<&'static str> {
+    let d = description.to_ascii_uppercase();
+    if d.contains("CHAT_WRITE_FORBIDDEN") || d.contains("NOT ENOUGH RIGHTS") {
+        return Some(
+            "The bot is in the group but not allowed to post. \
+             Open the group's Permissions and switch Send Messages back on, \
+             or promote the bot to admin — admins are not affected by that switch.",
+        );
+    }
+    if d.contains("KICKED") || d.contains("BOT WAS BLOCKED") {
+        return Some("The bot was removed from the group. Add it back, then press Detect again.");
+    }
+    if d.contains("CHAT NOT FOUND") {
+        return Some(
+            "No group with that ID, or the bot was never added to it. \
+             Add the bot to the group and press Detect.",
+        );
+    }
+    if d.contains("UNAUTHORIZED") {
+        return Some("The bot token is wrong or has been revoked. Check @BotFather.");
+    }
+    if d.contains("CAN'T PARSE ENTITIES") {
+        return Some("The message body broke Telegram's HTML parser — this is a bug, please report it.");
+    }
+    None
+}
+
 /// Turn a raw HTTP status + body into either the `result` field or a classified
 /// error.
 ///
@@ -225,9 +260,14 @@ fn interpret(status: u16, body: &str, token: &str) -> Result<serde_json::Value, 
         let why = envelope
             .description
             .unwrap_or_else(|| format!("HTTP {status} with no description"));
+        let mut text = format!("Telegram rejected the request: {why}");
+        if let Some(hint) = rejection_hint(&why) {
+            text.push_str("\n\n");
+            text.push_str(hint);
+        }
+        let text = redact(&text, token);
         // Telegram's own 5xx are the one refusal worth retrying: the request was
         // understood, the service was briefly unable to serve it.
-        let text = redact(&format!("Telegram rejected the request: {why}"), token);
         return Err(if status >= 500 {
             SendError::Unreachable(text)
         } else {
@@ -549,6 +589,35 @@ mod tests {
         assert!(SendError::RateLimited(5).is_transient());
         assert!(!SendError::Rejected("chat not found".into()).is_transient());
         assert!(!SendError::Migrated(-100).is_transient());
+    }
+
+    /// The refusal a working setup actually runs into: someone turns Send
+    /// Messages off in the group's Permissions and every forward stops with a
+    /// string that names neither the group nor the switch.
+    #[test]
+    fn a_write_forbidden_refusal_names_the_group_permission_to_fix() {
+        let body =
+            r#"{"ok":false,"error_code":400,"description":"Bad Request: CHAT_WRITE_FORBIDDEN"}"#;
+        match interpret(400, body, TOKEN) {
+            Err(SendError::Rejected(msg)) => {
+                assert!(msg.contains("CHAT_WRITE_FORBIDDEN"), "keeps the searchable wording: {msg}");
+                assert!(msg.contains("Send Messages"), "{msg}");
+                assert!(msg.contains("admin"), "{msg}");
+            }
+            other => panic!("expected Rejected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejection_hints_cover_the_four_setup_failures() {
+        assert!(rejection_hint("Bad Request: CHAT_WRITE_FORBIDDEN").is_some());
+        assert!(rejection_hint("Forbidden: bot was kicked from the supergroup chat").is_some());
+        assert!(rejection_hint("Bad Request: chat not found").is_some());
+        assert!(rejection_hint("Unauthorized").is_some());
+        // Matched case-insensitively, because Telegram's casing is not stable
+        // across error families.
+        assert!(rejection_hint("bad request: chat_write_forbidden").is_some());
+        assert!(rejection_hint("Bad Request: message is not modified").is_none());
     }
 
     fn updates(raw: &str) -> Vec<serde_json::Value> {

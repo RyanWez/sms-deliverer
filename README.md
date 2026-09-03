@@ -420,6 +420,20 @@ refusal from Telegram itself (a bad token, a chat the bot is not in) is dropped,
 because retrying it cannot change the answer. Either way the message stays in the
 app's inbox and on the SIM; it is the delivery that waits, not the data.
 
+### When forwarding stops with CHAT_WRITE_FORBIDDEN
+
+The bot is in the group but is not allowed to post. Two things cause it, and both
+are fixed in Telegram rather than in the app:
+
+- Someone turned **Send Messages off** in the group's Permissions. That restricts
+  ordinary members, and the bot is an ordinary member. Switch it back on, or
+  **promote the bot to admin** — admins are not affected by that switch.
+- The bot was **removed** from the group. Add it back and press Detect again.
+
+Promoting the bot to admin is the more durable of the two: it survives any later
+tightening of member permissions, and the bot still has no rights it does not use,
+because it only ever sends.
+
 ### What it costs you
 
 - **Every group member sees every message.** That is the design: shared visibility
