@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.6.0](https://github.com/RyanWez/sms-deliverer/compare/v1.5.0...v1.6.0) (2026-09-03)
+
+
+### Features
+
+* add Telegram bot configuration for group forwarding ([243e070](https://github.com/RyanWez/sms-deliverer/commit/243e070bee5a9b4f7d3cb77ea3e2bd4be9f59fa1))
+* forward live SMS and OTPs into the Telegram group ([88144a4](https://github.com/RyanWez/sms-deliverer/commit/88144a499259e10f7f8a02b9cbae45b51a4bd8e2))
+
+
+### Bug Fixes
+
+* prevent extraction of date or time components as OTP codes by validating surrounding numeric fields. ([fb479a4](https://github.com/RyanWez/sms-deliverer/commit/fb479a4af9cdb923c48bfa5fa5eb8e5e6295e612))
+* retry a Telegram send the network never carried ([3345581](https://github.com/RyanWez/sms-deliverer/commit/334558147ec8cb7a224169ba3352d32c12f0abd6))
+* say what to do when Telegram refuses a forward ([eec4353](https://github.com/RyanWez/sms-deliverer/commit/eec4353c0cb89d3de1bd2e31adbf6d4500b15f35))
+
 ## [1.5.0](https://github.com/RyanWez/sms-deliverer/compare/v1.4.0...v1.5.0) (2026-09-01)
 
 
