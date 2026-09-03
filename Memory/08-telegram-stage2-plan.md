@@ -1,7 +1,7 @@
 # 📨 Telegram Forwarding — Stage 1 + Stage 2 (implementation record)
 
 > **ရေးတဲ့ရက်:** 2026-09-03 · **အခြေအနေ:** Stage 1 **ပြီး၊ hardware အတည်ပြီး** ·
-> Stage 2 **code ပြီး၊ hardware မစမ်းရသေး** (§F ကြည့်)
+> Stage 2 **ပြီး — OTP အစစ် group ထဲ ရောက်တာ အတည်ပြီး**၊ ကျန် test ၃ ခု (§F)
 > Roadmap entry က `05 §၁.၁`၊ dependency trap က `03 §18`။
 >
 > **⚠️ ဒီ doc က plan ကနေ record ဖြစ်သွားပြီ။** §B/§C က ဘာလို့ ဒီလို ရေးလိုက်တာလဲ
@@ -175,13 +175,31 @@ default ကနေ ရမယ် — migration မလိုဘူး။
 
 ---
 
-## F. Hardware test လိုတာ
+## F. Hardware test — ၂ ခု အတည်ပြီး၊ ၂ ခု ကျန်
 
-`04 §G` playbook ကို လိုက်ပါ။ ဒီအရာတွေက **unit test နဲ့ မရဘူး**:
+**Field run (2026-09-03 20:48, bank 64 port / modem 34 / SIM 34, KBZPay OTP အစစ်):**
 
-1. မြန်မာစာ ရှည်တဲ့ (concat) OTP SMS တစ်ခု — group ထဲ bubble **၁ ခုပဲ** ရှိရမယ်၊
-   fragment + full နှစ်ခု မဟုတ်ဘူး (§B.1 ရဲ့ `editMessageText` path)
-2. Live စတဲ့အခါ SIM ထဲ ရှိပြီးသား message တွေ **မ forward ဖြစ်ရ** (`Batch` arm)
-3. Port အများကနေ တစ်ခါတည်း OTP ဝင်တဲ့အခါ coalescing အလုပ်လုပ်တာ + OTP သက်တမ်း အတွင်း ရောက်တာ
-4. Network ပြတ်ပြီး ပြန်လာတဲ့အခါ queue က ဆက်ပို့တာ (ဒါမှမဟုတ် ဘောင်ပြည့်ရင် ဘာဖြစ်တာ)
+| # | စမ်းရမယ့်အရာ | အခြေအနေ |
+|---|---|---|
+| 1 | မြန်မာစာ ရှည်တဲ့ (concat) OTP — group ထဲ bubble **၁ ခုပဲ**၊ fragment + full ၂ ခု မဟုတ်ဘူး (`editMessageText` path) | ⏳ **မစမ်းရသေး** — English single-part SMS ပဲ ရခဲ့တယ် |
+| 2 | Live စတဲ့အခါ SIM ထဲ ရှိပြီးသား message **မ forward ဖြစ်ရ** (`Batch` arm) | ✅ **အတည်ပြီး** |
+| 3 | Port အများက burst — coalescing + OTP သက်တမ်း အတွင်း ရောက်တာ | ⏳ **မစမ်းရသေး** — message ၁ ခုပဲ ဝင်ခဲ့တယ် |
+| 4 | Network ပြတ်ပြီး ပြန်လာတဲ့အခါ queue ဆက်ပို့တာ / ဘောင်ပြည့်ရင် ဘာဖြစ်တာ | ⏳ **မစမ်းရသေး** |
+
+**#2 ရဲ့ သက်သေ (အရေးကြီးတယ်):** Live မစခင် SIM ပေါ်မှာ OTP `305938` (20:44) ရှိနေတယ်။
+Live စတဲ့အခါ log က `/dev/ttyUSB47: initial batch 1 msg(s)` (= `Batch` arm) လို့ ပြတယ်၊
+ပြီးတော့ Inbox မှာ row ၂ ခု ရှိပေမယ့် **Telegram ထဲ `894615` (20:48, `Sms` arm) တစ်ခုပဲ
+ရောက်တယ်**။ `Batch` arm ကို forward မလုပ်တာ hardware ပေါ်မှာ အတည်ဖြစ်သွားပြီ —
+မဟုတ်ရင် live စလိုက်တိုင်း SIM ထဲ ရှိပြီးသား inbox တစ်ခုလုံး group ထဲ ပုံချမယ်။
+
+**အခြား အတည်ပြီးတာ:**
+* `ForwardingConfigDto` plumbing — log: `Telegram forwarding on (otp=true, non_otp=false)`
+* Log masking က real OTP ပေါ်မှာ ကိုင်တယ် — `NEW SMS on /dev/ttyUSB47: from=***Pay
+  otp=found (6 digits)`။ Code ကိုယ်တိုင် log ထဲ **မပါဘူး**၊ sender ပါ mask ဖြစ်တယ်
+* `origin()` က SIM number ကို ရွေးတယ် (tty မဟုတ်ဘူး) — bubble မှာ `09671312573` ပြတယ်
+* HTML escaping — KBZPay body ရဲ့ `!` / `.` တွေ မှန်မှန် render ဖြစ်တယ်
+
+**#1 ကို စမ်းချင်ရင်:** မြန်မာစာ ၇၀ လုံးထက် ပိုရှည်တဲ့ SMS တစ်ခု SIM ဆီ ပို့ပါ
+(carrier ရဲ့ promo message တွေ အများစုက အဲဒီပုံစံ)။ Group ထဲ bubble ၂ ခု ထွက်လာရင်
+`Some` arm ရဲ့ edit path မှားနေတယ် — `03` မှာ case entry ရေးပါ။
 
