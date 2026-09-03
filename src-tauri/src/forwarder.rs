@@ -52,10 +52,14 @@ const MAX_BATCH: usize = 10;
 /// been waiting the longest is the one most likely to have expired already.
 const MAX_QUEUE: usize = 500;
 
-/// Cap on an honoured `retry_after`. Telegram's values are seconds, but a
-/// pathological one must not park this thread past the point where `stop_live`
-/// is waiting to join it.
+/// Cap on a retry pause, whether it came from Telegram's `retry_after` or from
+/// the network backoff. A pathological value must not park this thread past the
+/// point where `stop_live` is waiting to join it.
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
+
+/// First pause after the network fails to carry a request. Doubles up to
+/// [`MAX_BACKOFF`] while the failures continue, and resets on the first success.
+const RETRY_BASE: Duration = Duration::from_secs(5);
 
 /// How much of a message body one bubble carries. Long promotional SMS are
 /// common and the operator is here for the code, not the marketing.
@@ -353,6 +357,10 @@ fn run(
 ) {
     let mut sent: HashMap<u64, i64> = HashMap::new();
     let mut last_send = Instant::now() - MIN_INTERVAL;
+    // Grows while the network keeps refusing to carry requests, resets on the
+    // first success. Without this a dead uplink is retried every 3.5 s, which
+    // spends the whole outage hammering a socket that cannot open.
+    let mut retry_in = RETRY_BASE;
 
     loop {
         let stopping = shared.stop.load(Ordering::Relaxed);
@@ -401,6 +409,7 @@ fn run(
         match deliver_now(client, &config, &work) {
             Ok(assignments) => {
                 last_send = Instant::now();
+                retry_in = RETRY_BASE;
                 for (id, message_id) in assignments {
                     sent.insert(id, message_id);
                 }
@@ -426,9 +435,27 @@ fn run(
                 sleep_unless_stopped(shared, pause);
                 last_send = Instant::now();
             }
-            Err(e) => {
-                // Unrecoverable for this item: keeping it would block every code
-                // behind it for as long as the condition lasts.
+            // The request never reached Telegram — a dead route, DNS, a timeout,
+            // a block page. Dropping it here is what made a momentary uplink
+            // blip lose an OTP the operator was waiting for, so it goes back on
+            // the queue and the pause grows until the network returns.
+            Err(SendError::Unreachable(msg)) => {
+                log::warn!(
+                    "Telegram unreachable, retrying in {}s: {msg}",
+                    retry_in.as_secs()
+                );
+                let _ = app.emit(EVENT_FAILED, &serde_json::json!({ "error": msg }));
+                let mut q = shared.queue.lock().unwrap_or_else(|e| e.into_inner());
+                requeue(&mut q, work);
+                drop(q);
+                sleep_unless_stopped(shared, retry_in);
+                retry_in = (retry_in * 2).min(MAX_BACKOFF);
+                last_send = Instant::now();
+            }
+            // Telegram received the request and refused it. Retrying cannot
+            // change the answer, and keeping the item would block every code
+            // behind it forever.
+            Err(e @ SendError::Rejected(_)) => {
                 report(app, &e);
                 last_send = Instant::now();
             }

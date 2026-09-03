@@ -413,6 +413,13 @@ Where an ISP blocks that host, fill in **SOCKS5 Proxy** (`socks5h://127.0.0.1:90
 Bot API traffic works through a SOCKS5 proxy. An MTProto proxy link will **not**
 work here — those serve Telegram's own client apps, not the Bot API.
 
+A send that never reaches Telegram — a dead route, DNS, a timeout, an ISP block
+page, or one of Telegram's own 5xx — is **put back on the queue** and retried with
+a pause that grows from 5 seconds to a minute until the network returns. Only a
+refusal from Telegram itself (a bad token, a chat the bot is not in) is dropped,
+because retrying it cannot change the answer. Either way the message stays in the
+app's inbox and on the SIM; it is the delivery that waits, not the data.
+
 ### What it costs you
 
 - **Every group member sees every message.** That is the design: shared visibility

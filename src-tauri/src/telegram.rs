@@ -43,9 +43,10 @@ pub struct TelegramConfig {
 
 /// Why a send did not land.
 ///
-/// The two named variants exist because both are recoverable without telling
-/// the operator anything: the caller can save the new id, or wait the stated
-/// number of seconds, and retry.
+/// The split that matters is between **the network never carried the request**
+/// and **Telegram answered no**. Retrying the first is the entire reason the
+/// forwarder has a queue; retrying the second burns the rate limit on a request
+/// that will be refused every time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SendError {
     /// The group was upgraded to a supergroup and its id changed. Telegram
@@ -54,8 +55,22 @@ pub enum SendError {
     Migrated(i64),
     /// `429`, with `parameters.retry_after` in seconds.
     RateLimited(u64),
-    /// Anything else. Already passed through [`redact`].
-    Other(String),
+    /// The request never reached Telegram: DNS, a dead route, a TLS failure, a
+    /// timeout, an ISP block page. Transient by nature — a code dropped here is
+    /// a code the operator loses for no reason. Already passed through
+    /// [`redact`].
+    Unreachable(String),
+    /// Telegram received the request and refused it: a bad token, a chat the bot
+    /// is not in, a malformed payload. Retrying cannot change the answer.
+    /// Already passed through [`redact`].
+    Rejected(String),
+}
+
+impl SendError {
+    /// Whether putting this item back on the queue could ever succeed.
+    pub fn is_transient(&self) -> bool {
+        matches!(self, Self::Unreachable(_) | Self::RateLimited(_))
+    }
 }
 
 impl std::fmt::Display for SendError {
@@ -63,7 +78,7 @@ impl std::fmt::Display for SendError {
         match self {
             Self::Migrated(id) => write!(f, "group migrated to chat id {id}"),
             Self::RateLimited(secs) => write!(f, "rate limited, retry after {secs}s"),
-            Self::Other(msg) => f.write_str(msg),
+            Self::Unreachable(msg) | Self::Rejected(msg) => f.write_str(msg),
         }
     }
 }
@@ -184,12 +199,14 @@ struct ApiParameters {
 fn interpret(status: u16, body: &str, token: &str) -> Result<serde_json::Value, SendError> {
     let envelope: ApiEnvelope = match serde_json::from_str(body) {
         Ok(e) => e,
-        // Not JSON at all: a proxy error page, a captive portal, or an ISP
-        // block page. Quote a bounded prefix so the operator can recognise it.
+        // Not JSON at all: a proxy error page, a captive portal, or an ISP block
+        // page. Classified as unreachable rather than rejected — Telegram did not
+        // answer this, something in between did, and that something is usually
+        // temporary. Quote a bounded prefix so the operator can recognise it.
         Err(_) => {
             let preview: String = body.chars().take(120).collect();
-            return Err(SendError::Other(redact(
-                &format!("Telegram returned HTTP {status} with a non-JSON body: {preview}"),
+            return Err(SendError::Unreachable(redact(
+                &format!("Something other than Telegram answered (HTTP {status}): {preview}"),
                 token,
             )));
         }
@@ -208,14 +225,18 @@ fn interpret(status: u16, body: &str, token: &str) -> Result<serde_json::Value, 
         let why = envelope
             .description
             .unwrap_or_else(|| format!("HTTP {status} with no description"));
-        return Err(SendError::Other(redact(
-            &format!("Telegram rejected the request: {why}"),
-            token,
-        )));
+        // Telegram's own 5xx are the one refusal worth retrying: the request was
+        // understood, the service was briefly unable to serve it.
+        let text = redact(&format!("Telegram rejected the request: {why}"), token);
+        return Err(if status >= 500 {
+            SendError::Unreachable(text)
+        } else {
+            SendError::Rejected(text)
+        });
     }
 
     envelope.result.ok_or_else(|| {
-        SendError::Other("Telegram reported success but sent no result".to_string())
+        SendError::Rejected("Telegram reported success but sent no result".to_string())
     })
 }
 
@@ -234,12 +255,15 @@ fn post(
         .json(payload)
         .send()
         .map_err(|e| {
-            SendError::Other(redact(&format!("Could not reach api.telegram.org: {e}"), token))
+            SendError::Unreachable(redact(
+                &format!("Could not reach api.telegram.org: {e}"),
+                token,
+            ))
         })?;
     let status = response.status().as_u16();
     let body = response
         .text()
-        .map_err(|e| SendError::Other(redact(&format!("Unreadable reply: {e}"), token)))?;
+        .map_err(|e| SendError::Unreachable(redact(&format!("Unreadable reply: {e}"), token)))?;
     interpret(status, &body, token)
 }
 
@@ -265,7 +289,7 @@ pub fn send_message(
     result
         .get("message_id")
         .and_then(serde_json::Value::as_i64)
-        .ok_or_else(|| SendError::Other("Telegram sent no message_id back".to_string()))
+        .ok_or_else(|| SendError::Rejected("Telegram sent no message_id back".to_string()))
 }
 
 /// Confirm the token by asking Telegram who the bot is, returning its `@name`.
@@ -291,7 +315,7 @@ pub fn edit_message(
     });
     match post(client, &config.bot_token, "editMessageText", &payload) {
         Ok(_) => Ok(()),
-        Err(SendError::Other(msg)) if msg.contains("message is not modified") => Ok(()),
+        Err(SendError::Rejected(msg)) if msg.contains("message is not modified") => Ok(()),
         Err(e) => Err(e),
     }
 }
@@ -309,7 +333,7 @@ pub fn get_me(
         .get("username")
         .and_then(serde_json::Value::as_str)
         .map(|u| format!("@{u}"))
-        .ok_or_else(|| SendError::Other("Telegram sent no bot username back".to_string()))
+        .ok_or_else(|| SendError::Rejected("Telegram sent no bot username back".to_string()))
 }
 
 /// Pick the group to offer out of a `getUpdates` result array.
@@ -385,8 +409,8 @@ pub fn detect_group(
     let result = post(client, token, "getUpdates", &payload)?;
     let updates = result
         .as_array()
-        .ok_or_else(|| SendError::Other("Telegram sent no update list back".to_string()))?;
-    pick_group(updates).ok_or_else(|| SendError::Other(NO_GROUP_FOUND.to_string()))
+        .ok_or_else(|| SendError::Rejected("Telegram sent no update list back".to_string()))?;
+    pick_group(updates).ok_or_else(|| SendError::Rejected(NO_GROUP_FOUND.to_string()))
 }
 
 /// The message the "Send Test Message" button posts.
@@ -470,27 +494,39 @@ mod tests {
     }
 
     /// A wrong token is the most likely setup mistake, and Telegram's own
-    /// wording is the most useful thing to show.
+    /// wording is the most useful thing to show. Classified as a rejection: no
+    /// amount of retrying makes a bad token good.
     #[test]
     fn interpret_surfaces_a_rejection_description() {
         let body = r#"{"ok":false,"error_code":401,"description":"Unauthorized"}"#;
         match interpret(401, body, TOKEN) {
-            Err(SendError::Other(msg)) => assert!(msg.contains("Unauthorized"), "{msg}"),
-            other => panic!("expected Other, got {other:?}"),
+            Err(SendError::Rejected(msg)) => assert!(msg.contains("Unauthorized"), "{msg}"),
+            other => panic!("expected Rejected, got {other:?}"),
         }
     }
 
-    /// An ISP block page or a captive portal answers HTML, not JSON. The
-    /// operator has to be able to tell that apart from Telegram saying no.
+    /// Telegram's own 5xx is the one refusal worth retrying — the request was
+    /// understood, the service was briefly unable to serve it.
+    #[test]
+    fn interpret_treats_a_telegram_5xx_as_retryable() {
+        let body = r#"{"ok":false,"error_code":502,"description":"Bad Gateway"}"#;
+        let err = interpret(502, body, TOKEN).expect_err("should fail");
+        assert!(matches!(err, SendError::Unreachable(_)), "{err:?}");
+        assert!(err.is_transient());
+    }
+
+    /// An ISP block page or a captive portal answers HTML, not JSON. Telegram did
+    /// not refuse this — something in between did — so it must be retryable, and
+    /// the operator has to be able to tell it apart from a real refusal.
     #[test]
     fn interpret_reports_a_non_json_body_with_a_bounded_preview() {
         let body = "<html><head><title>Blocked</title></head></html>";
         match interpret(403, body, TOKEN) {
-            Err(SendError::Other(msg)) => {
-                assert!(msg.contains("non-JSON"), "{msg}");
+            Err(SendError::Unreachable(msg)) => {
+                assert!(msg.contains("other than Telegram"), "{msg}");
                 assert!(msg.contains("Blocked"), "{msg}");
             }
-            other => panic!("expected Other, got {other:?}"),
+            other => panic!("expected Unreachable, got {other:?}"),
         }
     }
 
@@ -499,9 +535,20 @@ mod tests {
     fn interpret_does_not_quote_an_unbounded_error_page() {
         let body = "x".repeat(50_000);
         match interpret(500, &body, TOKEN) {
-            Err(SendError::Other(msg)) => assert!(msg.len() < 300, "len {}", msg.len()),
-            other => panic!("expected Other, got {other:?}"),
+            Err(SendError::Unreachable(msg)) => assert!(msg.len() < 300, "len {}", msg.len()),
+            other => panic!("expected Unreachable, got {other:?}"),
         }
+    }
+
+    /// The classification the forwarder's retry decision hangs on. A dropped
+    /// transient failure is a code the operator loses for no reason; a retried
+    /// permanent one burns the rate limit forever.
+    #[test]
+    fn only_network_and_rate_limit_failures_are_retryable() {
+        assert!(SendError::Unreachable("dns".into()).is_transient());
+        assert!(SendError::RateLimited(5).is_transient());
+        assert!(!SendError::Rejected("chat not found".into()).is_transient());
+        assert!(!SendError::Migrated(-100).is_transient());
     }
 
     fn updates(raw: &str) -> Vec<serde_json::Value> {

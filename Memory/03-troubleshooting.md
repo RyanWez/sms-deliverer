@@ -428,6 +428,52 @@
   လွှဲတယ်**။ Compile ဖြစ်တာက အလုပ်လုပ်တာ မဟုတ်ဘူး — client/handle တည်ဆောက်တဲ့ test
   တစ်ခု ရေးပါ (network မလိုဘူး၊ hardware မလိုဘူး)
 
+## 1️⃣9️⃣ Network ခဏ ပြတ်တာနဲ့ OTP က Telegram ကို ဘယ်တော့မှ မရောက်တော့ဘူး — error အားလုံးကို တစ်မျိုးတည်း သတ်မှတ်ခဲ့တာ
+
+- **Symptom:** Field run (2026-09-03 20:58) မှာ live OTP တစ်ခု ဝင်လာတယ်၊ Inbox မှာ ပေါ်တယ်၊
+  ဒါပေမယ့် Telegram ထဲ **ဘယ်တော့မှ မရောက်ဘူး**။ Log မှာ WARN တစ်ခုပဲ:
+  `Telegram forward failed: Could not reach api.telegram.org: error sending request for url
+  (https://api.telegram.org/bot<token redacted>/sendMessage)`。
+  ၁၀ မိနစ်အလိုမှာ (20:48) တူတဲ့ path က အလုပ်လုပ်ခဲ့တယ်
+- **အရင် အတည်ပြုလိုက်တာ — token redaction က တကယ့် failure ပေါ်မှာ ကိုင်တယ်:**
+  `<token redacted>` ဆိုတာ `03 §18` ရဲ့ ကာကွယ်မှု ဖြစ်တယ်။ အဲဒါ မရှိရင် bot token က
+  `app.log` (5 MB မှ rotate) နဲ့ Logs page ပေါ် **အတိအကျ** ရေးမိမယ်
+- **Root Cause — `SendError::Other` က မတူတဲ့ အရာ ၂ ခုကို ကိုယ်စားပြုနေတာ:**
+
+  | အမျိုးအစား | ဥပမာ | ပြန်ကြိုးစားရင် |
+  |---|---|---|
+  | Telegram က **ငြင်း**တာ | `401 Unauthorized`၊ `chat not found` | ဘယ်တော့မှ မရဘူး |
+  | **လမ်း မရောက်**တာ | DNS၊ route ပျက်၊ timeout၊ ISP block page | ခဏနေ **ရနိုင်တယ်** |
+
+  `forwarder::run` က `Err(e) => { report(); }` နဲ့ **နှစ်ခုလုံးကို လက်လွှတ်**ခဲ့တယ် —
+  comment မှာ "keeping it would block every code behind it" လို့ ရေးထားတာ ငြင်းပယ်တာ
+  အတွက်ပဲ မှန်တယ်၊ transport failure အတွက် **queue ရှိတဲ့ အကြောင်းရင်း ကိုယ်တိုင်ကို ဖျက်**လိုက်တာ
+- **ဘာလို့ ခဏ ပြတ်သွားလဲ (စစ်ပြီး):** `api.telegram.org` က A + AAAA နှစ်မျိုးလုံး ရှိတယ်။
+  ဒီစက်မှာ **IPv6 route က ပျက်နေတယ်** (`curl -6` → 0 ms မှာ "Could not connect"၊
+  `curl -4` → `302`, 0.3 s)၊ ပြီးတော့ system resolver က IPv6 ကို ဦးစားပေးတယ်
+  (`getent hosts` က AAAA ကို အရင် ပြန်တယ်)။
+  **ဒါပေမယ့် connector ကို IPv4 အတင်း မခိုင်းရ:** 20:48 က အလုပ်လုပ်ခဲ့တာက hyper ရဲ့
+  happy-eyeballs fallback ကိုင်နေတာ သက်သေပြတယ်။ IPv6-only network တစ်ခုပေါ်မှာ
+  `local_address(0.0.0.0)` က forwarding တစ်ခုလုံး ပိတ်စေမယ် — ဖြေရှင်းချက်က retry ဖြစ်တယ်၊
+  address family မဟုတ်ဘူး
+- **Fix:** `SendError::Other` ကို **`Unreachable` နဲ့ `Rejected`** ခွဲလိုက်တယ် +
+  `is_transient()`。 `post()` ရဲ့ `.send()` / `.text()` failure နဲ့ non-JSON body
+  (block page — Telegram မဟုတ်တဲ့ တစ်ခုခု ဖြေတာ) နဲ့ Telegram ရဲ့ **5xx** က `Unreachable`၊
+  4xx `ok:false` က `Rejected`。 `Unreachable` ဆိုရင် queue ထဲ ပြန်ထည့်ပြီး
+  `RETRY_BASE` 5 s ကနေ `MAX_BACKOFF` 60 s အထိ ခုန်တက်တယ် (success မှာ reset)
+- **Test:** `only_network_and_rate_limit_failures_are_retryable` (classification ကိုယ်တိုင်)၊
+  `interpret_treats_a_telegram_5xx_as_retryable`၊
+  `interpret_reports_a_non_json_body_with_a_bounded_preview` (block page = `Unreachable`)၊
+  `interpret_surfaces_a_rejection_description` (401 = `Rejected`)
+- **Rule ၁:** Error enum ရဲ့ variant က **caller ရဲ့ ဆုံးဖြတ်ချက်ကို** ကိုယ်စားပြုရမယ်၊
+  message အလွှာကို မဟုတ်ဘူး။ `Other` က "ဒီ error ကို ဘာလုပ်ရမလဲ" ဆိုတာ ဖျောက်ပစ်တယ် —
+  retry လုပ်လို့ ရ/မရ ဆိုတာ type ကနေ ဖတ်လို့ ရရမယ်
+- **Rule ၂:** Queue တစ်ခု ရေးတဲ့အခါ **transport failure ကို drop path မှာ ထည့်မိလား** စစ်ပါ။
+  Queue ရှိတာက အဲဒီ failure အတွက် ဖြစ်တယ်
+- **Rule ၃:** "ခဏ ပြတ်တယ်" ကို ခန့်မှန်းမနေဘဲ **တကယ် စစ်ပါ** (`curl -4` / `curl -6` /
+  `getent ahostsv4|v6`)。 ဒီ case မှာ IPv6 route ပျက်နေတာ တွေ့တယ် — ဒါပေမယ့် တွေ့ပြီးမှ
+  fallback က ကိုင်နေတာလည် သက်သေရလို့ **connector ကို မထိတာ** ဆုံးဖြတ်နိုင်ခဲ့တယ်
+
 ## ⚠️ Latent Traps (မဖြစ်သေးဘူး၊ ဒါပေမဲ့ ချောင်းနေတာ)
 
 Case မဟုတ်သေးပါ — 2026-08-30 settings cleanup (`fbd7b8b`) လုပ်ရင်း တွေ့ခဲ့တဲ့ ချောင်း ၃ ခု
