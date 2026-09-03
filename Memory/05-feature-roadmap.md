@@ -66,7 +66,9 @@ Settings ထဲ လူ စီမံတဲ့ field လုံးဝ မလို�
 > Live မစခင် SIM ပေါ် ရှိနေတဲ့ OTP `305938` က `Batch` arm ကနေ လာတာမို့
 > **forward မဖြစ်ဘူး** (ဒါက `08 §F` ရဲ့ test #2၊ အတည်ပြီး)။ Log masking က real code
 > ပေါ်မှာ ကိုင်တယ်: `from=***Pay otp=found (6 digits)`。
-> concat/မြန်မာစာ edit path၊ burst coalescing၊ network outage ၃ ခု **မစမ်းရသေး** — `08 §F`。
+> **21:51 + 21:54 မှာ ထပ်စမ်းတာ ၂ ခုလုံး ရောက်တယ်** (`03 §20` ပြင်ပြီးနောက်)。
+> concat/မြန်မာစာ edit path၊ burst coalescing၊ network outage recovery ၃ ခု
+> **မစမ်းရသေး** — `08 §F`。
 * Live event hook — `Sms` arm **၂ ခုလုံး** `deliver` လုပ်တယ်။ Forwarder က `item.id` ကို
   key ထားပြီး ဒုတိယအခေါက်ကို `editMessageText` အဖြစ် ပြောင်းတယ် (bubble အသစ် မထပ်ဘူး)
 * Coalescing queue — `forwarder.rs`: `MIN_INTERVAL` 3.5s (≈17/min, ၂၀ ဘောင်အောက်)၊

@@ -179,12 +179,17 @@ default ကနေ ရမယ် — migration မလိုဘူး။
 
 **Field run (2026-09-03 20:48, bank 64 port / modem 34 / SIM 34, KBZPay OTP အစစ်):**
 
+**Field run ၂ (21:51 + 21:54, `CHAT_WRITE_FORBIDDEN` ပြင်ပြီးနောက်):** OTP `101370` နဲ့
+`841640` **နှစ်ခုလုံး** group ထဲ ရောက်တယ် — SIM number၊ sender၊ body အားလုံးနဲ့။
+`03 §20` (bot ကို admin promote လုပ်တာ) က တကယ့် ဖြေရှင်းချက် ဖြစ်တာ အတည်ပြီး။
+Log နဲ့ Telegram bubble timestamp တူတယ် (21:51:34 / 21:54:37)。
+
 | # | စမ်းရမယ့်အရာ | အခြေအနေ |
 |---|---|---|
 | 1 | မြန်မာစာ ရှည်တဲ့ (concat) OTP — group ထဲ bubble **၁ ခုပဲ**၊ fragment + full ၂ ခု မဟုတ်ဘူး (`editMessageText` path) | ⏳ **မစမ်းရသေး** — English single-part SMS ပဲ ရခဲ့တယ် |
 | 2 | Live စတဲ့အခါ SIM ထဲ ရှိပြီးသား message **မ forward ဖြစ်ရ** (`Batch` arm) | ✅ **အတည်ပြီး** |
-| 3 | Port အများက burst — coalescing + OTP သက်တမ်း အတွင်း ရောက်တာ | ⏳ **မစမ်းရသေး** — message ၁ ခုပဲ ဝင်ခဲ့တယ် |
-| 4 | Network ပြတ်ပြီး ပြန်လာတဲ့အခါ queue ဆက်ပို့တာ / ဘောင်ပြည့်ရင် ဘာဖြစ်တာ | ⏳ **မစမ်းရသေး** |
+| 3 | Port အများက burst — coalescing + OTP သက်တမ်း အတွင်း ရောက်တာ | ⏳ **မစမ်းရသေး** — OTP တွေ ၃ မိနစ် ကွာကွာ ဝင်ခဲ့တာမို့ pacing တောင် မထိခဲ့ဘူး |
+| 4 | Network ပြတ်ပြီး ပြန်လာတဲ့အခါ queue ဆက်ပို့တာ / ဘောင်ပြည့်ရင် ဘာဖြစ်တာ | ⏳ **retry code ရေးပြီး (`03 §19`)၊ field မစမ်းရသေး** |
 
 **#2 ရဲ့ သက်သေ (အရေးကြီးတယ်):** Live မစခင် SIM ပေါ်မှာ OTP `305938` (20:44) ရှိနေတယ်။
 Live စတဲ့အခါ log က `/dev/ttyUSB47: initial batch 1 msg(s)` (= `Batch` arm) လို့ ပြတယ်၊
