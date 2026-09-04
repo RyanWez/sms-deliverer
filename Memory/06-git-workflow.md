@@ -1,29 +1,29 @@
 # 06 — Git & Feature-Branch Workflow
 
-> Goal: `main` ကို release-please အတွက် **clean** ထားပြီး၊ အလုပ်တွေကို feature branch ပေါ်မှာ
-> လုပ်၊ PR နဲ့ squash-merge ဝင်စေတဲ့ workflow ရဲ့ အပြည့်အစုံ (commands အထိ)။
+> Goal: the whole workflow (down to the commands) that keeps `main` **clean** for release-please,
+> does the work on a feature branch, and lets it in through a PR with a squash-merge.
 
-## 1️⃣ ဘာကြောင့် feature branch — ဒီ repo မှာ အထူးအရေးကြီးတာ
+## 1️⃣ Why a feature branch — why it matters especially in this repo
 
-`release-please.yml` က `on: push: branches: [main]` — ဒါကြောင့် **`main` ပေါ်တင်လိုက်တဲ့
-conventional commit တစ်ခုချင်းစီ က pending release PR ထဲ ချက်ချင်း ဝင်သွားတယ်**။
+`release-please.yml` is `on: push: branches: [main]` — which means **every single
+conventional commit pushed onto `main` goes straight into the pending release PR**.
 
-| `main` ပေါ်တိုက်တင်ရင် ဖြစ်တာ | အကျိုးဆက် |
+| What happens if you commit straight onto `main` | Consequence |
 |---|---|
-| `feat:` / `fix:` commit တစ်ခု ရောက်တာနဲ့ | release-please က `release-please--branches--main--components--sms-tauri` branch + PR ကို create/update လုပ်တယ် |
-| မပြီးသေးတဲ့ (half-done) commit ဖြစ်နေရင် | version bump + CHANGELOG entry ကို လူတွေ merge မလုပ်ခင်ကတည်းက **queue** ထဲထည့်ထားပြီးသား |
-| ပြန်ဖျက်ချင်ရင် | `main` history ပေါ်က revert commit တစ်ခုထပ်လိုတယ် (changelog ထဲ noise) |
-| `sync-cargo-lock` job | release PR update ဖြစ်တိုင်း ထပ်ပြေးတယ် — မလိုတဲ့ CI ကုန် |
+| the moment one `feat:` / `fix:` commit arrives | release-please creates/updates the `release-please--branches--main--components--sms-tauri` branch + PR |
+| if that commit is half-done | the version bump + CHANGELOG entry are already **queued** before anyone has merged anything |
+| if you want to take it back | it takes one more revert commit on `main` history (noise in the changelog) |
+| the `sync-cargo-lock` job | reruns on every release PR update — CI burned for nothing |
 
-> 💡 တစ်ခွန်းတည်းနဲ့: **`main` = release surface**, feature branch = work surface။
-> "အလုပ်ပြီးမှ `main` ကို ရောက်ရမယ်" — release-please က `main` ကို ဖတ်နေတာမို့။
+> 💡 In one sentence: **`main` = release surface**, feature branch = work surface.
+> "Only finished work reaches `main`" — because release-please is reading `main`.
 
 ## 2️⃣ Branch naming convention
 
-Commit log ထဲရှိပြီးသား type prefix တွေကို branch ပေါ်လည်း တူတူသုံး —
-`<type>/<short-kebab-topic>`, scope ရှိရင် `<type>/<scope>-<topic>`:
+Use the same type prefixes that already exist in the commit log on the branch too —
+`<type>/<short-kebab-topic>`, or `<type>/<scope>-<topic>` when there is a scope:
 
-| Branch | ဘယ်လို commit အတွက် |
+| Branch | For which kind of commit |
 |---|---|
 | `fix/serial-write-vs-silent-modem` | `fix:` / `fix(sim):` / `fix(delete):` |
 | `feat/updates-review-notes` | `feat:` / `feat(ports):` / `feat(ui):` |
@@ -31,116 +31,116 @@ Commit log ထဲရှိပြီးသား type prefix တွေကို b
 | `docs/git-workflow-memory` | `docs:` |
 | `chore/deps-bump`, `refactor/...`, `perf/...`, `style/...` | `chore:` `refactor:` `perf:` `style:` |
 
-Rules: lowercase, `-` separator (`_`/space မသုံး)၊ တစ် branch = တစ် concern၊
-`release-please--*` prefix ကို **လူက ဘယ်တော့မှ မသုံး** (§6 ကြည့်)။
+Rules: lowercase, `-` separator (no `_`/space), one branch = one concern,
+and the `release-please--*` prefix is **never used by a human** (see §6).
 
-## 3️⃣ Lifecycle — command အစအဆုံး
+## 3️⃣ Lifecycle — the commands from start to finish
 
 ```bash
-# 0) main ကို အရင် sync (branch က နောက်ဆုံး main ကနေ စရမယ်)
+# 0) sync main first (the branch has to start from the latest main)
 git switch main && git pull --ff-only
 
 # 1) branch create
 git switch -c fix/serial-write-vs-silent-modem
 
-# 2) logical chunk အလိုက် stage (§7)
+# 2) stage by logical chunk (§7)
 git add src-tauri/src/core/at.rs src-tauri/src/core/modem.rs
-git diff --cached --stat            # ဘာတွေ ပါသွားလဲ အမြဲစစ်
+git diff --cached --stat            # always check what went in
 git commit -m "fix: tell a failed serial write apart from a silent modem"
 
-# 3) ပထမ push — upstream တွဲ
+# 3) first push — set the upstream
 git push -u origin fix/serial-write-vs-silent-modem
-# နောက်ပိုင်း push တွေ
+# later pushes
 git push
 
-# 4) PR — title က conventional commit ဖြစ်ရမယ် (§5)
+# 4) PR — the title has to be a conventional commit (§5)
 gh pr create --base main \
   --title "fix: tell a failed serial write apart from a silent modem" \
   --body "Symptom / root cause / fix ... Refs Memory/03-troubleshooting.md"
 
-# 5) CI ကြည့် (test.yml က PR မှာမှ ပြေးတယ် — §4)
+# 5) watch CI (test.yml only runs on the PR — §4)
 gh pr checks --watch
 gh run list --limit 5
 
-# 6) green ဖြစ်မှ squash merge + branch remote ဖျက်
+# 6) squash merge + delete the remote branch, only once green
 gh pr merge --squash --delete-branch
 
-# 7) local ပြန်ရှင်း
+# 7) clean up locally
 git switch main && git pull --ff-only
-git branch -d fix/serial-write-vs-silent-modem     # remote ဖျက်ပြီးရင် -d နဲ့ ရ
+git branch -d fix/serial-write-vs-silent-modem     # -d works once the remote one is deleted
 git fetch --prune
 ```
 
 ## 4️⃣ CI matrix — feature branch vs `main` vs release PR
 
-| Workflow | Trigger (တကယ်ရေးထားတာ) | Feature branch push | PR → `main` | `main` push | Release published |
+| Workflow | Trigger (as actually written) | Feature branch push | PR → `main` | `main` push | Release published |
 |---|---|---|---|---|---|
-| `test.yml` (`cargo-test` ubuntu+windows, `frontend` check/test) | `push: branches:[main]` + `pull_request` + `workflow_dispatch` | ❌ **မပြေးဘူး** | ✅ | ✅ | — |
+| `test.yml` (`cargo-test` ubuntu+windows, `frontend` check/test) | `push: branches:[main]` + `pull_request` + `workflow_dispatch` | ❌ **does not run** | ✅ | ✅ | — |
 | `release-please.yml` (+ `sync-cargo-lock`) | `push: branches:[main]` | ❌ | ❌ | ✅ | — |
 | `tauri-build.yml` (`publish`) | `release: types:[published]` | ❌ | ❌ | ❌ | ✅ |
 
-အရေးကြီးတဲ့ အချက်များ:
+The points that matter:
 
-- **Feature branch ကို ဘဲ push လုပ်ထားရင် CI ဘာမှ မပြေးဘူး** — `test.yml` က `push` ကို `main` ပဲ
-  listen လုပ်တယ်။ CI လိုချင်ရင် **PR ဖွင့်ရမယ်** (ဒါမှမဟုတ် `gh workflow run test.yml --ref <branch>`
-  — `workflow_dispatch` ရှိတယ်)။
-- `paths-ignore: ['**.md', 'Memory/**', 'docs/**']` — doc-only PR ဆို `test.yml` skip ဖြစ်တယ်
-  (checks ဗလာ မြင်ရတာ normal, failure မဟုတ်)။
-- `concurrency: test-${{ github.ref }} / cancel-in-progress` — branch တစ်ခုပေါ် ထပ်ပြေးရင်
-  အရင် run က cancel ဖြစ်မယ် ("cancelled" = fail မဟုတ်)။
-- Release PR ရဲ့ checks က `test.yml` (`pull_request`) ချည်းပဲ — installer တွေက tag/release
-  published အခါမှ `tauri-build.yml` နဲ့ ထွက်တယ်။ **PR အဆင့်မှာ bundle test မရဘူး**;
-  local `npm run build` + `cargo check --release --locked` က အနီးစပ်ဆုံး proxy။
+- **Push a feature branch on its own and no CI runs at all** — `test.yml` listens for `push` on
+  `main` only. If you want CI you **have to open a PR** (or `gh workflow run test.yml --ref <branch>`
+  — `workflow_dispatch` exists).
+- `paths-ignore: ['**.md', 'Memory/**', 'docs/**']` — on a doc-only PR `test.yml` is skipped
+  (seeing the checks empty is normal, not a failure).
+- `concurrency: test-${{ github.ref }} / cancel-in-progress` — push again on the same branch and
+  the earlier run is cancelled ("cancelled" is not a fail).
+- A release PR's checks are `test.yml` (`pull_request`) and nothing else — the installers only come
+  out with `tauri-build.yml` at tag/release published time. **There is no bundle test at PR stage**;
+  local `npm run build` + `cargo check --release --locked` are the closest proxy.
 
 ## 5️⃣ Squash merge × release-please
 
-Squash merge မှာ **PR title က `main` ပေါ်က commit subject ဖြစ်သွားတယ်** (`(#9)` suffix ပါ,
-e.g. `751e4fa chore(main): release 1.3.1 (#9)`)။ ဒါကြောင့် —
+On a squash merge **the PR title becomes the commit subject on `main`** (with a `(#9)` suffix,
+e.g. `751e4fa chore(main): release 1.3.1 (#9)`). Therefore —
 
-> ⚠️ PR title က valid conventional commit မဟုတ်ရင် release-please က ဖတ်လို့မရ →
-> **CHANGELOG ထဲ ပျောက်ကုန်မယ်**၊ version bump လည်း မဖြစ်ဘူး။ Branch ထဲက commit တွေ
-> လှလှရေးထားပေမယ့် အလကား — squash ဖြစ်တာနဲ့ subject က PR title က ယူတယ်။
+> ⚠️ If the PR title is not a valid conventional commit, release-please cannot read it →
+> **it goes missing from the CHANGELOG**, and there is no version bump either. However nicely
+> the commits inside the branch were written, it is wasted — on a squash the subject is taken from the PR title.
 
-| Type (log ထဲ တကယ်သုံးထားတာ) | Bump | Changelog |
+| Type (the ones actually used in the log) | Bump | Changelog |
 |---|---|---|
 | `fix:` `fix(sim):` `fix(ci):` `fix(delete):` | patch | ✅ Bug Fixes |
 | `feat:` `feat(ports):` `feat(ui):` `feat(updates):` | minor | ✅ Features |
 | `feat!:` / `fix!:` / `BREAKING CHANGE:` footer | major | ✅ (breaking section) |
-| `perf:` `refactor:` `style:` | ❌ bump မဖြစ် | (hidden by default) |
-| `docs:` `ci:` `build:` `chore:` | ❌ bump မဖြစ် | ❌ |
+| `perf:` `refactor:` `style:` | ❌ no bump | (hidden by default) |
+| `docs:` `ci:` `build:` `chore:` | ❌ no bump | ❌ |
 | `chore(main): release X.Y.Z` | (bot's own commit) | — |
 
-Merge မလုပ်ခင် PR title ကို `gh pr edit <n> --title "..."` နဲ့ ပြန်ပြင်လို့ရတယ် — merge ပြီးမှ
-ပြင်ရင် `main` history rewrite လိုတယ် (မလုပ်နဲ့)။
+Before merging, the PR title can still be fixed with `gh pr edit <n> --title "..."` — fixing it after
+the merge needs a `main` history rewrite (do not).
 
 ## 6️⃣ `release-please--branches--main--components--sms-tauri` — machine-owned branch
 
-- release-please action က create/update လုပ်တဲ့ **bot branch** (naming က
-  `release-please--branches--<base>--components--<component>` pattern; component name က
-  `package.json` ရဲ့ `sms-tauri`)။ ဒီ branch ရဲ့ PR = "Release PR"။
+- The **bot branch** the release-please action creates/updates (the naming follows the
+  `release-please--branches--<base>--components--<component>` pattern; the component name is
+  `sms-tauri` from `package.json`). The PR off this branch = the "Release PR".
 - Content: `.release-please-manifest.json`, `package.json`, `src-tauri/tauri.conf.json`,
-  `src-tauri/Cargo.toml` (config ရဲ့ `extra-files`) + `CHANGELOG.md` — ဒါတွေ **လူ မထိရ**။
-- `main` ကို push တိုင်း bot က ဒီ branch ကို **force-update** လုပ်တယ် — မင်း hand-commit
-  တင်ထားရင် **သွေးဆေးပြီး ပျောက်နိုင်တယ်**။ ဒါကြောင့် local မှာလည်း track မလုပ်တာ ပိုကောင်း။
-- တစ်ခုပဲ ခြင်းချက်: **Cargo.lock sync case** — `Memory/03-troubleshooting.md` case **#8**
-  (`chore: sync Cargo.lock with version X.Y.Z`, commit `2d32e01`)။
-  ဒါကို ယခု `release-please.yml` ရဲ့ `sync-cargo-lock` job က PAT နဲ့ auto လုပ်ပေးပြီ —
-  bot က မလုပ်ပေးမှ / job fail ဖြစ်မှသာ လူက manual ဝင်လုပ်ရမယ်။
+  `src-tauri/Cargo.toml` (the config's `extra-files`) + `CHANGELOG.md` — **no human touches these**.
+- On every push to `main` the bot **force-updates** this branch — if you have put a hand-commit
+  on it, it **can be washed away and lost**. Which is also why it is better not to track it locally.
+- One exception only: **the Cargo.lock sync case** — `Memory/03-troubleshooting.md` case **#8**
+  (`chore: sync Cargo.lock with version X.Y.Z`, commit `2d32e01`).
+  That is now done automatically with the PAT by the `sync-cargo-lock` job in `release-please.yml` —
+  a human only steps in by hand when the bot does not do it / when the job fails.
 
 ```bash
-# Release PR ကို "ဖတ်" ဖို့ (checkout မလိုဘဲ)
+# to "read" the Release PR (without checking it out)
 gh pr list --state open --limit 5
 gh pr diff <n>
 git log --oneline origin/release-please--branches--main--components--sms-tauri -5
 ```
 
-## 7️⃣ တစ် working tree → logical commit များ ခွဲနည်း
+## 7️⃣ How to split one working tree → logical commits
 
 ```bash
 git status --short --branch
-git add src-tauri/src/core/at.rs src-tauri/src/core/modem.rs   # concern A ချည်းပဲ
-git diff --cached --stat        # staged ဘာလဲ
-git diff --stat                 # ကျန်နေတာ ဘာလဲ
+git add src-tauri/src/core/at.rs src-tauri/src/core/modem.rs   # concern A only
+git diff --cached --stat        # what is staged
+git diff --stat                 # what is left over
 git commit -m "fix: ..."
 git add .github/workflows/test.yml
 git commit -m "ci: ..."
@@ -148,47 +148,47 @@ git add Memory/06-git-workflow.md
 git commit -m "docs: ..."
 ```
 
-ဒီ repo မှာ တစ် concern = တစ် commit ဖြစ်ရမယ့် အကြောင်း:
+Why one concern = one commit has to hold in this repo:
 
-1. release-please က **commit type အလိုက်** changelog section ခွဲတယ် — `feat:` + `docs:` +
-   `ci:` ကို commit တစ်ခုထဲထည့်ရင် release notes က မှားမယ် (သို့) noise ဖြစ်မယ်။
-2. `docs:`/`Memory/**` only commit က `test.yml` `paths-ignore` နဲ့ skip ဖြစ်တယ် — code နဲ့
-   ရောထားရင် အလကား CI matrix နှစ်ခုလုံး ပြေးတယ်။
-3. Field bug တွေ (doc 03) ကို `git log --oneline` နဲ့ ရှာလို့ရတာ commit တွေ atomic ဖြစ်လို့။
-4. Revert လိုအပ်ရင် concern တစ်ခုပဲ ပြန်ဖျက်လို့ရတယ်။
+1. release-please splits the changelog sections **by commit type** — put `feat:` + `docs:` +
+   `ci:` into a single commit and the release notes come out wrong (or noisy).
+2. A `docs:`/`Memory/**` only commit is skipped by `test.yml`'s `paths-ignore` — mix it with code
+   and both CI matrix legs run for nothing.
+3. Field bugs (doc 03) can be found with `git log --oneline` precisely because the commits are atomic.
+4. If a revert is needed, only the one concern has to be taken back.
 
 ## 8️⃣ ❌ Don't do this
 
-| မလုပ်ရ | ဘာကြောင့် |
+| Do not | Why |
 |---|---|
-| မပြီးသေးတဲ့ အလုပ်ကို `main` ကို တိုက်ရိုက် commit | release-please က ချက်ချင်း version bump PR ထဲ ဆွဲသွင်းတယ် (§1) |
-| `git push --force` / `--force-with-lease` on `main` (နှင့် အခြား shared branch) | published history rewrite → tag/release/changelog mismatch |
-| `release-please--*` branch ကို hand-commit / rebase | bot က force-update လုပ်တာမို့ ပျောက်မယ် — case #8 ခြင်းချက်တစ်ခုပဲ (§6) |
-| `Cargo.lock` version bump ကို ကိုယ်တိုင် ရေး/ဖျက် | lock version က `cargo` ပဲ ရေးရမယ်; `sync-cargo-lock` job ရှိပြီးသား။ dependency ပြောင်းရင် `cargo update -p <crate>` သုံး |
-| `.zcode/`, `target/`, `dist/`, `node_modules/`, `*.log`, `src-tauri/updater.key*` commit | build artifact / tooling / **signing key** |
-| `git add .` ကို အကန့်အသတ်မရှိ | `.zcode/` က **`.gitignore` ထဲ မပါဘူး** — ယခု untracked only ဖြစ်နေတယ်၊ `git add .` ဆို ဝင်သွားမယ် |
-| PR title ကို free-form ရေး | squash subject ဖြစ်သွားပြီး changelog ပျောက်မယ် (§5) |
-| CI green မဖြစ်ခင် merge | `test.yml` က release profile compile + 49 rust tests + svelte-check ကို ဖမ်းတဲ့ တစ်ခုတည်း gate |
+| commit unfinished work straight onto `main` | release-please pulls it into a version bump PR immediately (§1) |
+| `git push --force` / `--force-with-lease` on `main` (and any other shared branch) | published history rewrite → tag/release/changelog mismatch |
+| hand-commit / rebase the `release-please--*` branch | the bot force-updates it, so it will be lost — case #8 is the one exception (§6) |
+| write/delete the `Cargo.lock` version bump yourself | the lock version is `cargo`'s to write; the `sync-cargo-lock` job already exists. When changing a dependency use `cargo update -p <crate>` |
+| commit `.zcode/`, `target/`, `dist/`, `node_modules/`, `*.log`, `src-tauri/updater.key*` | build artifact / tooling / **signing key** |
+| `git add .` without limits | `.zcode/` is **not in `.gitignore`** — right now it is only untracked, so a `git add .` takes it in |
+| write the PR title free-form | it becomes the squash subject and the changelog entry goes missing (§5) |
+| merge before CI is green | `test.yml` is the only gate that catches release-profile compile + 49 rust tests + svelte-check |
 
 > ⚠️ `.gitignore` state (verified): `node_modules dist target src-tauri/target .svelte-kit
 > *.log .env .env.* .DS_Store Thumbs.db .mimosa/ /src-tauri/updater.key /src-tauri/updater.key.pub`
-> — **`.zcode/` မပါ**။ commit မဝင်စေချင်ရင် path ရွေး `git add` လုပ်၊ ဒါမှမဟုတ်
-> `.gitignore` ထဲ `.zcode/` ထည့်တဲ့ `chore:` commit တစ်ခု လုပ်ပါ။
+> — **`.zcode/` is not there**. If you do not want it committed, `git add` by chosen path, or
+> make one `chore:` commit that adds `.zcode/` to `.gitignore`.
 
 ## 9️⃣ Cheat-sheet
 
-| လုပ်ချင်တာ | Command |
+| What you want to do | Command |
 |---|---|
 | main sync | `git switch main && git pull --ff-only` |
 | branch create | `git switch -c feat/<topic>` |
-| staged ကို စစ် | `git diff --cached --stat` |
+| check what is staged | `git diff --cached --stat` |
 | commit | `git commit -m "fix(scope): subject"` |
-| ပထမ push | `git push -u origin <branch>` |
-| PR ဖွင့် | `gh pr create --base main --title "<conventional>" --body "..."` |
-| CI ကြည့် | `gh pr checks --watch` · `gh run list --limit 5` |
-| CI ကို branch ပေါ် manual ပြေး | `gh workflow run test.yml --ref <branch>` |
-| PR title ပြင် | `gh pr edit <n> --title "fix: ..."` |
-| squash merge + remote branch ဖျက် | `gh pr merge --squash --delete-branch` |
-| local branch ဖျက် + prune | `git branch -d <branch> && git fetch --prune` |
-| release PR ကြည့် | `gh pr list --state open` · `gh pr diff <n>` |
-| convention history ဖတ် | `git log --oneline -40` |
+| first push | `git push -u origin <branch>` |
+| open a PR | `gh pr create --base main --title "<conventional>" --body "..."` |
+| watch CI | `gh pr checks --watch` · `gh run list --limit 5` |
+| run CI manually on a branch | `gh workflow run test.yml --ref <branch>` |
+| fix a PR title | `gh pr edit <n> --title "fix: ..."` |
+| squash merge + delete the remote branch | `gh pr merge --squash --delete-branch` |
+| delete the local branch + prune | `git branch -d <branch> && git fetch --prune` |
+| look at the release PR | `gh pr list --state open` · `gh pr diff <n>` |
+| read the convention history | `git log --oneline -40` |

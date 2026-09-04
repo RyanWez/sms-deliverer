@@ -8,11 +8,11 @@
 | `feat:` | minor bump (v1.0.1 → v1.1.0) | `feat: sidebar animations` |
 | `feat!:` / `fix!:` | major bump | `feat!: new data model` |
 | `chore:` `docs:` `ci:` `build:` | **no release PR** | `chore(release): …`, `docs: add memory notes` |
-| Body/footer | release notes ထဲ auto copy ဖြစ် | commit subject ကို human-readable ရေးပါ |
+| Body/footer | copied automatically into the release notes | write the commit subject so a human can read it |
 
-Subject သည် lowercase imperative + scope recommend; multi-change commit ဆို footers (`BREAKING CHANGE:`) နဲ့။
+The subject is lowercase imperative and a scope is recommended; a commit carrying several changes declares them in footers (`BREAKING CHANGE:`).
 
-## B. The Verification Loop (မင်းဘယ်တော့မှ ခုန်မပြါးနဲ့)
+## B. The Verification Loop (never skip a step)
 
 ```
 Edit(s) → local validation (JSON valid? svelte-check? cargo check?)
@@ -22,15 +22,15 @@ Edit(s) → local validation (JSON valid? svelte-check? cargo check?)
         → merged effect verify (release assets / endpoint / running app)
 ```
 
-Case study: CI failure တစ်ခု debug လုပ်တုန်း — job databaseId → `--log-failed` → root cause `-lxdo` →
-minimal workflow patch → re-run green. Root-cause-fix ပဲ၊ symptom patch မဟုတ်။
+Case study: while debugging one CI failure — job databaseId → `--log-failed` → root cause `-lxdo` →
+minimal workflow patch → re-run green. A root-cause fix, not a symptom patch.
 
-## C. State Consistency Checklist (release မထုတ်ခင်)
+## C. State Consistency Checklist (before cutting a release)
 
 - [ ] `package.json` == `tauri.conf.json` == `Cargo.toml` == manifest JSON
 - [ ] Local clean (`git status`), remote synced (`main...origin/main`)
-- [ ] Open release-please PR ရှိ/မရှိ နားလည်ထား
-- [ ] Tag list (`git ls-remote --tags origin`) နဲ့ မျှောမှန်း convention match
+- [ ] Know whether an open release-please PR exists
+- [ ] The tag list (`git ls-remote --tags origin`) matches the expected convention
 - [ ] Secrets present: `PAT`, `TAURI_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
 
 ## D. Command Cheatsheet
@@ -62,70 +62,70 @@ curl -sIL .../releases/latest/download/latest.json -o /dev/null -w '%{http_code}
 ## E. Agent/CLI Environment Tips (non-interactive shells)
 
 1. Interactive commands (password prompts, pagers) **never assume** — use flags/env (`GH_PAGER=cat`, `--no-pager`)
-2. Long-running (>~30s): background + redirect to `/tmp/name.txt` → poll/read later; timestamps log ထည့်
-3. Network/API truth အရင်စစ် (curl/api probes) — assumption နဲ့ fix မလုပ်ပါနဲ့ (transient 404 case က သာဓက)
-4. `sleep N && cat /tmp/result.log` pattern နဲ့ async task harvest; exit-code မေ့မနေနဲ့
+2. Long-running (>~30s): background + redirect to `/tmp/name.txt` → poll/read later; log timestamps
+3. Check network/API truth first (curl/api probes) — never fix on an assumption (the transient 404 case is the precedent)
+4. Harvest async tasks with the `sleep N && cat /tmp/result.log` pattern; do not forget the exit code
 
 ## F. When Things Look Broken — Order of Trust
 
 ```
 server-side probe (curl/gh api) > local reproduce > CI logs > user screenshot/memory
 ```
-Cache/CDN illusions ကို အရင်ပယ် — ပြီးမှ configuration hunt စ။ ဒီ approach နဲ့
-404-releases-page scare ကို ၅ မိနစ်အတွင်း resolve လုပ်နိုင်ခဲ့တယ်။
+Rule out cache/CDN illusions first — only then start the configuration hunt. This approach is
+what resolved the 404-releases-page scare inside five minutes.
 
 
-## G. Hardware Live-Check Playbook (SIM Bank ချိတ်ထားတဲ့ machine မှာ)
+## G. Hardware Live-Check Playbook (on the machine with the SIM bank attached)
 
-ဒီနေ့ validated လုပ်ခဲ့တဲ့ layer-by-layer method (2026-08-27, 64-port SIM bank):
+The layer-by-layer method validated today (2026-08-27, 64-port SIM bank):
 
-1. **Hardware layer** — device ရှိ? permission OK?
+1. **Hardware layer** — is the device there? are permissions OK?
    ```bash
-   ls /dev/ttyUSB* /dev/serial/by-id    # zsh glob no-match ဖြစ်ရင် command တစ်ခုလုံး abort — setopt nullglob သတိ
-   groups | grep dialout                # rw လုပ်ဖို့ member ဖြစ်ရမယ် (crw-rw---- root dialout)
+   ls /dev/ttyUSB* /dev/serial/by-id    # a zsh glob no-match aborts the whole command — mind setopt nullglob
+   groups | grep dialout                # membership is required for rw (crw-rw---- root dialout)
    # AT handshake probe (parallel, read-only ATI → OK):
    stty -F $p 115200 raw -echo -icanon min 0 time 20; exec 3<>$p; printf 'ATI\r' >&3
    ```
-   Result day-X: **64/64 RESPOND, zero silent/fail** → USB hub + modems healthy။
-2. **Backend logic** — `cargo test --manifest-path src-tauri/Cargo.toml` → PDU decode/OTP/reassemble/AT-channel unit tests (49 passed; mock transport harness `at.rs::with_transport` via cfg(test))။
-3. **Frontend build** — `npm run build` + `npx svelte-check` (vite dynamic-import chunk warnings တွေ harmless noise)။
-4. **Live boot** — `setsid bash -c 'exec npm run tauri dev' >/tmp/app_dev.log 2>&1 &` (debug build logs → stderr w/ timestamps)၊
-   look for `SIM Bank SMS Reader starting...` + zero panic; bonus: `tauri_plugin_updater` lines = updater E2E free-proof။
+   Result day-X: **64/64 RESPOND, zero silent/fail** → USB hub + modems healthy.
+2. **Backend logic** — `cargo test --manifest-path src-tauri/Cargo.toml` → PDU decode/OTP/reassemble/AT-channel unit tests (49 passed; mock transport harness `at.rs::with_transport` via cfg(test)).
+3. **Frontend build** — `npm run build` + `npx svelte-check` (the vite dynamic-import chunk warnings are harmless noise).
+4. **Live boot** — `setsid bash -c 'exec npm run tauri dev' >/tmp/app_dev.log 2>&1 &` (debug build logs → stderr w/ timestamps),
+   look for `SIM Bank SMS Reader starting...` + zero panic; bonus: `tauri_plugin_updater` lines = updater E2E free-proof.
 5. **Cleanup discipline** — dev instance kill group: `kill -TERM -$PGID`; **multiple instances check first**:
-   `ps -o pid,ppid,lstart,args -C sms-tauri` (user's own running session ≠ your test one — PPID/lstart နဲ့ခွဲပြီး mine-only kill!)
-   Idle app က serial port hold မလုပ်ဘူး — probe နဲ့ conflict မရှိ။
+   `ps -o pid,ppid,lstart,args -C sms-tauri` (the user's own running session ≠ your test one — tell them apart by PPID/lstart and kill only your own!)
+   An idle app does not hold a serial port — no conflict with the probe.
 
-> ⚠️ Gotcha: startup မှာ port list auto-checked (`checked:true`)။ **"Detect Modems" ကို အရင်နှိပ်ပါ** —
-> `AT` probe (800ms × ၂) နဲ့ modem တကယ်ရှိတဲ့ port တွေကိုပဲ ရွေးထားပေးတယ်၊ ကျန်တာကို auto-uncheck လုပ်တယ်။
-> Detect မလုပ်ဘဲ "Scan & Read All" နှိပ်ရင် checked port အားလုံး thread spawn ဖြစ်တယ် — ဒါပေမဲ့ v1.3+ မှာ
-> probe gate ရှိပြီးမို့ dead port တစ်ခုက ~1.6s ပဲ ကုန်တယ် (အရင်က 24s)။ တစ်ခါတည်း သတိ:
-> device node ရှိတာ = modem ရှိတာ မဟုတ်ဘူး (doc 03 §9 ကြည့်)။
+> ⚠️ Gotcha: at startup every port in the list is auto-checked (`checked:true`). **Press "Detect Modems" first** —
+> the `AT` probe (800ms × 2) leaves only the ports that really have a modem checked and auto-unchecks the rest.
+> Pressing "Scan & Read All" without detecting spawns a thread for every checked port — but since v1.3+ has the
+> probe gate, one dead port now costs only ~1.6s (it used to be 24s). One more caution while you are here:
+> a device node existing is not the same as a modem existing (see doc 03 §9).
 
-## H. Settings Control Rule — Inert Switch ကို လုံးဝ မထည့်ရ
+## H. Settings Control Rule — Never Add an Inert Switch
 
-> **စည်းကမ်း:** Setting အသစ်တစ်ခုကို **control ထည့်တဲ့ change တစ်ခုတည်းအတွင်း wire ပြီးရမယ်၊
-> မဖြစ်ရင် လုံးဝ မထည့်ရ။**
+> **Rule:** a new setting is **wired inside the very change that adds the control,
+> or it is not added at all.**
 
-ဘာမှ မလုပ်တဲ့ switch ဟာ switch မရှိတာထက် **ပိုဆိုးတယ်** — ဘာလို့လဲဆိုတော့ သူက operator ကို
-"Settings က လိမ်တယ်" လို့ သွန်သင်လိုက်တာ။ အဲ့သွန်သင်ချက်က field failure တစ်ခုကို debug
-လုပ်နေချိန် — ယုံကြည်မှု အလိုအပ်ဆုံး အချိန် — မှာ တန်ပြန်ကိုက်တယ်: switch ကို ဖွင့်/ပိတ်ပြီး
-behaviour မပြောင်းတာ တွေ့ရင် operator က modem/SIM/network ကို လိုက်ရှာမယ်၊ တကယ့်အဖြေက
-"ဒီ switch ကို ဘယ်သူမှ မဖတ်ဘူး" ဆိုတာ။
+A switch that does nothing is **worse** than no switch at all — because what it teaches the operator
+is that "Settings lies". That lesson bites back exactly while a field failure is being debugged —
+the moment trust is needed most: seeing the switch flipped on and off with no change in behaviour,
+the operator goes hunting through modem/SIM/network, while the real answer is
+"nobody reads this switch at all".
 
-Control တစ်ခုက အနည်းဆုံး နေရာ ၃ ခု ထိတယ် — တတိယခု မရှိရင် commit မတင်ပါနဲ့:
+A control touches at least three places — do not commit if the third is missing:
 
-| # | နေရာ | မရှိရင် ဖြစ်တာ |
+| # | Place | What happens without it |
 |---|---|---|
-| 1 | `SettingsState` + `DEFAULT_SETTINGS` (`src/lib/types.ts`) | persist မဖြစ် / undefined |
-| 2 | Settings page field descriptor (`src/lib/pages/Settings.svelte`) | UI မှာ မပေါ် |
-| 3 | **တကယ် ဖတ်တဲ့ consumer** (store getter → component / `api.ts` → Rust command) | **inert switch — ဒီ rule ချိုးတာ** |
+| 1 | `SettingsState` + `DEFAULT_SETTINGS` (`src/lib/types.ts`) | no persistence / undefined |
+| 2 | Settings page field descriptor (`src/lib/pages/Settings.svelte`) | never appears in the UI |
+| 3 | **the consumer that actually reads it** (store getter → component / `api.ts` → Rust command) | **inert switch — this is what breaks the rule** |
 
-သာဓက (ကောင်းတဲ့ ပုံစံ): `notifications.enabled` ကို `f88d6d0` မှာ `src/lib/services/api.ts` ရဲ့
-`notifyOtp()` helper နဲ့ wire လုပ်လိုက်တယ် — OTP announcement ၂ ခုကိုပဲ gate တယ်၊ generic `toast`
-ကို မထိဘူး (operational error ကို ပိတ်တာ "Enable Notifications: off" ရဲ့ အဓိပ္ပာယ် မဟုတ်)။
+Example (the good shape): `notifications.enabled` was wired in `f88d6d0` through the
+`notifyOtp()` helper in `src/lib/services/api.ts` — it gates the two OTP announcements only and
+never touches the generic `toast` (silencing an operational error is not what
+"Enable Notifications: off" means).
 
-2026-08-30 မှာ ဒီ rule အောက် field ၁၁ ခု ဖျက်ခဲ့တယ် (`fbd7b8b`)၊ ၂ ခုကို **hard refusal**
-အဖြစ် သတ်မှတ်ခဲ့တယ် — ledger + အကြောင်းရင်း အားလုံး **doc 05 §Settings Decisions Ledger** မှာ။
-Binding path မှာ type check မရှိတာ နဲ့ `localStorage` ထဲ ဖျက်ပြီး field ကျန်နေတာ ၂ ခုက
-**doc 03 §Latent Traps** မှာ။
-
+On 2026-08-30, eleven fields were deleted under this rule (`fbd7b8b`) and two were designated
+**hard refusals** — the ledger and every reason behind it live in **doc 05 §Settings Decisions Ledger**.
+The two remaining traps, no type check on the binding path and a deleted field lingering in
+`localStorage`, are in **doc 03 §Latent Traps**.
