@@ -1,4 +1,4 @@
-# 03 — Troubleshooting Casebook (26 cases that actually happened)
+# 03 — Troubleshooting Casebook (27 cases that actually happened, + 8 latent traps)
 
 > Format: Symptom → Root Cause → Fix → Preventive Rule. Search in here first, before you debug.
 
@@ -834,14 +834,52 @@
   gap between the timestamps (15 ms here) is the evidence that there were two attempts. Which means
   a log line must **write distinct work distinctly**
 
+## 2️⃣7️⃣ The Linux tray menu opens as a blank rectangle with no labels — **fixed in v1.8.0**
+
+- **Symptom (Ubuntu GNOME, on the pre-release build between `v1.7.0` and `v1.8.0`):**
+  Clicking the tray icon opened the popup menu as a blank dark/blue box with no visible
+  text where `Open SMS Reader` and `Quit` should be, while other apps on the same desktop
+  (Antigravity IDE, Cloudflare WARP) drew crisp labels. Shipped fixed in `v1.8.0` as
+  `fix(tray): persist tray menu state and guard left-click menu suppression for windows`
+  (`80a83bb`, PR #37)
+- **Root cause — two of them, in the same few lines:**
+  1. **The `Menu` was a local in `.setup()`.** Under GTK3 + `libayatana-appindicator` the
+     Rust `Menu` owns the GTK widget tree, so dropping it at the end of `setup` let the
+     widgets be finalised while the AppIndicator stayed registered. GNOME Shell
+     (`ubuntu-appindicators`) then asked over DBusMenu (`com.canonical.dbusmenu`) for the
+     layout and properties and got empty, un-synchronised labels back. **The menu drew,
+     because the indicator was still there — it just had nothing to say**
+  2. **`.show_menu_on_left_click(false)` was called unconditionally.** Upstream `tray-icon`
+     documents it as `Linux: Unsupported`; on Linux it fought the AppIndicator DBus
+     service's own event handling
+- **Fix:**
+  1. `app.manage(menu)` — the menu and its GTK widget tree stay alive for the whole process
+     lifetime. Nothing ever reads that state back; keeping it alive **is** the reason it is
+     there, which is worth a comment to anyone who later tries to tidy it away
+  2. `.show_menu_on_left_click(false)` moved behind `#[cfg(target_os = "windows")]`, so
+     Windows keeps restore-on-left-click and Linux keeps its native menu-on-left-click
+  3. Labels shortened to ordinary desktop actions (`Open SMS Reader`, `Quit`)
+- **Rule 1:** **A Linux tray or context menu has to be owned by something that outlives
+  `setup`.** "It compiles and the icon appears" is not evidence the menu survived — the
+  indicator and its contents have separate lifetimes, and only the contents went missing
+- **Rule 2:** A platform-specific tray builder flag is `#[cfg]`-guarded to the platforms
+  that document support for it. Check the upstream doc line before calling one unguarded;
+  `tray-icon` states the unsupported platform for each
+- **Rule 3:** This class of bug **cannot be caught by any gate in this repo** — it needs a
+  desktop shell, an AppIndicator host and a human looking at a menu. It is a
+  `04 §G` hardware-playbook check, not a CI check
+
 ## ⚠️ Latent Traps (not happened yet, but lying in wait)
 
 Not cases yet — three things found in passing while doing the 2026-08-30 settings cleanup
 (`fbd7b8b`) (T1–T2 in the settings layer, T3 in the decoder), plus T4 (retention layer) and T5
-(busy-flag layer) out of the 2026-08-31 audit.
+(busy-flag layer) out of the 2026-08-31 audit, plus T6–T8 out of the 2026-09-05 review of the
+shipped v1.8.0 tray.
 There was no symptom, so they were not fixed, but each of them could become a bug that is hard to
 explain later.
-**T3 was fixed in code in v1.4.0, and T4/T5 in v1.5.0** — T1/T2 are still unfixed.
+**T3 was fixed in code in v1.4.0, and T4/T5 in v1.5.0** — T1/T2 and T6/T7/T8 are still unfixed.
+T6–T8 were reported to the operator and **deliberately deferred**: the v1.8.0 audit was a check,
+not a change, and the fixes are `fix:`-class work waiting on a v1.8.1 decision.
 
 ### T1. `deepMerge` iterates the **stored** keys — a deleted setting never disappears from a profile
 
@@ -1003,20 +1041,78 @@ is shut
   behaviour-normalising refactor, it is a separate change. **Deliberately deferred; the entry is doc
   05 §C.10**
 
-## 2️⃣7️⃣ Linux System Tray Menu appears as a blank rectangle with missing labels
+### T6. The tray's `Quit` is `app.exit(0)` — the forwarder flush never runs
 
-- **Symptom (Ubuntu GNOME, v1.7.0):**
-  Clicking the system tray icon on Linux displays the popup menu as a blank blue/dark box with no visible text (`Open SIM Bank SMS Reader`, `Quit`), while other applications on the same desktop (Antigravity IDE, Cloudflare WARP) render crisp white labels.
-- **Root cause:**
-  1. In Tauri v2 with GTK3 / `libayatana-appindicator`, creating the menu items locally within `.setup()` without storing the `Menu` instance in Tauri's managed app state (`app.manage(menu)`) allows the underlying GTK menu widgets to be finalized prematurely, causing DBusMenu (`com.canonical.dbusmenu`) layout/properties requests from GNOME Shell (`ubuntu-appindicators`) to receive empty or un-synchronized label properties.
-  2. Calling `.show_menu_on_left_click(false)` in `TrayIconBuilder` is unsupported on Linux (documented as `Linux: Unsupported` by the upstream `tray-icon` crate) and caused conflicting event behavior with the desktop's AppIndicator DBus service.
-- **Fix:**
-  1. Manage the `Menu` instance in Tauri application state via `app.manage(menu)` so the menu object and its GTK widget tree remain active across the entire application lifecycle.
-  2. Guard `.show_menu_on_left_click(false)` with `#[cfg(target_os = "windows")]` so Windows retains the direct-restore-on-left-click behavior without interfering with Linux AppIndicator menu handling.
-  3. Streamlined menu labels to standard concise desktop actions (`Open SMS Reader`, `Quit`).
-- **Rules:**
-  - **Rule 1:** Tray menus and context menus on Linux must be retained in persistent application state; never allow the Rust handle to go out of scope at the end of `.setup()`.
-  - **Rule 2:** Platform-specific tray behavior flags (`show_menu_on_left_click`) must be conditionally compiled for the platforms that actually support them.
+`lib.rs`'s `"quit"` menu arm calls `app.exit(0)`. The Telegram queue's flush lives somewhere
+else entirely: in `start_live`'s supervisor thread, after `for h in handles { h.join() }`, at
+`commands/mod.rs`'s `if let Some(f) = forwarder { f.shutdown(); }` — whose own comment says why
+it is there, *"Flushing here rather than dropping the queue means a code that arrived a second
+before Stop still lands"*. `app.exit(0)` ends the process, so the supervisor never joins, never
+reaches that line, and the queue goes with it.
+
+**Consequence:** press *Quit* while Live is running and every item the forwarder had not yet
+paced out is lost silently — no error, no log line, no Telegram bubble. The window is
+`MIN_INTERVAL` 3.5 s per send with `MAX_BATCH` 10 items each, so a burst that just arrived is
+exactly what is still sitting there. `AGENTS.md` already states the invariant this crosses:
+*"`stop_live` must call `Forwarder::shutdown` — it flushes the remainder as one last message and
+joins; dropping the handle does not."* `stop_live` still honours it. The tray does not go
+through `stop_live`.
+
+- **Not a regression** — before v1.8.0 the window's close button ended the process the same way,
+  with the same loss. What v1.8.0 changed is that there is now a labelled *Quit* button, on a
+  tray icon, on an app that is *designed* to be left running unattended. The operator will press
+  it mid-session, which is the one case that loses codes
+- **The fix, when it is taken:** have the `"quit"` arm run the orderly stop (`stop_live`, or at
+  minimum the forwarder shutdown) and only then `app.exit(0)`. Note that `stop_live` can take up
+  to ~15 s if a worker is parked in `AT+CMGL=4`, so Quit cannot be synchronous-and-instant *and*
+  lossless — that trade-off is the actual design question, not the plumbing
+- **Rule:** **every path that ends the process is a path that has to flush.** Count them before
+  adding one. A queue whose flush lives in one supervisor is only as safe as the number of ways
+  the process can die without reaching it
+
+### T7. Close-to-tray with no single-instance guard — two processes, one bank
+
+`minimizeToTray` defaults to `true`, so `✕` hides the window and the process keeps every serial
+port open. There is no `tauri-plugin-single-instance` anywhere in the dependency graph
+(`cargo tree` and a source grep both come back empty), so nothing stops a second launch.
+
+**Consequence:** an operator who believes they closed the app double-clicks the icon and now has
+two processes. The second one cannot open a single port — the first still holds them — so it
+probes every slot into `ProbeVerdict::Inconclusive` (the v1.5.0 `#19` behaviour, §16) and
+presents a bank that looks entirely dead, while the first copy is invisibly still reading SMS
+and forwarding it. The operator is now debugging the wrong process. Before v1.8.0 this could not
+happen: `✕` ended the process, so there was never a first copy to collide with.
+
+- **Worse on Linux**, where the tray icon needs an AppIndicator host in the shell. On a desktop
+  without one the window vanishes with no icon to bring it back, so relaunching is the *obvious*
+  thing to do — see README's Linux requirements note
+- **The fix, when it is taken:** add `tauri-plugin-single-instance` and have the second launch
+  show and focus the existing window instead of starting a run
+- **Rule:** **the moment a process can outlive its last window, "what happens on the second
+  launch?" becomes a question the design has to answer.** For an app that owns exclusive
+  hardware, the answer cannot be "two of them"
+
+### T8. `tray-icon` is enabled by `linux-libxdo`, not by this crate
+
+`src-tauri/Cargo.toml` declares `tauri = { version = "2", features = ["linux-libxdo"] }` and
+never asks for `tray-icon`. `tray-icon` is not one of tauri's defaults either — those are
+`wry, compression, common-controls-v6, dynamic-acl, x11, dbus`. The tray compiles because
+tauri's `linux-libxdo = ["tray-icon/libxdo", "muda/libxdo"]` is written **without** the `?`
+sigil, so naming that optional dependency force-enables it. `cargo tree -e features` shows the
+chain outright: `tauri feature "linux-libxdo"` → `tauri feature "tray-icon"`.
+
+**Consequence:** the feature this app's tray depends on is switched on by a side effect of an
+unrelated feature, in a crate we track with a caret range. If upstream ever rewrites that entry
+in the idiomatic form (`tray-icon?/libxdo`) — exactly the kind of thing a maintainer tidies —
+`tauri::tray` disappears and `lib.rs` stops compiling.
+
+- **Loud, not silent** — it is a compile error, which is the good version of this problem. But
+  because CI runs `--locked`, it will not appear on the branch that caused it: it appears on
+  whoever next regenerates `Cargo.lock`, or on a release PR
+- **The fix costs nothing:** add `"tray-icon"` to the feature list. It is already enabled, so
+  `Cargo.lock` does not change and no new crate is pulled
+- **Rule:** **depend on what you use, by name.** A feature that arrives through someone else's
+  feature list is a dependency you did not declare and cannot see in your own manifest
 
 ## Bonus UX Notes
 
