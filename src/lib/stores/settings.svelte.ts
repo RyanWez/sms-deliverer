@@ -1,5 +1,6 @@
 import type { SettingsState } from '$lib/types';
 import { DEFAULT_SETTINGS } from '$lib/types';
+import { normalizeRetentionHours } from '$lib/utils/retention';
 
 const STORAGE_KEY = 'sms-reader-settings';
 
@@ -42,17 +43,32 @@ function deepMerge<T extends Record<string, any>>(target: T, source: Partial<T>)
  *
  * Retention used to be two settings — an `autoDeleteExpired` toggle plus a
  * `retentionHours` value — which could disagree (off + 2h) and left the backend
- * with no single number to prune SIM storage by. They are now one value where
- * `0` means "keep everything", so an existing profile that had auto-delete
- * switched off has to migrate to 0 instead of silently turning cleanup on.
+ * with no single number to prune SIM storage by. They became one value where `0`
+ * meant "keep everything", so a profile with auto-delete switched off migrated
+ * to 0 rather than silently turning cleanup on.
+ *
+ * Settings now offers one window and 0 is not it, so that value — and the 2, 4,
+ * 8, 24 and 168 the page used to offer — is folded on to the default as well.
+ * Skipping this leaves a `<select>` whose value matches no option: it renders
+ * blank, and the number the page is not showing is the one still in force.
  */
 function migrate(parsed: any): any {
-  if (parsed?.general && 'autoDeleteExpired' in parsed.general) {
-    const { autoDeleteExpired, ...general } = parsed.general;
+  let out = parsed;
+  if (out?.general && 'autoDeleteExpired' in out.general) {
+    const { autoDeleteExpired, ...general } = out.general;
     if (autoDeleteExpired === false) general.retentionHours = 0;
-    return { ...parsed, general };
+    out = { ...out, general };
   }
-  return parsed;
+  if (out?.general && 'retentionHours' in out.general) {
+    out = {
+      ...out,
+      general: {
+        ...out.general,
+        retentionHours: normalizeRetentionHours(out.general.retentionHours),
+      },
+    };
+  }
+  return out;
 }
 
 function loadSettings(): SettingsState {
@@ -60,7 +76,15 @@ function loadSettings(): SettingsState {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
       const parsed = migrate(JSON.parse(stored));
-      return deepMerge(defaultsClone(), parsed);
+      const merged = deepMerge(defaultsClone(), parsed);
+      // Write the migrated shape straight back, so what is on disk matches what
+      // is in memory. Migration otherwise only ever corrects the copy the app
+      // runs on: a legacy `retentionHours` of 2 stays in `localStorage` being
+      // re-coerced on every launch, and anything that reads the raw profile — a
+      // later migration keyed on the stored value, or somebody debugging a bank
+      // in the field — is looking at a window Settings has no option for.
+      saveSettings(merged);
+      return merged;
     }
   } catch {
     // ignore parse errors

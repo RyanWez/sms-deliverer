@@ -1,3 +1,9 @@
+// The default retention window is taken from the option list rather than written
+// again here, so the shipped default is an entry the Settings select can show by
+// construction. A default outside that list renders the control blank while the
+// value it is not showing stays in force.
+import { DEFAULT_RETENTION_HOURS } from './utils/retention';
+
 export interface PortInfo {
   name: string;
   /** Stable identity key (Linux by-path id, else the name). */
@@ -157,7 +163,7 @@ export const DEFAULT_SETTINGS: SettingsState = {
     autoStartLive: false,
     confirmDelete: true,
     portRefreshInterval: 30,
-    retentionHours: 2,
+    retentionHours: DEFAULT_RETENTION_HOURS,
   },
   notifications: {
     enabled: true,

@@ -4,6 +4,7 @@
   import type { IconName } from "$lib/icons";
   import { settingsStore } from "$lib/stores/settings.svelte";
   import { navigationStore } from "$lib/stores/navigation.svelte";
+  import { RETENTION_OPTIONS } from "$lib/utils/retention";
   import { api } from "$lib/services/api";
   import { confirm as nativeConfirm } from "@tauri-apps/plugin-dialog";
   import { getVersion } from "@tauri-apps/api/app";
@@ -46,18 +47,10 @@
           key: "retentionHours",
           label: "Message Retention Period",
           description:
-            "How long to keep received SMS before they are deleted from the inbox and from SIM storage",
+            "How long a received SMS is kept before it is deleted from the inbox and from SIM storage. One hour is the only window offered — a code is spent within minutes of arriving, and anything still on the card after that is a code someone else can still read.",
           type: "select" as const,
           bind: "general",
-          options: [
-            { value: 0, label: "Off (keep everything)" },
-            { value: 1, label: "1 Hour" },
-            { value: 2, label: "2 Hours (Default)" },
-            { value: 4, label: "4 Hours" },
-            { value: 8, label: "8 Hours" },
-            { value: 24, label: "24 Hours (1 Day)" },
-            { value: 168, label: "7 Days" },
-          ],
+          options: RETENTION_OPTIONS,
         },
       ],
     },
