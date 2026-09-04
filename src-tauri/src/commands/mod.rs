@@ -6,7 +6,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::Emitter;
 
 pub mod telegram;
@@ -37,7 +37,6 @@ pub struct AppStateInner {
     pub status_text: String,
     pub failed_notes: Vec<String>,
 }
-
 
 impl AppStateInner {
     pub fn take_next_id(&mut self) -> u64 {
@@ -183,7 +182,6 @@ pub fn new_shared_state() -> SharedState {
         status_text: String::new(),
         failed_notes: Vec::new(),
     }))
-
 }
 
 /// Rebuild the port list from a fresh enumeration, carrying session state over
@@ -1414,6 +1412,64 @@ pub fn stop_live(app: tauri::AppHandle, state: tauri::State<'_, SharedState>) {
     );
 }
 
+/// How long an exit path waits for a live session to wind down before giving up
+/// on it. A worker parked in `AT+CMGL=4` holds its port for up to 15 s and the
+/// retention sweep can follow it, so the budget is that plus room to spare.
+pub const EXIT_WIND_DOWN: Duration = Duration::from_secs(20);
+
+/// How often `wind_down_live` re-checks. Short enough that a fast stop feels
+/// immediate, long enough not to fight the supervisor for the mutex.
+const WIND_DOWN_POLL: Duration = Duration::from_millis(100);
+
+/// Wind a running live session down and wait for its supervisor to finish, so
+/// that an exit path reaches the Telegram flush instead of dropping the queue.
+///
+/// The flush is the last thing `start_live`'s supervisor does, and it runs only
+/// after every worker has been joined — so "the supervisor cleared `live_stop`"
+/// is the one observable that says the queue was drained. Exiting the process
+/// reaches none of it, which is why the tray's Quit calls this first
+/// (`Memory/03 T6`).
+///
+/// The wait is **bounded on purpose**. An app that cannot be quit while one
+/// modem is wedged is a worse failure than a dropped queue, so the deadline is
+/// real and the return value says which way it went: `true` if the supervisor
+/// finished, `false` if the caller should exit anyway.
+///
+/// Signalling is idempotent — pressing Quit twice sets the same flag twice and
+/// both callers wait on the same supervisor.
+pub fn wind_down_live(state: &Mutex<AppStateInner>, timeout: Duration) -> bool {
+    {
+        let mut st = lock_state(state);
+        // Neither flag set means no session and nothing to flush. `live_stop`
+        // alone means a stop is already in flight — join that one rather than
+        // returning early, because its flush has not happened yet.
+        if !st.live_on && st.live_stop.is_none() {
+            return true;
+        }
+        if let Some(ref stop) = st.live_stop {
+            stop.store(true, Ordering::Relaxed);
+        }
+        st.live_on = false;
+    }
+    log::info!("Exit requested — waiting for the live session to flush");
+    let deadline = Instant::now() + timeout;
+    loop {
+        let wound_down = { lock_state(state).live_stop.is_none() };
+        if wound_down {
+            log::info!("Live session wound down; exiting");
+            return true;
+        }
+        if Instant::now() >= deadline {
+            log::warn!(
+                "Live session did not wind down within {}s — exiting anyway",
+                timeout.as_secs()
+            );
+            return false;
+        }
+        thread::sleep(WIND_DOWN_POLL);
+    }
+}
+
 /// SIM slots one inbox row occupies. An assembled long SMS spans one slot per
 /// fragment; a single-part message only has `index`.
 ///
@@ -1882,6 +1938,87 @@ mod tests {
         assert!(s.minimize_to_tray);
     }
 
+    /// The two flags `wind_down_live` reads, in the shape `start_live` leaves
+    /// them: a session running, and the stop flag its supervisor watches.
+    fn live_session_state() -> (SharedState, Arc<AtomicBool>) {
+        let state = new_shared_state();
+        let stop = Arc::new(AtomicBool::new(false));
+        {
+            let mut st = lock_state(&state);
+            st.live_on = true;
+            st.live_stop = Some(Arc::clone(&stop));
+        }
+        (state, stop)
+    }
+
+    /// Stand in for the live supervisor: wait for the stop flag, then clear
+    /// `live_stop` the way it does once its workers are joined and the Telegram
+    /// queue has been flushed.
+    fn spawn_supervisor_mimic(state: SharedState, stop: Arc<AtomicBool>) -> thread::JoinHandle<()> {
+        thread::spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                thread::sleep(Duration::from_millis(5));
+            }
+            lock_state(&state).live_stop = None;
+        })
+    }
+
+    #[test]
+    fn wind_down_live_returns_at_once_when_no_session_is_running() {
+        let state = new_shared_state();
+        let started = Instant::now();
+        assert!(wind_down_live(&state, Duration::from_secs(5)));
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "quitting an idle app must not wait for anything"
+        );
+    }
+
+    #[test]
+    fn wind_down_live_signals_the_stop_and_waits_for_the_flush() {
+        let (state, stop) = live_session_state();
+        let mimic = spawn_supervisor_mimic(Arc::clone(&state), Arc::clone(&stop));
+        assert!(wind_down_live(&state, Duration::from_secs(5)));
+        mimic.join().unwrap();
+        assert!(
+            stop.load(Ordering::Relaxed),
+            "the supervisor watches this flag — an exit that never sets it never flushes"
+        );
+        let st = lock_state(&state);
+        assert!(!st.live_on);
+        assert!(st.live_stop.is_none());
+    }
+
+    /// `live_on` already clear while `live_stop` is still set is the shutdown
+    /// window: Stop was pressed, the workers still hold their ports and the
+    /// flush has not run yet. Returning early here would lose exactly what an
+    /// abrupt exit loses.
+    #[test]
+    fn wind_down_live_waits_out_a_stop_already_in_flight() {
+        let (state, stop) = live_session_state();
+        {
+            let mut st = lock_state(&state);
+            st.live_on = false;
+        }
+        let mimic = spawn_supervisor_mimic(Arc::clone(&state), Arc::clone(&stop));
+        assert!(wind_down_live(&state, Duration::from_secs(5)));
+        mimic.join().unwrap();
+    }
+
+    /// Bounded on purpose: one wedged modem must not turn Quit into an app that
+    /// cannot be quit.
+    #[test]
+    fn wind_down_live_gives_up_on_a_supervisor_that_never_finishes() {
+        let (state, _stop) = live_session_state();
+        let started = Instant::now();
+        assert!(!wind_down_live(&state, Duration::from_millis(200)));
+        let waited = started.elapsed();
+        assert!(waited >= Duration::from_millis(200));
+        assert!(
+            waited < Duration::from_secs(3),
+            "the deadline has to be real, not advisory"
+        );
+    }
 
     #[test]
     fn progress_status_without_failures_has_no_suffix() {

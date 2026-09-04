@@ -875,11 +875,11 @@ Not cases yet — three things found in passing while doing the 2026-08-30 setti
 (`fbd7b8b`) (T1–T2 in the settings layer, T3 in the decoder), plus T4 (retention layer) and T5
 (busy-flag layer) out of the 2026-08-31 audit, plus T6–T8 out of the 2026-09-05 review of the
 shipped v1.8.0 tray.
-There was no symptom, so they were not fixed, but each of them could become a bug that is hard to
-explain later.
-**T3 was fixed in code in v1.4.0, and T4/T5 in v1.5.0** — T1/T2 and T6/T7/T8 are still unfixed.
-T6–T8 were reported to the operator and **deliberately deferred**: the v1.8.0 audit was a check,
-not a change, and the fixes are `fix:`-class work waiting on a v1.8.1 decision.
+There was no symptom, so they were not fixed on the spot, but each of them could become a bug that
+is hard to explain later.
+**T3 was fixed in code in v1.4.0, T4/T5 in v1.5.0, and T6/T7/T8 in v1.8.1** — T1/T2 are still
+unfixed. T6–T8 were reported to the operator first and fixed on the pass after, which is why each
+of those entries keeps its diagnosis above its fix: the reasoning is the part worth re-reading.
 
 ### T1. `deepMerge` iterates the **stored** keys — a deleted setting never disappears from a profile
 
@@ -1041,40 +1041,61 @@ is shut
   behaviour-normalising refactor, it is a separate change. **Deliberately deferred; the entry is doc
   05 §C.10**
 
-### T6. The tray's `Quit` is `app.exit(0)` — the forwarder flush never runs
+### T6. The tray's `Quit` was `app.exit(0)` — the forwarder flush never ran (**fixed in v1.8.1**)
 
-`lib.rs`'s `"quit"` menu arm calls `app.exit(0)`. The Telegram queue's flush lives somewhere
+`lib.rs`'s `"quit"` menu arm called `app.exit(0)`. The Telegram queue's flush lives somewhere
 else entirely: in `start_live`'s supervisor thread, after `for h in handles { h.join() }`, at
 `commands/mod.rs`'s `if let Some(f) = forwarder { f.shutdown(); }` — whose own comment says why
 it is there, *"Flushing here rather than dropping the queue means a code that arrived a second
-before Stop still lands"*. `app.exit(0)` ends the process, so the supervisor never joins, never
-reaches that line, and the queue goes with it.
+before Stop still lands"*. `app.exit(0)` ends the process, so the supervisor never joined, never
+reached that line, and the queue went with it.
 
 **Consequence:** press *Quit* while Live is running and every item the forwarder had not yet
 paced out is lost silently — no error, no log line, no Telegram bubble. The window is
 `MIN_INTERVAL` 3.5 s per send with `MAX_BATCH` 10 items each, so a burst that just arrived is
-exactly what is still sitting there. `AGENTS.md` already states the invariant this crosses:
+exactly what is still sitting there. `AGENTS.md` already stated the invariant this crossed:
 *"`stop_live` must call `Forwarder::shutdown` — it flushes the remainder as one last message and
-joins; dropping the handle does not."* `stop_live` still honours it. The tray does not go
+joins; dropping the handle does not."* `stop_live` always honoured it. The tray did not go
 through `stop_live`.
 
 - **Not a regression** — before v1.8.0 the window's close button ended the process the same way,
   with the same loss. What v1.8.0 changed is that there is now a labelled *Quit* button, on a
   tray icon, on an app that is *designed* to be left running unattended. The operator will press
   it mid-session, which is the one case that loses codes
-- **The fix, when it is taken:** have the `"quit"` arm run the orderly stop (`stop_live`, or at
-  minimum the forwarder shutdown) and only then `app.exit(0)`. Note that `stop_live` can take up
-  to ~15 s if a worker is parked in `AT+CMGL=4`, so Quit cannot be synchronous-and-instant *and*
-  lossless — that trade-off is the actual design question, not the plumbing
+- **Fix (v1.8.1):** `commands::wind_down_live(state, timeout)` — signal the supervisor's stop
+  flag, clear `live_on`, then wait until the supervisor clears `live_stop`, which it only does
+  after joining every worker *and* flushing. "Supervisor finished" is the single observable that
+  means the queue drained, so that is what the wait keys on. The `"quit"` arm runs it on a spawned
+  thread (the menu closure is on the main thread and the wait can be long) and calls `app.exit(0)`
+  after. Signalling is idempotent, so pressing Quit twice just waits twice
+- **The wait is bounded and that is the design, not a shortcut:** `EXIT_WIND_DOWN` is 20 s,
+  covering the ~15 s a worker parked in `AT+CMGL=4` can hold plus the retention sweep behind it.
+  An app that cannot be quit while one modem is wedged is a worse failure than a dropped queue, so
+  the deadline is real, it returns which way it went, and it logs a warning when it gives up
+- **The same hole existed one step to the side**, and the fix closed it too: the close handler
+  read `minimize_to_tray || live_on`, but the shutdown window has `live_on` already cleared with
+  `live_stop` still set — the workers hold their ports and the flush has not run. With the setting
+  off, pressing Stop and immediately closing exited straight through it. The condition now also
+  covers `live_stop.is_some()`, which is the same "the ports are held" meaning `port_busy()` has
+  always given that flag
+- **Four tests** (`commands/mod.rs`): returns immediately with no session; signals the flag and
+  waits for the supervisor; **waits out a stop already in flight** (the branch the second hole
+  lived in); gives up on a supervisor that never finishes, with the elapsed time asserted on both
+  sides so the deadline cannot quietly become advisory
+- **One exit path is left, deliberately:** installing an update. `services/updater.ts`'s
+  `restartNow()` goes through `plugin-process`, and on Windows the installer ends the process
+  itself, so neither reaches the wind-down. It is acceptable where Quit was not, because the
+  operator has explicitly asked to restart now, and forcing a 20 s wait into an update flow buys
+  less than it costs. Worth revisiting if that flow ever becomes automatic
 - **Rule:** **every path that ends the process is a path that has to flush.** Count them before
-  adding one. A queue whose flush lives in one supervisor is only as safe as the number of ways
-  the process can die without reaching it
+  adding one, and write down the ones you are choosing not to cover. A queue whose flush lives in
+  one supervisor is only as safe as the number of ways the process can die without reaching it
 
-### T7. Close-to-tray with no single-instance guard — two processes, one bank
+### T7. Close-to-tray with no single-instance guard — two processes, one bank (**fixed in v1.8.1**)
 
 `minimizeToTray` defaults to `true`, so `✕` hides the window and the process keeps every serial
-port open. There is no `tauri-plugin-single-instance` anywhere in the dependency graph
-(`cargo tree` and a source grep both come back empty), so nothing stops a second launch.
+port open. There was no `tauri-plugin-single-instance` anywhere in the dependency graph
+(`cargo tree` and a source grep both came back empty), so nothing stopped a second launch.
 
 **Consequence:** an operator who believes they closed the app double-clicks the icon and now has
 two processes. The second one cannot open a single port — the first still holds them — so it
@@ -1086,31 +1107,43 @@ happen: `✕` ended the process, so there was never a first copy to collide with
 - **Worse on Linux**, where the tray icon needs an AppIndicator host in the shell. On a desktop
   without one the window vanishes with no icon to bring it back, so relaunching is the *obvious*
   thing to do — see README's Linux requirements note
-- **The fix, when it is taken:** add `tauri-plugin-single-instance` and have the second launch
-  show and focus the existing window instead of starting a run
+- **Fix (v1.8.1):** `tauri-plugin-single-instance`, registered **first** as upstream requires, with
+  a callback that only calls `reveal_main_window` — `show` + `unminimize` + `set_focus`, three
+  calls because they answer three different states (hidden to the tray, minimised to the taskbar,
+  open but behind something else)
+- **It turned the Linux worst case into the recovery path.** On a shell with no tray host,
+  relaunching the app now shows the hidden window instead of starting a doomed second copy, so the
+  "no window and no icon" state is no longer a `kill` away from recovery. README says so
+- **It costs 34 crates** — a `zbus` + `async-io` stack, plus `uds_windows` on the other leg — for
+  the DBus name it holds on Linux. Noted rather than hidden: this repo argues about dependency
+  weight (see the `reqwest` comment in `Cargo.toml`, which refuses 22 crates for a TLS stack the
+  binary already had). The difference is that these 34 buy a capability the binary did not have,
+  and the alternative — a hand-rolled `flock`/named-mutex guard — can only refuse to start, not
+  hand over the window, and would be untested platform-specific code on the leg that matters most
 - **Rule:** **the moment a process can outlive its last window, "what happens on the second
   launch?" becomes a question the design has to answer.** For an app that owns exclusive
   hardware, the answer cannot be "two of them"
 
-### T8. `tray-icon` is enabled by `linux-libxdo`, not by this crate
+### T8. `tray-icon` was enabled by `linux-libxdo`, not by this crate (**fixed in v1.8.1**)
 
-`src-tauri/Cargo.toml` declares `tauri = { version = "2", features = ["linux-libxdo"] }` and
-never asks for `tray-icon`. `tray-icon` is not one of tauri's defaults either — those are
-`wry, compression, common-controls-v6, dynamic-acl, x11, dbus`. The tray compiles because
+`src-tauri/Cargo.toml` declared `tauri = { version = "2", features = ["linux-libxdo"] }` and never
+asked for `tray-icon`. `tray-icon` is not one of tauri's defaults either — those are
+`wry, compression, common-controls-v6, dynamic-acl, x11, dbus`. The tray compiled because
 tauri's `linux-libxdo = ["tray-icon/libxdo", "muda/libxdo"]` is written **without** the `?`
 sigil, so naming that optional dependency force-enables it. `cargo tree -e features` shows the
 chain outright: `tauri feature "linux-libxdo"` → `tauri feature "tray-icon"`.
 
-**Consequence:** the feature this app's tray depends on is switched on by a side effect of an
-unrelated feature, in a crate we track with a caret range. If upstream ever rewrites that entry
+**Consequence:** the feature this app's tray depends on was switched on by a side effect of an
+unrelated feature, in a crate tracked with a caret range. If upstream ever rewrites that entry
 in the idiomatic form (`tray-icon?/libxdo`) — exactly the kind of thing a maintainer tidies —
 `tauri::tray` disappears and `lib.rs` stops compiling.
 
 - **Loud, not silent** — it is a compile error, which is the good version of this problem. But
-  because CI runs `--locked`, it will not appear on the branch that caused it: it appears on
+  because CI runs `--locked`, it would not appear on the branch that caused it: it appears on
   whoever next regenerates `Cargo.lock`, or on a release PR
-- **The fix costs nothing:** add `"tray-icon"` to the feature list. It is already enabled, so
-  `Cargo.lock` does not change and no new crate is pulled
+- **Fix (v1.8.1), and it cost nothing:** `"tray-icon"` added to the feature list. It was already
+  enabled, so no crate was pulled and the only `Cargo.lock` movement in that change came from the
+  single-instance plugin in T7
 - **Rule:** **depend on what you use, by name.** A feature that arrives through someone else's
   feature list is a dependency you did not declare and cannot see in your own manifest
 

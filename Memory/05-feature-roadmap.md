@@ -80,7 +80,7 @@ person-management field at all (adding and removing people happens inside Telegr
 
 **What is left:**
 * Thread ID (forum topic) · a generic webhook + Discord · a disk-backed offline retry queue
-* Tray icon and close-to-tray shipped in v1.8.0. `general.minimizeToTray` is wired to real behavior: closing the window (`X`, `Alt+F4`, or taskbar close) hides to the notification tray while live workers and Telegram forwarding continue unattended. Two consequences are **known and still open**, deferred out of the 2026-09-05 audit: the tray's *Quit* is `app.exit(0)` and never reaches the forwarder flush, so it discards whatever the send queue was still pacing (`03 T6`), and there is no single-instance guard now that the process outlives its window (`03 T7`). The Linux blank-menu case behind the v1.8.0 follow-up fix is `03 §27`.
+* Tray icon and close-to-tray shipped in v1.8.0. `general.minimizeToTray` is wired to real behavior: closing the window (`X`, `Alt+F4`, or taskbar close) hides to the notification tray while live workers and Telegram forwarding continue unattended. The 2026-09-05 audit found three consequences and v1.8.1 fixed all three: the tray's *Quit* now winds the live session down and waits for the forwarder flush instead of `app.exit(0)`-ing over it (`03 T6`), `tauri-plugin-single-instance` stops a second launch contending for the ports the first copy holds and doubles as the way back to a window hidden on a shell with no tray host (`03 T7`), and the `tray-icon` Cargo feature is now declared rather than inherited (`03 T8`). The Linux blank-menu case behind the v1.8.0 follow-up fix is `03 §27`.
 
 ---
 

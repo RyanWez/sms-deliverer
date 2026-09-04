@@ -36,6 +36,10 @@
     try {
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
       const appWindow = getCurrentWindow();
+      // Hiding here rather than letting Rust do it keeps the button responsive,
+      // but Rust's CloseRequested handler is the authority and hides on its own
+      // whenever a live session is running or winding down. Both paths have to
+      // agree — see AGENTS.md, "System tray and the close-to-tray path".
       if (settingsStore.general.minimizeToTray) {
         await appWindow.hide();
       } else {
@@ -46,7 +50,6 @@
     }
   }
 </script>
-
 
 <!--
   The bar carries nothing but the window controls. The app's name was in the

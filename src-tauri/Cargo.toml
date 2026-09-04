@@ -11,8 +11,22 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["linux-libxdo"] }
+# `tray-icon` is named explicitly even though `linux-libxdo` already turns it on
+# as a side effect: `linux-libxdo = ["tray-icon/libxdo", …]` is written without
+# the `?` sigil, so naming that optional dependency force-enables it. That is an
+# accident of upstream's feature plumbing, not a promise — rewritten in the
+# idiomatic form as `tray-icon?/libxdo` it would stop enabling anything and
+# `tauri::tray` would vanish from this build on a caret bump. Declare what
+# `lib.rs` actually uses. It is already enabled, so this pulls in no new crate.
+tauri = { version = "2", features = ["linux-libxdo", "tray-icon"] }
 tauri-plugin-dialog = "2"
+# Registered first in `lib.rs`, and the reason is hardware. Closing the window
+# hides the app to the tray with every serial port still open, so a second launch
+# by an operator who believed they had quit would leave two processes contending
+# for `/dev/ttyUSB*` — the newer one able to open nothing, showing a bank that
+# looks dead while the older one is still reading it. The second instance hands
+# focus to the first instead of starting a run.
+tauri-plugin-single-instance = "2"
 serialport = "4"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
