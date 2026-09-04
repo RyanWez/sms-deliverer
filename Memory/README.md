@@ -6,6 +6,8 @@
 > system တွေ၊ ကြုံခဲ့ရတဲ့ ပြဿနာတွေရဲ့ root cause + fix တွေကို နောက် developer အမြန်နားလည်နိုင်အောင် မှတ်တမ်းတင်ထားခြင်း။
 > **လက်ရှိ version:** `package.json` / `CHANGELOG.md` က authoritative (2026-09-04 မှာ **v1.6.1**) —
 > ဒီ doc တွေထဲ ရေးထားတဲ့ version နံပါတ်ကို အဲဒီ ၂ ခုနဲ့ တိုက်စစ်ပါ။
+> **v1.6.2** လို့ ရေးထားတာ အားလုံးက **pending release** — branch `fix/status-and-log-accuracy`
+> ပေါ် implement + validate ပြီး၊ merge/release မလုပ်ရသေး (`07` ရဲ့ ထိပ် box · `03 §23`–`§26`)။
 
 ## 📁 File Index
 
@@ -13,11 +15,11 @@
 |---|---|
 | [01-github-setup.md](./01-github-setup.md) | gh CLI install → login → scopes → git push credentials |
 | [02-release-automation.md](./02-release-automation.md) | Release pipeline architecture + configs (release-please / tauri-action / updater) |
-| [03-troubleshooting.md](./03-troubleshooting.md) | တကယ်ကြုံခဲ့ရတဲ့ bug ၂၂ ခု — symptom → root cause → fix (§18–§20 Telegram forwarding၊ §21–§22 OTP false positive ၂ ခု) · + latent trap ၅ ခု (T1/T2 settings layer — **အသက်ဝင်နေတုန်း** · T3 decoder keyword typo၊ T4 retention clamp၊ T5 busy flag — ပြင်ပြီး) |
+| [03-troubleshooting.md](./03-troubleshooting.md) | တကယ်ကြုံခဲ့ရတဲ့ bug ၂၆ ခု — symptom → root cause → fix (§18–§20 Telegram forwarding၊ §21–§22 OTP false positive ၂ ခု၊ **§23–§26 status/log accuracy ၄ ခု — v1.6.2 pending**: §23 cleanup counter၊ §24 live ready count + bucket ၃ ခု၊ §25 `msg(s)`/`slot(s)` unit၊ §26 USSD form marker) · + latent trap ၅ ခု (T1/T2 settings layer — **အသက်ဝင်နေတုန်း** · T3 decoder keyword typo၊ T4 retention clamp၊ T5 busy flag — ပြင်ပြီး) |
 | [04-conventions.md](./04-conventions.md) | Commit စံနှုန်း၊ verification loop၊ security rules၊ command cheatsheet၊ hardware live-check၊ **§H Settings control wiring rule** |
-| [05-feature-roadmap.md](./05-feature-roadmap.md) | Feature backlog + **Settings Controls Decisions Ledger** (ဖျက်ခဲ့တာ ၁၁ ခု၊ hard refusal ၂ ခု၊ deferred order၊ desktop-notification feasibility) |
+| [05-feature-roadmap.md](./05-feature-roadmap.md) | Feature backlog + **Settings Controls Decisions Ledger** (ဖျက်ခဲ့တာ ၁၁ ခု၊ hard refusal ၂ ခု၊ deferred order၊ desktop-notification feasibility) · §C.6 (L3) က **v1.6.2 မှာ ပိတ်ပြီ** — ကျန် limitation က C.4/C.5/C.7 |
 | [06-git-workflow.md](./06-git-workflow.md) | Feature branch workflow — branch → commit → push → PR → squash merge, CI trigger matrix |
-| [07-next-release-plan.md](./07-next-release-plan.md) | v1.5.0 field test ရဲ့ အဖြေ → နောက် release ၂ ခု (v1.6.2 fix ၄ ခု၊ v1.7.0 live command mailbox) — **ဘယ်တစ်ခုမှ မ ship သေးဘူး**၊ v1.6.0/v1.6.1 က Telegram forwarding နဲ့ hotline OTP guard သွားလို့ နံပါတ် ရွေ့ခဲ့တာ |
+| [07-next-release-plan.md](./07-next-release-plan.md) | v1.5.0 field test ရဲ့ အဖြေ → နောက် release ၂ ခု (v1.6.2 fix ၄ ခု၊ v1.7.0 live command mailbox) — **v1.6.2 ရဲ့ ၄ ခုလုံး branch `fix/status-and-log-accuracy` ပေါ် ပြီးပြီ၊ ဒါပေမဲ့ merge/release မလုပ်ရသေး** (case `03 §23`–`§26`)၊ **v1.7.0 (§B) မစသေးဘူး**၊ v1.6.0/v1.6.1 က Telegram forwarding နဲ့ hotline OTP guard သွားလို့ နံပါတ် ရွေ့ခဲ့တာ |
 | [08-telegram-stage2-plan.md](./08-telegram-stage2-plan.md) | **Telegram forwarding — Stage 1 + Stage 2 implementation record (v1.6.0 မှာ ship ပြီး)** · ဆုံးဖြတ်ချက် အကြောင်းရင်း ၄ ခု (hook point၊ 20/min limit၊ thread model၊ config lifetime) · **မလုပ်ရတာ ၉ ခု (အသက်ဝင်နေတုန်း)** · hardware test ၄ ခု **အတည်ပြီး** · §G field test မှာ တွေ့တဲ့ OTP false positive ၂ ခု (ပြင်ပြီး) |
 
 ## ⚡ TL;DR — ဒီ Project ရဲ့ Golden Rules

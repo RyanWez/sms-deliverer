@@ -281,7 +281,7 @@ fn run_live_inner<F>(
                     crate::core::modem::list_all_cmd(pdu_ok),
                 )
                 .deleted;
-                log::info!("{}: SIM cleanup deleted {} expired message(s)", port_name, n);
+                log::info!("{}: SIM cleanup deleted {} expired slot(s)", port_name, n);
             }
             initial.retain(|m| !models::is_expired(m, cutoff));
         }
@@ -378,7 +378,7 @@ fn run_live_inner<F>(
                     last_sweep = Instant::now();
                     let n = sweep_expired(&mut ch, port_name, pdu_ok, cutoff);
                     if n > 0 {
-                        log::info!("{}: SIM cleanup deleted {} expired message(s)", port_name, n);
+                        log::info!("{}: SIM cleanup deleted {} expired slot(s)", port_name, n);
                     }
                 }
             }

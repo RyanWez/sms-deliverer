@@ -513,6 +513,12 @@ fn slots_still_present(
 
 /// Turn a delete attempt into a result, preferring the SIM's own account of
 /// which slots survived over the per-command replies.
+///
+/// The counts logged here are SIM **slots**, not inbox rows: a concatenated SMS
+/// occupies one slot per fragment, so this number legitimately exceeds the row
+/// count [`read_port`] logs for the same card. The two used to share the unit
+/// `msg(s)`, which made a correct pair of lines — `read -> 2 msg(s)` then
+/// `deleted 5 msg(s)` — read like a bug.
 fn confirm_delete(
     ch: &mut at::AtChannel,
     port_name: &str,
@@ -522,7 +528,7 @@ fn confirm_delete(
 ) -> OpResult {
     let Some(left) = slots_still_present(ch, wanted, list_cmd) else {
         log::warn!(
-            "{}: deleted {} msg(s) — could not re-read the SIM to confirm",
+            "{}: deleted {} slot(s) — could not re-read the SIM to confirm",
             port_name,
             confirmed.len()
         );
@@ -540,7 +546,7 @@ fn confirm_delete(
         .filter(|i| !left.contains(i))
         .collect();
     if left.is_empty() {
-        log::info!("{}: deleted {} msg(s)", port_name, gone.len());
+        log::info!("{}: deleted {} slot(s)", port_name, gone.len());
         return OpResult {
             ok: true,
             error: None,
@@ -549,7 +555,7 @@ fn confirm_delete(
         };
     }
     log::warn!(
-        "{}: deleted {}/{} msg(s) — still on SIM: {:?}",
+        "{}: deleted {}/{} slot(s) — still on SIM: {:?}",
         port_name,
         gone.len(),
         wanted.len(),
@@ -814,6 +820,27 @@ fn ussd_query(ch: &mut at::AtChannel, code: &str, timeout_ms: u64) -> Option<Str
     }
 }
 
+/// Which of the two `AT+CUSD` forms an attempt used, as a marker for the log.
+///
+/// [`ussd_query`] sends `AT+CUSD=1,"*88#",15` first and, on a rejection, retries
+/// the bare `AT+CUSD=1,"*88#"` — the entire point of that retry being to find
+/// firmware that refuses the DCS argument. Both attempts logged the dial string
+/// only, so two genuinely different rejections came out as byte-identical
+/// warnings milliseconds apart: it read as one duplicated line, and the firmware
+/// pattern the retry exists to expose could not be recovered from a field log.
+///
+/// The marker is the argument as it was actually sent — whatever follows the
+/// closing quote of the dial string — rather than a hardcoded `,15`, so changing
+/// the DCS in [`ussd_query`] can never make the log name something the modem was
+/// never asked for. Nothing else from `command` is logged, and the reply body
+/// (which carries the subscriber's own number) stays at debug.
+fn ussd_form(command: &str) -> &str {
+    match command.rsplit_once('"') {
+        Some((_, dcs)) if !dcs.trim().is_empty() => dcs.trim(),
+        _ => "bare",
+    }
+}
+
 fn ussd_attempt(ch: &mut at::AtChannel, command: &str, code: &str, timeout_ms: u64) -> UssdOutcome {
     let _stale = ch.take_notifications();
     let resp = ch.send(command, timeout_ms);
@@ -821,7 +848,13 @@ fn ussd_attempt(ch: &mut at::AtChannel, command: &str, code: &str, timeout_ms: u
         .lines()
         .find(|l| l.starts_with("+CME ERROR") || l.starts_with("+CMS ERROR"))
     {
-        log::warn!("{}: USSD {} rejected ({})", ch.name, code, err_line.trim());
+        log::warn!(
+            "{}: USSD {} ({}) rejected ({})",
+            ch.name,
+            code,
+            ussd_form(command),
+            err_line.trim()
+        );
         ch.take_notifications();
         return UssdOutcome::Rejected;
     }
@@ -831,9 +864,10 @@ fn ussd_attempt(ch: &mut at::AtChannel, command: &str, code: &str, timeout_ms: u
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             log::warn!(
-                "{}: USSD {} no reply within {}s",
+                "{}: USSD {} ({}) no reply within {}s",
                 ch.name,
                 code,
+                ussd_form(command),
                 timeout_ms / 1000
             );
             return UssdOutcome::NoAnswer;
@@ -850,7 +884,12 @@ fn ussd_attempt(ch: &mut at::AtChannel, command: &str, code: &str, timeout_ms: u
                         // still often carries the subscriber's own number in a shape
                         // the extractor did not recognise, and debug never reaches a
                         // sink (logging.rs gates at Info).
-                        log::warn!("{}: USSD {} replied without a number", ch.name, code);
+                        log::warn!(
+                            "{}: USSD {} ({}) replied without a number",
+                            ch.name,
+                            code,
+                            ussd_form(command)
+                        );
                         log::debug!(
                             "{}: USSD {} reply: {}",
                             ch.name,
@@ -1147,6 +1186,35 @@ mod tests {
         assert_eq!(parse_csq_rssi("+CSQ: 17,99\r\nOK\r\n"), Some(17));
         assert_eq!(parse_csq_rssi("+CSQ: 0,0\r\n"), Some(0));
         assert_eq!(parse_csq_rssi("OK\r\n"), None);
+    }
+
+    // ── USSD attempt form ──
+
+    /// The field symptom: `*88#` rejected twice, 15 ms apart, in two lines that
+    /// were byte-identical because only the dial string was logged. The marker has
+    /// to differ between the two forms `ussd_query` builds, or the retry's whole
+    /// purpose — spotting firmware that refuses the DCS argument — is unreadable
+    /// from a log.
+    #[test]
+    fn ussd_form_distinguishes_the_two_attempts() {
+        let code = "*88#";
+        let with_dcs = format!("AT+CUSD=1,\"{code}\",15");
+        let bare = format!("AT+CUSD=1,\"{code}\"");
+        assert_eq!(ussd_form(&with_dcs), ",15");
+        assert_eq!(ussd_form(&bare), "bare");
+        assert_ne!(ussd_form(&with_dcs), ussd_form(&bare));
+    }
+
+    #[test]
+    fn ussd_form_reads_the_argument_as_sent() {
+        // Not hardcoded to `,15`: another DCS has to show up as itself, or the log
+        // names an argument the modem was never given.
+        assert_eq!(ussd_form("AT+CUSD=1,\"*124#\",0"), ",0");
+        assert_eq!(ussd_form("AT+CUSD=1,\"*124#\", 15"), ", 15");
+        // Nothing after the dial string, and no dial string at all, both mean
+        // "no DCS argument".
+        assert_eq!(ussd_form("AT+CUSD=1,\"*124#\""), "bare");
+        assert_eq!(ussd_form("AT+CUSD=2"), "bare");
     }
 
     // ── Port naming ──

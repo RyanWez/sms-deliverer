@@ -223,7 +223,9 @@ window (default ၂ နာရီ) ထက် ပိုအသက်ရှည်တ
 > **v1.5.0 မှာ ပြီးသွားပြီ** — ဆုံးဖြတ်ရသေးတဲ့ setting က **C.3 တစ်ခုပဲ** ကျန်တယ်။
 > ပြီးသွားတဲ့ဟာတွေကို history အဖြစ် ချန်ထားတယ် (ဖျက်လိုက်ရင် blocker တွေက ဘာလို့ blocker
 > ဖြစ်ခဲ့တာလဲ ဆိုတာ ပျောက်သွားမယ်)။
-> **C.4–C.7 (L1–L4) က v1.5.0 မှာလည် ပွင့်နေတဲ့ limitation အတိုင်း** — v1.5.0 ကုဒ်ပေါ်
+> **C.4–C.7 (L1–L4) က v1.5.0 မှာ ပွင့်နေခဲ့တဲ့ limitation တွေ** — အဲ့ ၄ ခုထဲက
+> **C.6 (L3) က v1.6.2 မှာ ပိတ်ပြီ** (branch `fix/status-and-log-accuracy`၊ **merge/release
+> မလုပ်ရသေး**၊ case `03 §24`)၊ ကျန် **C.4 / C.5 / C.7 က ပွင့်နေတုန်း** — v1.5.0 ကုဒ်ပေါ်
 > ပြန်စစ်ပြီး၊ ဒါပေမဲ့ သတိထားရမှာ ၂ ချက်:
 > (၁) အဲ့ entry တွေရဲ့ file:line သက်သေက **v1.4.0 ကုဒ်ပေါ် မှတ်ခဲ့တာ** — #17–#20 က
 > `src-tauri/src/commands/mod.rs` ကို ရှည်စေတာမို့ လိုင်းနံပါတ်တွေ ရွှေ့သွားပြီ
@@ -357,7 +359,14 @@ store ကို settings ကနေ **seed** လုပ်ရမယ်၊ ပြ�
 - **⚠️ Benchmark မလုပ်ထားဘူး** — verify လုပ်ခဲ့တာက **concurrency shape** ပဲ (cap မရှိတာ)၊
   တကယ့် throughput/ပျက်ကွက်မှု အပေါ် သက်ရောက်မှုကို မတိုင်းထားဘူး
 
-### C.6 (L3) `LiveEvent::Closed` က ready list ကို မရှင်းဘူး — status line က over-count ဖြစ်တယ်
+### C.6 (L3) ✅ **DONE (v1.6.2):** `LiveEvent::Closed` က ready list ကနေ port ကို ဖြုတ်ပြီ — `failed` bucket ထည့်ပြီး
+
+**အခြေအနေ:** branch `fix/status-and-log-accuracy` ပေါ် implement + validate ပြီး —
+**merge မလုပ်ရသေး၊ release မလုပ်ရသေး**။ Case entry (symptom → root cause → fix) က
+**`03 §24`**၊ plan item က `07 §D.3`။
+
+**အရင်က ဒီလို ဖြစ်ခဲ့တယ် (သက်သေ history အတွက် ကျန်ထား — line နံပါတ်တွေက v1.4.0/v1.5.0
+ကုဒ်ပေါ် မှတ်ခဲ့တာ):**
 
 - **သက်သေ:** `Closed` arm (`src-tauri/src/commands/mod.rs:1019`) က `p.live_ready = false`
   ရေးတယ်၊ `p.live_error` ကို set တယ်၊ `st.live_failed.push(...)` လုပ်တယ်၊ `status_text` ကို
@@ -369,6 +378,17 @@ store ကို settings ကနေ **seed** လုပ်ရမယ်၊ ပြ�
   ပြန်တွက်ချိန်မှာ (နောက် `Ready`/`Offline` event တစ်ခုခု) `live_ports_ready.len()` က
   ကျွတ်သွားတဲ့ port ကို ထည့်ရေတွက်နေတာမို့ **"Live x/y ready" က အများပြပြီး
   "connecting…" ရေတွက်မှုပါ လိုက်လွဲတယ်** (`live_status` က `:395`)
+
+**ဘယ်လို ပိတ်လိုက်လဲ (v1.6.2):** `retain` တစ်လိုင်း ထည့်တာထက် ပိုလုပ်ဖြစ်တယ် —
+`live_failed` က **write-only ခဲ့တာကို counted bucket** အဖြစ် ပြောင်းလိုက်တယ်
+(`live_status` မှာ `N failed` clause၊ `commands/mod.rs:543`)၊ ပြီးတော့ bucket rule တွေကို
+`mark_port_failed` (`:579`) တစ်ခုထဲ သွတ်လိုက်တယ်: port အလိုက် dedup (panic ၂ ခါ report
+ဖြစ်နိုင်လို့) + `live_offline` ကနေ ဖယ်တာ ("failed" က "no modem" ကို အနိုင်ရတယ်)။
+`connecting…` က bucket မဟုတ်ဘဲ **remainder** ဖြစ်တာမို့ bucket ၃ ခု disjoint ဖြစ်ရမယ် —
+အဲ့ဒါ AGENTS.md ရဲ့ backend invariant ဖြစ်သွားပြီ။ Arm ၃ ခု (`Closed`၊ outer
+`catch_unwind`၊ `Reconnecting`) မှာ hand-written `status_text` override ဖျက်လိုက်တယ်။
+**သေတဲ့ worker ကို `no modem` အဖြစ် တမင် မရေတွက်ဘူး** — အဲ့ဒါ ဒီ entry ရဲ့ ဆုံးဖြတ်ရမယ့်
+အချက် ဖြစ်ခဲ့တာ။ Test ၅ ခု (`mod.rs:2167`–`:2250`)၊ hardware မလို။
 
 ### C.7 (L4) Live monitoring loop အတွင်းမှာ **liveness re-probe မရှိဘူး**
 
@@ -480,6 +500,15 @@ cap **မရှိဘူး** (§C.5) ဆိုတော့ ပေါင်း�
 | ussd | `done` ကိုပဲ တိုးတယ် (`:769`–`:772`) — ဆိုတော့ panic ဖြစ်တဲ့ port က "number မတွေ့ဘူး" လို့ ဖတ်တယ် |
 | cleanup | failure counter တိုးတယ် (`:1599`–`:1602`) |
 | detect | #19 ကတည်းက `ProbeVerdict::of(&port, probed)` (`:396`၊ enum `:306`၊ `of` `:319`) — panic က **`Inconclusive`**၊ ဒါကြောင့် `alive`/`checked`/`iccid`/`sim_dir` **လေးခုလုံး မထိရ** (`:429`၊ `:456`) |
+
+**v1.6.2 update (branch `fix/status-and-log-accuracy`၊ merge/release မလုပ်ရသေး) — cleanup
+ရဲ့ policy က outcome ၃ မျိုး ဖြစ်သွားပြီ:** `03 §23` ကနေ cleanup က `deleted` / `empty`
+(probe silence = `NOT_RESPONDING`) / `failed` ကို ခွဲပြီ၊ **panic arm က `failed` အတိုင်း** —
+ဆိုတော့ အပေါ်က table ရဲ့ "cleanup: failure counter တိုးတယ်" က အခု **panic path အတွက်ပဲ**
+မှန်တယ်။ ဒါက ဒီ entry ရဲ့ **down payment ပေးပြီးသွားတာ**: policy က per-command တကယ်
+မတူဘူး ဆိုတဲ့ blocker ကို ခိုင်စေတယ်၊ ပြီးတော့ `run_port_pool` ကို တကယ် လုပ်ရင်
+**per-port `on_panic` callback** လိုမယ် ဆိုတာကို ပိုပြတ်သားစေတယ် — policy ၄ မျိုးထဲ
+တစ်ခုက အခု outcome ၂ မျိုးထက် ပိုနေပြီ။
 
 **ဆိုတော့ naive merge က behaviour-normalising refactor ဖြစ်တယ်:** policy တစ်ခု ရွေးလိုက်ရင်
 ကျန် ၃ ခုရဲ့ semantic ပြောင်းတယ်။ အဆိုးဆုံးက detect — crashed probe ကို "dead" အဖြစ်
