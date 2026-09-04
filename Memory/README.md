@@ -1,13 +1,13 @@
 # 🧠 Memory — Developer Knowledge Base
 
 > **Project:** SIM Bank SMS Reader (`sms-tauri`) · Repo: `RyanWez/sms-deliverer`
-> **Created:** 2026-08-27 · Cline AI coding session မှ စုဆောင်းထားတဲ့ အတွေ့အကြုံများ
-> **Purpose:** GitHub / gh CLI / Release Automation / Tauri Updater နဲ့ ပတ်သက်ပြီး ထူထောင်ခဲ့တဲ့
-> system တွေ၊ ကြုံခဲ့ရတဲ့ ပြဿနာတွေရဲ့ root cause + fix တွေကို နောက် developer အမြန်နားလည်နိုင်အောင် မှတ်တမ်းတင်ထားခြင်း။
-> **လက်ရှိ version:** `package.json` / `CHANGELOG.md` က authoritative (2026-09-04 မှာ **v1.6.1**) —
-> ဒီ doc တွေထဲ ရေးထားတဲ့ version နံပါတ်ကို အဲဒီ ၂ ခုနဲ့ တိုက်စစ်ပါ။
-> **v1.6.2** လို့ ရေးထားတာ အားလုံးက **pending release** — branch `fix/status-and-log-accuracy`
-> ပေါ် implement + validate ပြီး၊ merge/release မလုပ်ရသေး (`07` ရဲ့ ထိပ် box · `03 §23`–`§26`)။
+> **Created:** 2026-08-27 · experience accumulated over Cline AI coding sessions · **written in English** (the whole knowledge base was translated out of Burmese in this change)
+> **Purpose:** to record the systems built around GitHub / gh CLI / Release Automation / Tauri Updater,
+> together with the root cause + fix of every problem actually hit, so that the next developer comes up to speed fast.
+> **Current version:** `package.json` / `CHANGELOG.md` are authoritative (**v1.6.2** as of 2026-09-04) —
+> cross-check any version number written in these docs against those two.
+> Everything written as **v1.6.2** has **shipped** — merged into `main` as `fix: report what the status lines and logs actually count (#28)`,
+> released by `chore(main): release 1.6.2 (#29)` and tagged `v1.6.2` (`07`'s top box · `03 §23`–`§26`).
 
 ## 📁 File Index
 
@@ -15,21 +15,21 @@
 |---|---|
 | [01-github-setup.md](./01-github-setup.md) | gh CLI install → login → scopes → git push credentials |
 | [02-release-automation.md](./02-release-automation.md) | Release pipeline architecture + configs (release-please / tauri-action / updater) |
-| [03-troubleshooting.md](./03-troubleshooting.md) | တကယ်ကြုံခဲ့ရတဲ့ bug ၂၆ ခု — symptom → root cause → fix (§18–§20 Telegram forwarding၊ §21–§22 OTP false positive ၂ ခု၊ **§23–§26 status/log accuracy ၄ ခု — v1.6.2 pending**: §23 cleanup counter၊ §24 live ready count + bucket ၃ ခု၊ §25 `msg(s)`/`slot(s)` unit၊ §26 USSD form marker) · + latent trap ၅ ခု (T1/T2 settings layer — **အသက်ဝင်နေတုန်း** · T3 decoder keyword typo၊ T4 retention clamp၊ T5 busy flag — ပြင်ပြီး) |
-| [04-conventions.md](./04-conventions.md) | Commit စံနှုန်း၊ verification loop၊ security rules၊ command cheatsheet၊ hardware live-check၊ **§H Settings control wiring rule** |
-| [05-feature-roadmap.md](./05-feature-roadmap.md) | Feature backlog + **Settings Controls Decisions Ledger** (ဖျက်ခဲ့တာ ၁၁ ခု၊ hard refusal ၂ ခု၊ deferred order၊ desktop-notification feasibility) · §C.6 (L3) က **v1.6.2 မှာ ပိတ်ပြီ** — ကျန် limitation က C.4/C.5/C.7 |
+| [03-troubleshooting.md](./03-troubleshooting.md) | 26 bugs actually hit — symptom → root cause → fix (§18–§20 Telegram forwarding, §21–§22 the two OTP false positives, **§23–§26 the four status/log accuracy cases — shipped in v1.6.2**: §23 cleanup counter, §24 live ready count + the three buckets, §25 `msg(s)`/`slot(s)` units, §26 USSD form marker) · + 5 latent traps (T1/T2 settings layer — **still live** · T3 decoder keyword typo, T4 retention clamp, T5 busy flag — fixed) |
+| [04-conventions.md](./04-conventions.md) | Commit standards, verification loop, security rules, command cheatsheet, hardware live-check, **§H Settings control wiring rule** |
+| [05-feature-roadmap.md](./05-feature-roadmap.md) | Feature backlog + **Settings Controls Decisions Ledger** (11 fields deleted, 2 hard refusals, deferred order, desktop-notification feasibility) · §C.6 (L3) is **closed in v1.6.2** — the limitations that remain are C.4/C.5/C.7 |
 | [06-git-workflow.md](./06-git-workflow.md) | Feature branch workflow — branch → commit → push → PR → squash merge, CI trigger matrix |
-| [07-next-release-plan.md](./07-next-release-plan.md) | v1.5.0 field test ရဲ့ အဖြေ → နောက် release ၂ ခု (v1.6.2 fix ၄ ခု၊ v1.7.0 live command mailbox) — **v1.6.2 ရဲ့ ၄ ခုလုံး branch `fix/status-and-log-accuracy` ပေါ် ပြီးပြီ၊ ဒါပေမဲ့ merge/release မလုပ်ရသေး** (case `03 §23`–`§26`)၊ **v1.7.0 (§B) မစသေးဘူး**၊ v1.6.0/v1.6.1 က Telegram forwarding နဲ့ hotline OTP guard သွားလို့ နံပါတ် ရွေ့ခဲ့တာ |
-| [08-telegram-stage2-plan.md](./08-telegram-stage2-plan.md) | **Telegram forwarding — Stage 1 + Stage 2 implementation record (v1.6.0 မှာ ship ပြီး)** · ဆုံးဖြတ်ချက် အကြောင်းရင်း ၄ ခု (hook point၊ 20/min limit၊ thread model၊ config lifetime) · **မလုပ်ရတာ ၉ ခု (အသက်ဝင်နေတုန်း)** · hardware test ၄ ခု **အတည်ပြီး** · §G field test မှာ တွေ့တဲ့ OTP false positive ၂ ခု (ပြင်ပြီး) |
+| [07-next-release-plan.md](./07-next-release-plan.md) | What the v1.5.0 field test answered → the next two releases (v1.6.2, four fixes; v1.7.0, live command mailbox) — **all four v1.6.2 items shipped and were released as v1.6.2** (cases `03 §23`–`§26`), **v1.7.0 (§B) has not been started**, and the numbers moved because v1.6.0/v1.6.1 went to Telegram forwarding and the hotline OTP guard instead |
+| [08-telegram-stage2-plan.md](./08-telegram-stage2-plan.md) | **Telegram forwarding — Stage 1 + Stage 2 implementation record (shipped in v1.6.0)** · the reasoning behind four decisions (hook point, 20/min limit, thread model, config lifetime) · **nine standing refusals (still in force)** · four hardware tests **confirmed** · the two OTP false positives found in the §G field test (fixed) |
 
-## ⚡ TL;DR — ဒီ Project ရဲ့ Golden Rules
+## ⚡ TL;DR — This Project's Golden Rules
 
-1. **Conventional Commits အမြဲသုံး** — `feat:` → minor · `fix:` → patch · `chore:`/`docs:` → release မဖြစ်
-2. **Version = 4-place sync** — `package.json` == `src-tauri/tauri.conf.json` == `Cargo.toml` == `.release-please-manifest.json` (manual edit မလုပ်ဘဲ release-please PR merge နဲ့ bump)။ ပဉ္စမနေရာ `src-tauri/Cargo.lock` ကို release-please မရေးနိုင်လို့ `sync-cargo-lock` job က release branch ပေါ် push တယ် (02 §6 · 03 §8) — ငါးခုလုံး လက်နဲ့ မထိရ
-3. **Tags က plain `vX.Y.Z`** — config ထဲ `"include-component-in-tag": false` ကြောင့် (default က prefix ထည့်မယ်!)
-4. **Secrets ဘယ်တော့မှ chat/code ထဲမထည့်** — `gh auth login` + keyring က စီစဉ်ပေးတယ်
-5. **Edit → Validate → Commit → Push → Verify CI** — ဒီ order ကို ဘယ်တော့မှ ခုံးမထားနဲ့
-6. **Inert UI control ကို ဘယ်တော့မှ မ ship လုပ်နဲ့** — setting အသစ်ကို control ထည့်တဲ့ change
-   တစ်ခုတည်းအတွင်း wire ပြီးရမယ်၊ မဟုတ်ရင် လုံးဝ မထည့်ရ။ ဘာမှ မလုပ်တဲ့ switch က operator ကို
-   "Settings က လိမ်တယ်" လို့ သွန်သင်လိုက်တာ — field failure debug လုပ်နေချိန်မှာ အဲ့ဒါက
-   အဆိုးဆုံး (04 §H · ledger 05 §Settings Decisions Ledger)
+1. **Always use Conventional Commits** — `feat:` → minor · `fix:` → patch · `chore:`/`docs:` → no release
+2. **Version = 4-place sync** — `package.json` == `src-tauri/tauri.conf.json` == `Cargo.toml` == `.release-please-manifest.json` (bumped by merging the release-please PR, never by a manual edit). The fifth place, `src-tauri/Cargo.lock`, is one release-please cannot write, so the `sync-cargo-lock` job pushes it onto the release branch (02 §6 · 03 §8) — all five are off-limits to hands
+3. **Tags are plain `vX.Y.Z`** — thanks to `"include-component-in-tag": false` in the config (the default would add a prefix!)
+4. **Never put secrets into chat or code** — `gh auth login` plus the keyring arrange that for you
+5. **Edit → Validate → Commit → Push → Verify CI** — never skip a step in this order
+6. **Never ship an inert UI control** — a new setting has to be wired to real behaviour inside the
+   single change that adds the control, or it does not go in at all. A switch that does nothing
+   teaches the operator that "Settings lies" — and that costs most while they are debugging a
+   field failure (04 §H · ledger 05 §Settings Decisions Ledger)

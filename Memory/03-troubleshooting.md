@@ -1,1008 +1,1012 @@
-# 03 — Troubleshooting Casebook (တကယ်ဖြစ်ခဲ့တဲ့ ၂၆ ခု)
+# 03 — Troubleshooting Casebook (26 cases that actually happened)
 
-> Format: Symptom → Root Cause → Fix → Preventive Rule. Debug ခင် ဒီထဲ အရင်ရှာပါ။
+> Format: Symptom → Root Cause → Fix → Preventive Rule. Search in here first, before you debug.
 
 ---
 
-## 1️⃣ In-app "Check Now" → loading spin ပြီးရင် ဘာမှ မပေါ်
+## 1️⃣ In-app "Check Now" → the spinner finishes and then nothing appears
 
-- **Symptom:** UI button spinner လည်၊ result popup/notification zero
-- **Root Cause:** Result rendering က browser `alert()` / `confirm()` — Tauri v2 webview (esp. Linux WebKitGTK) မှာ
-  **silently swallow** ဖြစ်တယ် (error မှ မထ)
-- **Fix:** `src/lib/services/updater.ts` → toast system (`liveStore.addToast`) + `@tauri-apps/plugin-dialog` native confirm နဲ့ အစားထိုး
-- **Rule:** Tauri frontend မှာ browser dialog API သုံးမနေနဲ့ — plugin-dialog/dialog wrapper ပဲ။
-- **v1.3.0 update:** native confirm ကိုပါ ဖြုတ်လိုက်ပြီ။ Update ရှိတာကို Settings → Updates ရဲ့
-  in-app card (release notes + Update Now + Restart Now) နဲ့ ပြတယ် — dialog ထဲမှာ release notes
-  ရှည်ကို မဖတ်နိုင်၊ platform တစ်ခုစီ ပုံစံ လုံးဝ မတူဘူး။ State machine က
-  `src/lib/stores/updater.svelte.ts`၊ rate limit + byte/percent format က
-  `src/lib/utils/update-policy.ts` (pure, tested)။
+- **Symptom:** the UI button spinner turns, result popup/notification zero
+- **Root Cause:** the result rendering used the browser `alert()` / `confirm()` — in a Tauri v2 webview (esp. Linux WebKitGTK) those are
+  **silently swallowed** (not even an error is raised)
+- **Fix:** in `src/lib/services/updater.ts` → replaced with the toast system (`liveStore.addToast`) + the `@tauri-apps/plugin-dialog` native confirm
+- **Rule:** do not use browser dialog APIs in a Tauri frontend — only plugin-dialog / the dialog wrapper.
+- **v1.3.0 update:** the native confirm has now been removed as well. An available update is shown with the
+  in-app card under Settings → Updates (release notes + Update Now + Restart Now) — long release notes
+  cannot be read inside a dialog, and the shape is completely different on every platform. The state machine is in
+  `src/lib/stores/updater.svelte.ts`, and the rate limit + byte/percent formatting in
+  `src/lib/utils/update-policy.ts` (pure, tested).
 
-## 2️⃣ Plugin call တွေ အလုပ်မလုပ် (updater/process/dialog)
+## 2️⃣ Plugin calls do not work (updater/process/dialog)
 
-- **Symptom:** invoke fail / denied / silent
-- **Root Cause:** Tauri v2 capabilities ACL — plugin register လုပ်ထားတာနဲ့ permission မရှိသေးဘူး
-- **Fix:** `src-tauri/capabilities/default.json` → `"updater:default"`, `"process:default"`, `"dialog:default"` ထည့်
-- **Rule:** Plugin အသစ် `Cargo.toml` + `lib.rs` ထည့်တိုင်း capabilities permissions ပါ ထည့်ပါ၊ ပြီးရင် rebuild.
+- **Symptom:** invoke fails / denied / silent
+- **Root Cause:** Tauri v2 capabilities ACL — having the plugin registered is not the same as having the permission
+- **Fix:** in `src-tauri/capabilities/default.json` → add `"updater:default"`, `"process:default"`, `"dialog:default"`
+- **Rule:** every time a new plugin goes into `Cargo.toml` + `lib.rs`, add its capabilities permissions too, then rebuild.
 
-## 3️⃣ latest.json 404 + .sig assets မရှိ
+## 3️⃣ latest.json 404 + no .sig assets
 
-- **Symptom:** Release ထဲ installer တွေပဲရှိ၊ `latest.json`/`*.sig` zero → updater endpoint 404
-- **Root Cause chain:** sign key/password secret (or) `bundle.createUpdaterArtifacts` flag မရှိ → .sig မထွက် →
+- **Symptom:** the release holds only the installers, `latest.json`/`*.sig` zero → updater endpoint 404
+- **Root Cause chain:** the sign key/password secret (or) the `bundle.createUpdaterArtifacts` flag is missing → no .sig is produced →
   tauri-action log: *"Signature not found for the updater JSON. Skipping upload..."*
-- **Fix:** `"createUpdaterArtifacts": true` ထည့် + secrets verify (pubkey ↔ private pair match!)
+- **Fix:** add `"createUpdaterArtifacts": true` + verify the secrets (pubkey ↔ private pair match!)
 - **Health probe:** `releases/latest/download/latest.json` → HTTP 200 expected
 
 ## 4️⃣ Ubuntu CI build: `rust-lld: error: unable to find library -lxdo`
 
-- **Symptom:** windows job success, ubuntu job `linking with cc failed`
-- **Root Cause:** Tauri `linux-libxdo` feature (global-shortcut dependent crate) system lib လိုအပ်၊ runner မှာ default မပါ
-- **Fix:** workflow apt step ထဲ `libxdo-dev` ထည့်
-- **Rule:** Linux runner အသစ်လိုအပ်ချက် (gtk/webkit/appindicator/rsvg/patchelf/**libudev**/**libxdo**) လို့ known-set သတိထား။
+- **Symptom:** the windows job succeeds, the ubuntu job gives `linking with cc failed`
+- **Root Cause:** the Tauri `linux-libxdo` feature (a global-shortcut dependent crate) needs a system lib that the runner does not carry by default
+- **Fix:** add `libxdo-dev` to the workflow's apt step
+- **Rule:** keep the Linux runner's new requirements (gtk/webkit/appindicator/rsvg/patchelf/**libudev**/**libxdo**) in mind as a known set.
 
-## 5️⃣ Update မမြင်ရ (update ရှိပေမယ့် "already latest")
+## 5️⃣ The update is not seen (an update exists but the app says "already latest")
 
-- **Symptom:** New release publish ပြီးလည်း app က update မတွေ့
-- **Root Cause:** Version mismatch — updater က app runtime version vs latest.json payload ကို compare လုပ်တာ။
-  History: npm=1.x / tauri.conf=2.0.0 ရောနေချိန် — release-please က npm field ပဲ bump လုပ်တာမို့ tauri version 2.0.0 ပဲကျန်
-- **Fix:** extra-files config (doc 02 §2) နဲ့ 4-file အားလုံး auto-bump chain; baseline reset 1.0.1
-- **Rule:** Release PR diff မှာ 4 version line လုံး ပြောင်းနေမလား မြင်ရင် merge.
+- **Symptom:** even after a new release is published the app does not find the update
+- **Root Cause:** version mismatch — the updater compares the app runtime version against the latest.json payload.
+  History: while npm=1.x / tauri.conf=2.0.0 were mixed — release-please bumped only the npm field, so the tauri version stayed at 2.0.0
+- **Fix:** the extra-files config (doc 02 §2) auto-bumps the chain across all 4 files; baseline reset to 1.0.1
+- **Rule:** merge only once you can see all 4 version lines changing in the release PR diff.
 
-## 6️⃣ Release PR မှားနေတယ် / tag scheme confusion (sms-tauri-v… prefix)
+## 6️⃣ The release PR is wrong / tag scheme confusion (sms-tauri-v… prefix)
 
-- **Symptom:** RP PR #4/#5 diff ထဲ compare link `sms-tauri-v1.0.1...sms-tauri-v1.1.0`; PR open → close → reopen cycle
-- **Root Cause:** upstream default `includeComponentInTag=true`; manual bootstrap tag `v1.0.1` နဲ့ match မဖြစ်
-- **Fix:** config ထဲ `"include-component-in-tag": false` → RP က stale PR auto-close + recompute (verified live)
-- **Rule:** Tag naming config ကို baseline နဲ့ အရင်ညှိပြီးမှ ပထမ release မထုတ်နဲ့။
+- **Symptom:** in the RP PR #4/#5 diff the compare link reads `sms-tauri-v1.0.1...sms-tauri-v1.1.0`; PR open → close → reopen cycle
+- **Root Cause:** the upstream default `includeComponentInTag=true`; it does not match the manual bootstrap tag `v1.0.1`
+- **Fix:** `"include-component-in-tag": false` in the config → RP auto-closes the stale PR + recomputes (verified live)
+- **Rule:** do not cut the first release until the tag naming config has been aligned with the baseline.
 
-## 7️⃣ Ghost publish run "queued" 14+ hours / delete လုပ်ထားတဲ့ tag
+## 7️⃣ Ghost publish run "queued" 14+ hours / a tag that was deleted
 
-- **Symptom:** Run list ထဲ old-tag run pending forever ပုံစံ
-- **Diagnose:** `gh run list` + `gh run cancel <id>` (completed ဖြစ်နေရင် cancel error ပေးတယ် — harm none);
-  Releases/tags ဘယ်ဟာတွေကျန်လဲ: `gh api repos/<o>/<r>/releases` , `git ls-remote --tags origin`
-- **Rule:** Full purge (delete releases → delete tags w/ branch cleanup) လုပ်ပြီး run history stale ဖြစ်နိုင် — panic မလုပ်၊ API/state machine verify ဦး။
+- **Symptom:** an old-tag run in the run list looks pending forever
+- **Diagnose:** `gh run list` + `gh run cancel <id>` (if it has already completed, cancel returns an error — harm none);
+  which releases/tags are left: `gh api repos/<o>/<r>/releases` , `git ls-remote --tags origin`
+- **Rule:** after a full purge (delete releases → delete tags w/ branch cleanup) the run history can go stale — do not panic, verify the API/state machine first.
 
-## 8️⃣ Release PR tests fail: `cargo test --locked` — Cargo.lock out of sync (ယခု auto-fix)
+## 8️⃣ Release PR tests fail: `cargo test --locked` — Cargo.lock out of sync (now auto-fixed)
 
-- **Symptom:** PR #7 (release 1.2.0) မှာ ubuntu + windows cargo-test jobs နှစ်ခုလုံး fail —
+- **Symptom:** in PR #7 (release 1.2.0) both the ubuntu and windows cargo-test jobs fail —
   `error: cannot update the lock file … because --locked was passed`
-- **Root Cause:** release-please က `Cargo.toml` ရဲ့ `version` ကို bump ပေးပေမယ့် `Cargo.lock` ထဲက
-  `sms-tauri` package version ကို ထိတ်လုပ်မပေးဘူး (doc 02 §2 မှာ extra-files က lock မပါ)။
-  lockfile version ကို cargo ကိုယ်တိုင်ပဲ ရေးနိုင်တယ်၊ CI က `--locked` နဲ့ run လို့ mismatch ကို error ပြတယ်။
-- **အရင် လက်နဲ့ လုပ်ခဲ့တာ (context အတွက် ကျန်ထား):** release branch checkout → `cargo check`
-  (lock regenerate) → `chore: sync Cargo.lock with version X.Y.Z` commit → PR branch push →
+- **Root Cause:** release-please bumps the `version` in `Cargo.toml` but does not touch the
+  `sms-tauri` package version inside `Cargo.lock` (in doc 02 §2 the extra-files do not include the lock).
+  Only cargo itself can write the lockfile version, and CI runs with `--locked`, so it reports the mismatch as an error.
+- **What was done by hand before (kept here for context):** checkout the release branch → `cargo check`
+  (regenerate the lock) → `chore: sync Cargo.lock with version X.Y.Z` commit → push to the PR branch →
   CI auto re-run → green → merge (commits `2d32e01` / `49a489a`)
-- **ယခု အလိုအလျောက် ဖြစ်တာ:** `.github/workflows/release-please.yml` ထဲ `sync-cargo-lock` job
-  ထည့်ထားပြီ။ release-please ရဲ့ `prs_created` / `pr` output ကို ကြည့်ပြီး
-  `fromJSON(...).headBranchName` branch ကို `secrets.PAT` နဲ့ checkout →
+- **What happens automatically now:** the `sync-cargo-lock` job has been added to
+  `.github/workflows/release-please.yml`. It looks at release-please's
+  `prs_created` / `pr` output, checks out the `fromJSON(...).headBranchName` branch with `secrets.PAT` →
   `cargo update --workspace --manifest-path src-tauri/Cargo.toml` →
-  `cargo metadata --locked` နဲ့ verify → `git diff --quiet -- src-tauri/Cargo.lock` က
-  ပြောင်းလဲမှု ရှိတဲ့အခါမှသာ `chore: sync Cargo.lock with version X.Y.Z` commit + push
-  (loop guard — release-please က main push တိုင်း re-run လုပ်တာမို့)။ PAT နဲ့ push လုပ်တာက
-  PR ရဲ့ checks ကို ပြန် trigger ဖြစ်စေတယ် (default `GITHUB_TOKEN` ဆိုရင် မဖြစ်ဘူး)။
-- **Rule:** Release PR မှာ `--locked` error ထပ်တွေ့ရင် lockfile ကို **လက်နဲ့ အရင် မဖြေနဲ့** —
-  (a) `sync-cargo-lock` job run ဖြစ်ခဲ့လား (release-please job က `prs_created=true` ထွက်ခဲ့လား)၊
-  (b) `secrets.PAT` သက်တမ်း/scope ကျန်နေလား — ဒီနှစ်ခုကို အရင်စစ်။ PR ကို close/reopen မလုပ်နဲ့။
-- **Unverified (2026-08-30):** ဒီ automation ကို ဒီ branch
-  (`fix/reliability-and-privacy-hardening`) မှာ ထည့်ထားတာ ဖြစ်ပြီး တကယ့် release PR တစ်ခုမှ
-  ဖြတ်သွားတာ **မရှိသေးဘူး**။ ဒါကြောင့် အထက်က manual procedure က fallback အဖြစ် ကျန်တယ်။
-  (Original manual fix က v1.2.0, 2026-08-28 မှာ verified)
+  verifies with `cargo metadata --locked` → and only when `git diff --quiet -- src-tauri/Cargo.lock` shows
+  a change does it commit + push `chore: sync Cargo.lock with version X.Y.Z`
+  (loop guard — because release-please re-runs on every push to main). Pushing with the PAT
+  re-triggers the PR's own checks (with the default `GITHUB_TOKEN` it does not).
+- **Rule:** if you hit a `--locked` error on a release PR again, **do not resolve the lockfile by hand first** —
+  (a) did the `sync-cargo-lock` job run at all (did the release-please job output `prs_created=true`),
+  (b) is `secrets.PAT` still within its lifetime/scope — check these two first. Do not close/reopen the PR.
+- **Unverified (2026-08-30):** this automation was added on this branch
+  (`fix/reliability-and-privacy-hardening`) and **has not yet** been through a single real release
+  PR. That is why the manual procedure above remains as the fallback.
+  (The original manual fix was verified on v1.2.0, 2026-08-28)
 
-## 9️⃣ Scan / Live / Get SIM အရမ်းကြာ — 64 port ရှိပေမယ့် SIM ၇ ခုပဲ
+## 9️⃣ Scan / Live / Get SIM take far too long — 64 ports exist but only 7 SIMs
 
-- **Symptom:** SIM bank မှာ SIM ၇ ခုပဲ စိုက်ထားချိန် Scan ~97s, Get SIM ~3 မိနစ်;
-  log ထဲ `modem not responding` ၅၇ ကြိမ်; Live မှာ port ၆၄ လုံးလုံး `Live ready` ထွက်နေတယ်
-- **Root Cause:** SIM bank က channel တစ်ခုစီအတွက် tty device ဖန်တီးတယ် — **SIM ရှိမရှိ မသက်ဆိုင်ဘူး**။
-  `available_ports()` က device ၆၄ လုံး တွေ့တာ မှားတာ မဟုတ်၊ ဒါပေမဲ့ liveness စစ်တဲ့ အဆင့် မရှိလို့
-  `read_port` / `get_sim_number` / live worker သုံးခုလုံး AT sequence အပြည့်ကို တိတ်ဆိတ်တဲ့ port ဆီ ပို့ပြီး
-  timeout တွေ အားလုံးကို အစအဆုံး ဆပ်တယ် — Scan 24s, Get SIM 35s, Live 22s per empty slot
-  (× `MAX_CONCURRENT_PORTS = 16` အသုတ် ၄ ခု)
-- **Secondary bug:** `network_problem(None, None)` က `None` ပြန်တယ် ("ပြဿနာ မရှိ")။
-  ဒါကြောင့် `AT+CREG?` ကို ဘာမှ ပြန်မထူးတဲ့ modem က USSD 2×9s ကို ဆက်သွားတယ် —
-  အဲ့ timeout ကို ချွေဖို့ ရည်ရွယ်ထည့်ထားတဲ့ pre-check က လိုအပ်ဆုံး port တွေမှာ **လုံးဝ မလုပ်**ဘူး
-- **Fix:** `modem::probe_channel()` — `AT` ကို 800ms × ၂ ခါ။ Final result code (OK/ERROR/+CME ERROR)
-  တစ်ခုခု ရရင် alive။ ဒီ gate ကို `read_port`, `get_sim_number`, `delete_messages`, live worker
-  အားလုံးရဲ့ ရှေ့မှာ ထားတယ် → dead port ၂၄s/၃၅s အစား **~1.6s**။
-  `AT+CREG?` က result code မပြန်ရင်လည်း USSD skip။
-  Live worker မှာ probe ကျရင် `Ready` အစား `LiveEvent::Offline` (60s တစ်ခါ re-probe)။
-  `detect_ports` command + `PortInfo.alive` + Ports page "Detect Modems" ခလုတ် →
-  dead port တွေကို auto-uncheck (probe concurrency သီးသန့် `MAX_CONCURRENT_PROBES = 32`)
-- **Rule:** Port တစ်ခုကို heavy AT sequence မပို့ခင် **ရှင်မရှင် အရင်စစ်**။
-  Device node ရှိတာ = modem ရှိတာ **မဟုတ်ဘူး**။ Timeout constant တွေကို လျှော့တာနဲ့ မဖြေရှင်းနဲ့ —
-  gate ထည့်တာက အမြစ်ဖြေရှင်းချက်။ (v1.2.0 log, 2026-08-29 မှာ verified)
+- **Symptom:** with only 7 SIMs inserted in the SIM bank, Scan ~97s, Get SIM ~3 minutes;
+  `modem not responding` 57 times in the log; in Live all 64 ports report `Live ready`
+- **Root Cause:** the SIM bank creates a tty device for every channel — **regardless of whether a SIM is present**.
+  `available_ports()` finding 64 devices is not wrong, but because there was no liveness-checking step,
+  all three of `read_port` / `get_sim_number` / the live worker sent the full AT sequence to a silent port and
+  paid every one of the timeouts to the end — Scan 24s, Get SIM 35s, Live 22s per empty slot
+  (× `MAX_CONCURRENT_PORTS = 16`, 4 batches)
+- **Secondary bug:** `network_problem(None, None)` returned `None` ("no problem").
+  So a modem that answered nothing at all to `AT+CREG?` went on to spend 2×9s on USSD —
+  the pre-check that was added precisely to save that timeout did **nothing at all** on the ports that needed it most
+- **Fix:** `modem::probe_channel()` — `AT` twice, 800ms each. If any one final result code (OK/ERROR/+CME ERROR)
+  comes back, the port is alive. This gate is placed in front of all of `read_port`, `get_sim_number`, `delete_messages`
+  and the live worker → a dead port costs **~1.6s** instead of 24s/35s.
+  USSD is also skipped when `AT+CREG?` returns no result code.
+  In the live worker, when the probe fails it is `LiveEvent::Offline` instead of `Ready` (re-probe once every 60s).
+  The `detect_ports` command + `PortInfo.alive` + the Ports page "Detect Modems" button →
+  dead ports are auto-unchecked (probe concurrency is separate: `MAX_CONCURRENT_PROBES = 32`)
+- **Rule:** before sending a heavy AT sequence to a port, **check first whether it is alive**.
+  A device node existing is **not** the same as a modem existing. Do not resolve this by lowering timeout constants —
+  adding the gate is the root-cause fix. (verified in the v1.2.0 log, 2026-08-29)
 
-## 🔟 SMS ရှည် (concatenated) တွေ စာလုံးပေါက်ကုန်တာ — GSM-7 + UDH
+## 🔟 Long (concatenated) SMS come out with their characters mangled — GSM-7 + UDH
 
-- **Symptom:** Export ထဲ `iAX§OOKIARÑi§AΘsΦÇAB...` ပုံစံ အမှိုက်စာ; OTP `None`;
-  log မှာ `live SMS read (idx 3) [concat]` + `(idx 4) [concat]` ဆက်စပ်ပြီးမှ ဖြစ်တာ
-- **Root Cause:** `decoder.rs` GSM-7 branch မှာ UDH ကို **နှစ်ခါ ခုန်ကျော်**နေတယ် —
-  byte cursor `i += 1 + udhl` နဲ့ header ကျော်ပြီး၊ `decode_gsm7(&bytes, i, septets, skip)` မှာ
-  `skip * 7` bit ကို **ထပ်** ကျော်ခိုင်းတယ်။ ရလဒ် = bit alignment ၁ bit လွဲ → စာလုံးအားလုံး ပြောင်း
-  (space တွေ `A` ဖြစ်သွားတာ ဒီ shift ရဲ့ လက်မှတ်)
-- **ဘာကြောင့် မတွေ့ခဲ့လဲ:** concat test တစ်ခုတည်းသာ ရှိပြီး UCS-2 (Myanmar) ကို စမ်းထားတာ။
-  GSM-7 + UDH လမ်းကြောင်း — အင်္ဂလိပ် OTP စာ အများစု လာတဲ့ လမ်းကြောင်း — မှာ coverage **သုည**
-- **Fix:** bit cursor ကို UDHL byte ကနေ စတင်ခိုင်း (`ud_start`)၊ `i` ကို UCS-2 recovery probe အတွက်ပဲ ဆက်တွန်း။
-  Test ၃ ခု ထည့်: UDHL=5 (fill bit ၁), UDHL=6 (fill bit ၀), UDH မပါတဲ့ GSM-7 regression
-- **Rule:** GSM-7 septet count တွေက UDH ရဲ့ **အစ**ကနေ ရေတွက်တယ် (header + fill bits ပါ)၊
-  payload byte ကနေ မဟုတ်ဘူး။ Encoding branch အသစ် ထည့်တိုင်း UDH ရှိ/မရှိ **နှစ်မျိုးလုံး** test ရေးပါ။
+- **Symptom:** garbage of the form `iAX§OOKIARÑi§AΘsΦÇAB...` in the export; OTP `None`;
+  in the log it happens only after `live SMS read (idx 3) [concat]` + `(idx 4) [concat]` link up
+- **Root Cause:** in the GSM-7 branch of `decoder.rs` the UDH is **skipped twice** —
+  the byte cursor `i += 1 + udhl` steps over the header, and then `decode_gsm7(&bytes, i, septets, skip)`
+  is told to skip `skip * 7` bits **again**. Result = bit alignment off by 1 bit → every character changes
+  (spaces turning into `A` is this shift's signature)
+- **Why it was not caught:** there was only a single concat test and it exercised UCS-2 (Myanmar).
+  The GSM-7 + UDH path — the path most English OTP messages arrive on — had **zero** coverage
+- **Fix:** make the bit cursor start from the UDHL byte (`ud_start`), and advance `i` only for the UCS-2 recovery probe.
+  3 tests added: UDHL=5 (1 fill bit), UDHL=6 (0 fill bits), and a GSM-7 regression without UDH
+- **Rule:** GSM-7 septet counts are counted from the **start** of the UDH (header + fill bits included),
+  not from the payload byte. Every time a new encoding branch is added, write tests for **both** with and without UDH.
   (commit `431dcaf`, 2026-08-29)
 
-## 1️⃣1️⃣ Get SIM နှိပ်လိုက်ရင် `Found: 1/32` — registered modem တွေက USSD ကို ငြင်းပယ်တာ
+## 1️⃣1️⃣ Pressing Get SIM gives `Found: 1/32` — registered modems refuse USSD
 
-- **Symptom:** 32 port ထဲ 1 ခုပဲ number ရ။ log မှာ port 22 ခုက `*88#` နဲ့ `*124#` နှစ်ခုလုံးကို
-  `+CME ERROR: 100`၊ 7 ခုက `no reply within 9s`၊ 2 ခုပဲ `reg stat 2` (network မရ)
-- **Root Cause (တစ်ခုမဟုတ် သုံးခု):**
-  1. `+CME ERROR: 100` က **13 ms အတွင်း** ပြန်လာတယ် (14:27:36.811 → .824) — network timeout မဟုတ်ဘူး၊
-     modem က command ကိုတင် ငြင်းတာ။ ရှေးက run တစ်ခုက USSD session ပိတ်မကျန်ခဲ့ရင် firmware က
-     session ရှိနေတယ်လို့ ထင်ပြီး `AT+CUSD=1` အသစ်ကို ချက်ချင်း ငြင်းတယ်
-  2. firmware အချို့က `,15` (dcs argument) ကို လက်မခံဘူး
-  3. USSD code ကို `*88#`/`*124#` နှစ်ခုပဲ hardcode ထားတယ် — carrier လိုက် ကွဲတယ်
-- **အရေးကြီးတာ:** failure 31 ခုထဲ 29 ခုက `reg stat 1` (home network, signal 10–22/31) ပြနေတယ် —
-  ဒါကြောင့် "SIM လိုင်း မကောင်းလို့" က port 2 ခုအတွက်ပဲ မှန်တယ်။ ကျန်တာက modem/USSD ပြဿနာ
-- **Fix:** `get_sim_number` order ကို ပြောင်း — (a) `AT+CUSD=2` နဲ့ stale session အရင်ရှင်း၊
-  (b) `AT+CNUM` (EF_MSISDN — SIM ပေါ်က file၊ network မလို၊ ms အတွင်း ပြန်) ကို **အရင်** စမ်း၊
-  (c) USSD ငြင်းခံရရင် တူတဲ့ code ကို dcs မပါဘဲ တစ်ခါ retry။ code list ကို
-  `OWN_NUMBER_USSD_CODES` const အဖြစ် တစ်နေရာတည်းမှာ စုထား (Mytel: `*88#` → `*124#`)
-- **Rule:** SIM ကနေ တိုက်ရိုက် ရနိုင်တာကို network ကို မတောင်းနဲ့။ `+CME ERROR` က ms အတွင်း ပြန်လာရင်
-  network ပြဿနာ မဟုတ်ဘူး — modem state ကို ကြည့်။ `Found: x/y` က data ဆုံးရှုံးမှု မဟုတ်ဘူး၊
-  cache ထဲ အရင်ရခဲ့တဲ့ number တွေ အတိအကျ ကျန်နေတယ် (`ussd_one_port` ရဲ့ `else` branch က log ပဲ ရေးတယ်)။
-  ဒါပေမဲ့ **slot တစ်ခုထဲမှာ SIM လဲထည့်လိုက်ရင်** အရင် number က stable path key ပေါ်မှာ ကျန်နေမယ် —
-  ဒါက cache ရဲ့ တစ်ခုတည်းသော အန္တရာယ်
+- **Symptom:** only 1 of the 32 ports yields a number. In the log 22 ports answer both `*88#` and `*124#` with
+  `+CME ERROR: 100`, 7 give `no reply within 9s`, and only 2 show `reg stat 2` (no network)
+- **Root Cause (not one but three):**
+  1. `+CME ERROR: 100` comes back **within 13 ms** (14:27:36.811 → .824) — that is not a network timeout,
+     the modem is refusing the command outright. If an earlier run left a USSD session unclosed, the firmware
+     believes a session is still open and instantly refuses the new `AT+CUSD=1`
+  2. some firmware does not accept the `,15` (dcs argument)
+  3. only the two USSD codes `*88#`/`*124#` are hardcoded — they differ per carrier
+- **What matters:** 29 of the 31 failures report `reg stat 1` (home network, signal 10–22/31) —
+  so "the SIM line is bad" is true for only 2 ports. The rest is a modem/USSD problem
+- **Fix:** change the order in `get_sim_number` — (a) clear a stale session first with `AT+CUSD=2`,
+  (b) try `AT+CNUM` (EF_MSISDN — a file on the SIM, needs no network, returns within ms) **first**,
+  (c) when USSD is refused, retry the same code once without the dcs. The code list is
+  collected in one single place as the `OWN_NUMBER_USSD_CODES` const (Mytel: `*88#` → `*124#`)
+- **Rule:** do not ask the network for what you can get straight from the SIM. When a `+CME ERROR` comes back within ms
+  it is not a network problem — look at the modem state. `Found: x/y` is not data loss:
+  the numbers obtained earlier remain in the cache exactly as they were (the `else` branch of `ussd_one_port` only writes a log).
+  But **if the SIM in one slot is swapped**, the old number stays behind on that stable path key —
+  that is the cache's one and only danger
 
-## 1️⃣2️⃣ Port တစ်ခုက SIM နံပါတ် နှစ်ခု၊ With SIM 34 ဆိုပေမဲ့ modem 32 ပဲ ရှိတာ
+## 1️⃣2️⃣ Two SIM numbers for one port, With SIM 34 while only 32 modems exist
 
-- **Symptom:** ttyUSB39 (READY) နဲ့ ttyUSB43 (NO MODEM) နှစ်ခုလုံး `09651995803` ပြ။
-  ttyUSB27/28 က `09652187632` တူ၊ ttyUSB30/31 က `09675797146` တူ (နှစ်ခုလုံး READY)။
-  Badge မှာ `With SIM 34` ဒါပေမဲ့ `32 modems` / `Selected 32`
-- **Root Cause:** `stable_id()` က **တစ်ခါမှ match မဖြစ်ခဲ့ဘူး**။ `serialport` က
-  `/dev/ttyUSB7` ပြန်ပေးတယ်၊ `/dev/serial/by-path/...` symlink က `../../ttyUSB7` ကို ချိတ်တယ် —
-  code မှာ `target.file_name() == name` လို့ တိုက်ကြည့်တာ ဆိုတော့ `"ttyUSB7" == "/dev/ttyUSB7"` →
-  **အမြဲ false**။ ဒါကြောင့် `p.path` က port name ပဲ ဖြစ်နေတယ်၊ cache key က မတည်ငြိမ်တဲ့ tty name။
-  ဒီအပေါ် `number_of(stable, legacy)` က legacy **name** key ကို fallback လုပ်တာ ထပ်ဆင့် ဆိုးတယ် —
-  hotplug ပြီး နံပါတ် ရွှေ့သွားရင် အရင် SIM ရဲ့ number က အခု အဲ့ name ရတဲ့ တခြား stick ပေါ် ပေါ်လာတယ်။
-  CSV ထဲ `/dev/ttyUSB64..67` row တွေ ရှိတာ (ttyUSB48..51 နဲ့ number တူ) က renumbering ဖြစ်ခဲ့တဲ့ သက်သေ
-- **Fix (architecture ပြောင်း):** number ကို port ပေါ် မဖိုင်ဘူး၊ **ICCID** ပေါ် ဖိုင်တယ်။
-  `probe_port` က `AT+CCID`/`AT+ICCID`/`AT^ICCID` နဲ့ card ကို ခွဲသိတယ်။ CSV format v2 =
-  `sim,<iccid>,<number>` (durable) + `slot,<stable_path>,<iccid>` (hint ပဲ)။
-  Modem မတွေ့တဲ့ slot က hint ပြုတ်တယ် (number က ICCID အောက်မှာ ကျန်နေတယ်)၊
-  SIM ကို slot တခြားကို ရွှေ့ရင် number လိုက်လာတယ်။ v1 (port-keyed) file က migrate မလုပ်ဘူး —
-  `sim_numbers.csv.v1-port-keyed` အဖြစ် ဘေးဖယ်ထားပြီး စွန့်ပစ်တယ် (key တွေ ယုံလို့ မရတော့ဘူး)။
-  Frontend `hasValidSim()` က `alive === false` port ကို With SIM အဖြစ် မရေတွက်တော့ဘူး
-- **Rule:** "stable id" လို့ နာမည်ပေးထားရုံနဲ့ stable မဖြစ်ဘူး — resolve ဖြစ်/မဖြစ် **test ရေးပါ**
-  (`stable_id_resolves_a_by_path_symlink` က tmpdir symlink နဲ့ စစ်တယ်)။ Cache key ရွေးတဲ့အခါ
-  **hardware ကိုယ်တိုင် ပြောပြတဲ့ identity** ကို ရွေး (ICCID)၊ OS က ပေးတဲ့ နာမည် မဟုတ်။
-  Legacy fallback key ဆိုတာ silent data corruption ရဲ့ လမ်း — migrate မရရင် ဖယ်ပစ်တာ ပိုကောင်း။
+- **Symptom:** ttyUSB39 (READY) and ttyUSB43 (NO MODEM) both show `***803`.
+  ttyUSB27/28 share the same `***632`, ttyUSB30/31 share the same `***146` (both READY).
+  The badge reads `With SIM 34` but `32 modems` / `Selected 32`
+- **Root Cause:** `stable_id()` **never matched once**. `serialport` returns
+  `/dev/ttyUSB7`, while the `/dev/serial/by-path/...` symlink points at `../../ttyUSB7` —
+  the code compared `target.file_name() == name`, i.e. `"ttyUSB7" == "/dev/ttyUSB7"` →
+  **always false**. So `p.path` was just the port name, and the cache key was the unstable tty name.
+  On top of that, `number_of(stable, legacy)` falling back to the legacy **name** key made it worse still —
+  after a hotplug renumbering, the previous SIM's number appeared on whatever other stick now holds that name.
+  The `/dev/ttyUSB64..67` rows in the CSV (sharing numbers with ttyUSB48..51) are the evidence that renumbering happened
+- **Fix (architecture change):** the number is no longer filed against the port, it is filed against the **ICCID**.
+  `probe_port` tells the card apart with `AT+CCID`/`AT+ICCID`/`AT^ICCID`. CSV format v2 =
+  `sim,<iccid>,<number>` (durable) + `slot,<stable_path>,<iccid>` (a hint only).
+  A slot with no modem loses its hint (the number remains under the ICCID),
+  and moving a SIM to another slot brings its number along. The v1 (port-keyed) file is not migrated —
+  it is set aside as `sim_numbers.csv.v1-port-keyed` and abandoned (its keys can no longer be trusted).
+  The frontend `hasValidSim()` no longer counts an `alive === false` port as With SIM
+- **Rule:** naming something "stable id" does not make it stable — **write a test** for whether it resolves
+  (`stable_id_resolves_a_by_path_symlink` checks it with a tmpdir symlink). When choosing a cache key,
+  choose **the identity the hardware itself reports** (ICCID), not the name the OS hands out.
+  A legacy fallback key is the road to silent data corruption — if it cannot be migrated, dropping it is better.
 
-## 1️⃣3️⃣ Windows မှာ modem 32/64 ပဲ တွေ့တာ — bank က boot မပြီးသေးတာ (misdiagnosis case)
+## 1️⃣3️⃣ Only 32/64 modems found on Windows — the bank had not finished booting (misdiagnosis case)
 
-- **Symptom:** Windows session (18:00–18:08) မှာ `Modem not responding (no reply to AT)` 32 ခု၊
-  `Found: 31/64` → `34/64`။ Linux session (18:47–18:52) မှာ `63/64` + number 62။
-  Windows log မှာ **`Cannot open` တစ်ခုမှ မရှိ** — port အားလုံး ပွင့်ပြီး တစ်ဝက်က `AT` ကို မပြန်။
-  မပြန်တဲ့ set က ၈ မိနစ်လုံး ထပ်တူ (COM3–18, COM26–29, COM39–50)
-- **ကျွန်တော် ပထမ လွဲမှားခဲ့တဲ့ conclusion:** "ထပ်တူ set + ၁၀၀% open success" ကို ကြည့်ပြီး
-  static config fault (DTR/RTS low) လို့ ဖြေခဲ့တယ်။ `serialport` crate ရဲ့ platform asymmetry က
-  တကယ် ရှိတယ် (အောက်တွင်) ဆိုတော့ ပိုပြီး ယုံလောက်စရာ ဖြစ်နေတယ်
-- **တကယ့် Root Cause:** bank က **power-up/enumeration မပြီးသေးတာ**။ သက်သေ ၄ ချက်:
-  1. **တူတူ Windows machine၊ တူတူ version၊ ၅၀ မိနစ် အကြာ session (18:56–19:24) မှာ
-     `Modems OK: 62/64`, `Found: 57/64`, `Live ready 63`** — code မပြောင်းဘဲ အလိုလို ကောင်းသွားတာ
-  2. 18:00 session ထဲမှာ COM10 က 18:03၊ COM18 က 18:04 မှာ **အလိုလို ပြန်လာတယ်** (staggered boot)
-  3. Linux log မှာ node တွေ တဆင့်ချင်း ပေါ်တာ တိုက်ရိုက် တွေ့တယ်: 52 port → 32 node missing → 64
-  4. DTR/RTS low ဆိုရင် ငါတို့ DCB က session တိုင်း တူတူ ဆိုတော့ **deterministic ပျက်ရမယ်** —
-     မပျက်ဘူး။ ဒါက theory ကို ဖြတ်ပစ်တဲ့ အချက်
-- **Windows က Linux ထက် ဆိုးပုံရတဲ့ အကြောင်း:** Linux မှာ module မပြင်ဆင်ရသေးရင် `/dev/ttyUSB*`
-  node ကို မရှိ → `Cannot open` လို့ ရိုးသားစွာ ပြောတယ်။ Windows မှာ `COM` port က registry ထဲ
-  အမြဲ ရှိတာကြောင့် ပွင့်တယ်၊ ဘာမှ မပြန်ဘူး → "modem မရှိ" လို့ မှားထင်စေတယ်
-- **Fix (hardening ပဲ၊ diagnosed fault အတွက် မဟုတ်):** `open_port` မှာ `.flow_control(None)`
-  explicit + `raise_modem_lines()` (DTR/RTS assert; Linux မှာ no-op)။ `at.rs::send` က write error
-  ကို channel dead မှတ်ပြီး `Serial I/O failed: …` လို့ ပြောတယ် — `NOT_RESPONDING` နဲ့ ခွဲထားလို့
-  scan/USSD/live သုံးခုလုံး alive=false မမှတ်တော့ဘူး (`windows/com.rs` က port timeout ကို
-  `WriteTotalTimeoutConstant` အဖြစ်လည်း ထည့်လို့ TX stall မှာ AT မထွက်ဘဲ "modem မပြန်ဘူး" လို့ လိမ်တာ)။
-  **`AT&K0` nudge ကို ထည့်ခဲ့ပြီး ပြန်ဖျက်တယ်** — မှားတဲ့ theory အပေါ် တည်ထားတာ၊ ပြီးတော့ boot
-  မပြီးသေးတဲ့ module ပေါ် flow control ကို ပိတ်ပစ်တာက PDU dump ကြီးတွေမှာ FIFO overrun ဖြစ်နိုင်တယ်
-- **Rule ၁:** **ကိုယ်တိုင် ပြန်ကောင်းသွားတဲ့ fault ဟာ static config fault မဟုတ်ဘူး။**
-  Root cause ဖြေတဲ့အခါ "ဒီ theory မှန်ရင် ဘယ်လို ပျက်ရမလဲ" ကို အရင် စစ်ပါ — deterministic
-  ဖြစ်ရမယ့် theory က intermittent symptom ကို မဖြေဆိုနိုင်ဘူး
-- **Rule ၂:** Log ဖိုင် အသစ်ဆုံးကို **အရင်** ရှာပါ။ ကျွန်တော် 18:00 (ဆိုးတာ) နဲ့ Linux ကို
-  နှိုင်းယှဉ်ခဲ့တယ်၊ 18:56 Windows log က တစ်ခုတည်း ဖြေရှင်းပေးမယ့် ဟာ ဖြစ်ပေမဲ့ မသုံးခဲ့ဘူး
-- **Rule ၃:** "device မပြန်ဘူး" နဲ့ "ငါ ပို့လို့ မရဘူး" ကို ဘယ်တော့မှ တစ်ခုတည်း error အဖြစ်
-  မဖေါ်ပါ — ပေါင်းထားတာက host bug ကို SIM ပြဿနာလို့ လိုက်ရှာစေတယ်
+- **Symptom:** in the Windows session (18:00–18:08), 32 × `Modem not responding (no reply to AT)`,
+  `Found: 31/64` → `34/64`. In the Linux session (18:47–18:52), `63/64` + 62 numbers.
+  In the Windows log there is **not a single `Cannot open`** — every port opened and half of them did not answer `AT`.
+  The set that did not answer is identical across all 8 minutes (COM3–18, COM26–29, COM39–50)
+- **The conclusion I got wrong first:** looking at "an identical set + 100% open success" I diagnosed it as a
+  static config fault (DTR/RTS low). The platform asymmetry of the `serialport` crate
+  does genuinely exist (below), which made it look even more believable
+- **The real Root Cause:** the bank **had not finished power-up/enumeration**. 4 pieces of evidence:
+  1. **On the same Windows machine, the same version, in a session 50 minutes later (18:56–19:24),
+     `Modems OK: 62/64`, `Found: 57/64`, `Live ready 63`** — it got better on its own with no code change
+  2. Within the 18:00 session, COM10 at 18:03 and COM18 at 18:04 **came back on their own** (staggered boot)
+  3. In the Linux log the nodes appearing stage by stage is directly visible: 52 ports → 32 nodes missing → 64
+  4. If DTR/RTS were low, our DCB is identical in every session, so it **would have to fail deterministically** —
+     it did not. That is the point that cuts the theory down
+- **Why Windows looks worse than Linux:** on Linux, until the module is ready the `/dev/ttyUSB*`
+  node does not exist → it honestly says `Cannot open`. On Windows the `COM` port is
+  always present in the registry, so it opens and answers nothing → which misleads you into "there is no modem"
+- **Fix (hardening only, not for the diagnosed fault):** in `open_port`, an explicit `.flow_control(None)`
+  + `raise_modem_lines()` (DTR/RTS assert; a no-op on Linux). `at.rs::send` marks a write error
+  as a dead channel and says `Serial I/O failed: …` — kept separate from `NOT_RESPONDING`, so
+  none of the three of scan/USSD/live records alive=false any more (`windows/com.rs` also plugs the port timeout in
+  as `WriteTotalTimeoutConstant`, so on a TX stall the AT never leaves and it lies with "the modem does not answer").
+  **An `AT&K0` nudge was added and then reverted** — it rested on the wrong theory, and besides,
+  turning flow control off on a module that has not finished booting can cause a FIFO overrun on large PDU dumps
+- **Rule 1:** **a fault that recovers by itself is not a static config fault.**
+  When resolving a root cause, check first "if this theory is right, how would it fail" — a theory that has to be
+  deterministic cannot explain an intermittent symptom
+- **Rule 2:** look for the newest log file **first**. I compared 18:00 (the bad one) with Linux;
+  the 18:56 Windows log was the single thing that would have settled it, and I did not use it
+- **Rule 3:** never surface "the device does not answer" and "I could not send" as one and the same
+  error — merging them sends you hunting for a SIM problem when the bug is host-side
 
-## 1️⃣4️⃣ Live mode message ကို Delete → "Deleted 1 message(s) (1 SIM slot(s) freed)" ပြပေမယ့် SIM ပေါ် ကျန်နေတာ
+## 1️⃣4️⃣ Deleting a live mode message shows "Deleted 1 message(s) (1 SIM slot(s) freed)" but it stays on the SIM
 
-- **Symptom:** Live mode ပြေးနေစဉ် ရောက်လာတဲ့ SMS ကို Inbox ကနေ Delete လုပ်ရင် row က ပျောက်တယ်၊
-  status line က `Deleted 1 message(s) (1 SIM slot(s) freed)` ဆိုတဲ့ **clean success** လိုင်း တင်တယ်။
-  ဒါပေမယ့် message က SIM ပေါ်မှာ ကျန်နေတယ်။ `live::seen` က fingerprint မှတ်ထားတာမို့ အဲ့ session
-  အတွင်း ပြန်မပေါ်လာဘူး — slot က **မမြင်ရဘဲ ပိတ်နေတယ်**။ SIM slot ၂၀–၅၀ ပဲရှိတဲ့ card မှာ
-  တဖြည်းဖြည်း ပြည့်လာပြီး modem က SMS အသစ် လက်ခံရာမှာ တိတ်တဆိတ် ငြင်းလာမယ်
-- **Root Cause:** `decoder::parse_cmgr` နဲ့ `parse_pdu_cmgr` နှစ်ခုလုံး `index: 0` ကို **hardcode**
-  ထားတယ်။ `+CMGR` header က status ပါပေမယ့် index မပါဘူး — slot ကို သိတာ `AT+CMGR={idx}` ပို့တဲ့
-  caller (`live::handle_cmgr`) တစ်ခုတည်းပဲ၊ ဒါပေမယ့် parse ပြီးတဲ့ message ထဲ ပြန်မရေးထားဘူး။
-  ဒါကြောင့် live mode ကာလအတွင်း ရောက်လာတဲ့ SMS တိုင်း `index == 0`၊ concat ဆိုရင်
-  `part_indices == [0]` (`Reassembler` က fragment ရဲ့ slot ကို `msg.index` ကနေ ယူတာမို့)
-- **`confirmed_removals` invariant ကို ဘယ်လို ဖြတ်သွားလဲ** — ဒါက အရေးကြီးဆုံး အပိုင်း:
-  1. `message_slots` က `[0]` ပြန်ပေး → `delete_each` က `AT+CMGD=0` ပို့
-  2. SIM slot က **1 ကနေ** စတာမို့ modem က ငြင်း
-  3. `slots_still_present` က `AT+CMGL="ALL"` ပြန်ဖတ်တယ် — slot 0 က list ထဲ **မပါဘူး**၊
-     ဘာလို့လဲဆိုတော့ **ဒါ မရှိတဲ့ slot ဖြစ်တာမို့**
-  4. "list ထဲ မပါဘူး" ကို `confirm_delete` က "ပျက်သွားပြီ" ဆိုတဲ့ **သက်သေ** အဖြစ် ဖတ်တယ်
-  → `ok: true, deleted: 1, indices: [0]` → `confirmed_removals` က row ကို ခွင့်ပြု။
-  SIM ပြန်ဖတ်တဲ့ confirmation တစ်ခုလုံး **အလုပ်လုပ်ပေမယ့် အဖြေ လွဲတယ်** — မရှိတဲ့ slot ရဲ့ absence
-  က ဘာမှ မသက်သေဘူး
-- **Blast radius (တိတိကျကျ):** live mode ကနေ ရလာတဲ့ row ကို **manual delete** လုပ်တဲ့ path
-  တစ်ခုတည်းပဲ။ Scan path (`parse_pdu_list`/`parse_text_mode_list`) က `+CMGL` header ကနေ slot
-  မှန်မှန် ထည့်တယ်။ Retention sweep (`live::sweep_expired`, `modem::expire_old`) က SIM ကို
-  **ကိုယ်တိုင် ပြန်ဖတ်ပြီး** list parser သုံးတာမို့ မထိခိုက်ဘူး
-- **Fix (v1.5.0):** `parse_cmgr(resp, port, idx)` / `parse_pdu_cmgr(resp, port, idx)` — slot ကို parameter
-  အဖြစ် သွင်း၊ default မထား။ `live::handle_cmgr` က `idx` ကို `asm.push` **မတိုင်မီ** ပေးတာမို့
-  `finish()` ရဲ့ `part_indices` က တကယ့် slot တွေ စုမယ်။ `decode_deliver` ရဲ့ `index: 0` က
-  ကျန်ထားပေမယ့် "raw PDU မှာ slot မပါဘူး၊ caller နှစ်ခုလုံး overwrite လုပ်တယ်" ဆိုတဲ့ comment ထည့်
-- **Second line of defence:** `message_slots` နဲ့ `models::expired_indices` နှစ်ခုလုံး
-  non-positive index ကို ဖယ်ပစ်တယ်။ `confirmed_removals` က `!idxs.is_empty()` စစ်ပြီးသားမို့
-  slot မရှိတဲ့ row က **KEPT** ဖြစ်မယ် — အနာဂတ်မှာ ဘယ် path ကနေ 0 ရောက်လာလာ တိတ်တဆိတ်
-  ဖျက်ခြင်း မဖြစ်တော့ဘူး
-- **Rule ၁:** **"မရှိတာကို သက်သေ အဖြစ် သုံးရင် sentinel တွေကို အရင် ဖယ်ပါ။"** Absence-based
-  confirmation (`slots_still_present`) က ရှာနေတဲ့ key ဟာ တကယ် ရှိနိုင်တဲ့ key ဖြစ်မှ အလုပ်လုပ်တယ်။
-  မရှိနိုင်တဲ့ key ဆိုရင် အဖြေက အမြဲ "ပျက်သွားပြီ" ဖြစ်တယ်
-- **Rule ၂:** `0` ကို "မသိဘူး" အဖြစ် double meaning **မပေးပါ**။ `index: Option<i32>` ဆိုရင်
-  ဒီ bug က compile error ဖြစ်နေမှာ။ `i32` + hardcoded `0` က တိတ်တဆိတ် လွဲသွားတယ်
-- **Rule ၃:** Test က `text`/`from` ကို စစ်တာ မလုံလောက်ဘူး။ `pdumgr_single_read` က ရှိပြီးသား
-  ဖြစ်ပေမယ့် `index` ကို မစစ်ခဲ့တာမို့ bug က ဖမ်းမမိခဲ့ဘူး — **delete/cleanup ရဲ့ input ဖြစ်တဲ့
-  field တိုင်းကို assert လုပ်ပါ**
+- **Symptom:** while Live mode is running, deleting an arriving SMS from the Inbox makes the row disappear and
+  the status line posts the **clean success** line `Deleted 1 message(s) (1 SIM slot(s) freed)`.
+  But the message is still on the SIM. Because `live::seen` has recorded its fingerprint it does not come back
+  during that session — the slot is **occupied without being visible**. On a card with only 20–50 SIM slots
+  it gradually fills up and the modem will start silently refusing new SMS
+- **Root Cause:** both `decoder::parse_cmgr` and `parse_pdu_cmgr` **hardcode** `index: 0`.
+  The `+CMGR` header carries the status but not the index — the only party that knows the slot is the
+  caller that sends `AT+CMGR={idx}` (`live::handle_cmgr`), and it never wrote it back into the parsed message.
+  So every SMS that arrives during live mode has `index == 0`, and for a concat,
+  `part_indices == [0]` (because `Reassembler` takes each fragment's slot from `msg.index`)
+- **How it got past the `confirmed_removals` invariant** — this is the most important part:
+  1. `message_slots` returns `[0]` → `delete_each` sends `AT+CMGD=0`
+  2. SIM slots start **at 1**, so the modem refuses
+  3. `slots_still_present` re-reads with `AT+CMGL="ALL"` — slot 0 is **not** in the list,
+     because **it is a slot that does not exist**
+  4. `confirm_delete` reads "not in the list" as **evidence** that it is gone
+  → `ok: true, deleted: 1, indices: [0]` → `confirmed_removals` lets the row go.
+  The entire re-read-the-SIM confirmation **worked and still gave the wrong answer** — the absence of a
+  slot that does not exist is evidence of nothing
+- **Blast radius (precisely):** only the one path that **manually deletes** a row obtained from live mode.
+  The scan path (`parse_pdu_list`/`parse_text_mode_list`) fills the slot in correctly from the `+CMGL` header.
+  The retention sweep (`live::sweep_expired`, `modem::expire_old`) **re-reads the SIM itself**
+  and uses the list parser, so it is unaffected
+- **Fix (v1.5.0):** `parse_cmgr(resp, port, idx)` / `parse_pdu_cmgr(resp, port, idx)` — the slot goes in as a
+  parameter, with no default. `live::handle_cmgr` supplies `idx` **before** `asm.push`, so
+  `finish()`'s `part_indices` collects the real slots. `decode_deliver`'s `index: 0` is
+  left in place, but with a comment added saying "the raw PDU carries no slot; both callers overwrite it"
+- **Second line of defence:** both `message_slots` and `models::expired_indices`
+  drop non-positive indices. Since `confirmed_removals` already checks `!idxs.is_empty()`,
+  a row with no slots will be **KEPT** — whatever path a 0 arrives from in future, there is no more
+  silent deletion
+- **Rule 1:** **"if you are going to use absence as evidence, remove the sentinels first."** Absence-based
+  confirmation (`slots_still_present`) only works when the key being looked for is a key that can actually exist.
+  For a key that cannot exist the answer is always "it is gone"
+- **Rule 2:** **do not** give `0` the double meaning of "unknown". With `index: Option<i32>`
+  this bug would have been a compile error. `i32` + a hardcoded `0` went wrong silently
+- **Rule 3:** a test that checks `text`/`from` is not enough. `pdumgr_single_read` already
+  existed but did not assert `index`, which is why the bug was not caught — **assert every
+  field that is an input to delete/cleanup**
 
-## 1️⃣5️⃣ Inbox Search box က ရိုက်လိုက်တဲ့ စာကို ဖျက်ပစ်တာ — search က လုံးဝ အလုပ်မလုပ်ဘူး
+## 1️⃣5️⃣ The Inbox Search box erases what you type — search does not work at all
 
-- **Symptom:** Inbox ရဲ့ Search messages ကွက်လပ်ထဲ ရိုက်ရင် စာ မတည်ဘူး။ Browser preview
-  (localhost:1420) မှာ တကယ် စမ်းကြည့်တာ — `+469602294397` (၁၃ လုံး) ကို တစ်လုံးချင်း ရိုက်ပြီးတဲ့အခါ
-  **field က ဗလာ**၊ message count က `35 msgs` အတိုင်း ကျန်၊ filter က တစ်ခါမှ မသက်ဝင်ဘူး။
-  "အက္ခရာ တစ်ချို့ ကျော်သွားတာ" မဟုတ်ဘူး — **search feature တစ်ခုလုံး အလုပ်မလုပ်တာ**
-- **Root Cause:** `FilterBar.svelte` ရဲ့ sync `$effect`:
+- **Symptom:** typing into the Inbox's Search messages field does not stick. Actually tried in the browser preview
+  (localhost:1420) — after typing `+469602294397` (13 characters) one character at a time,
+  **the field is empty**, the message count stays at `35 msgs`, and the filter never takes effect.
+  This is not "a few characters got skipped" — **the entire search feature does not work**
+- **Root Cause:** the sync `$effect` in `FilterBar.svelte`:
 
   ```js
   if (messagesStore.query === '' && localQuery !== '') {
-    localQuery = '';                       // ← debounceTimer guard မပါ
+    localQuery = '';                       // ← no debounceTimer guard
   } else if (messagesStore.query !== localQuery && debounceTimer === null) {
   ```
 
-  Branch ၂ က typing အတွင်း clobber မဖြစ်အောင် `debounceTimer === null` နဲ့ ကာထားတယ်။
-  **Branch ၁ မကာဘူး**။ `debounceTimer` က `$state` မဟုတ်တာမို့ effect က မ track ဘူး —
-  dependency က `messagesStore.query` နဲ့ `localQuery` ပဲ။ ဆိုတော့ keystroke တိုင်းက
-  `localQuery` ကို ပြောင်းတယ် → effect ပြန်ပြေးတယ် → `query` က `''` ရှိသေးတာမို့
-  `localQuery = ''` → `value={localQuery}` က DOM ကို ပြန်ရေးတယ်။ ဒါဟာ `query` က `''`
-  ဖြစ်နေတဲ့ အချိန်တိုင်း (= စရိုက်တဲ့အခါ၊ clear လုပ်ပြီးတဲ့အခါ) ဖြစ်တယ်
-- **ဒီ effect က မဖြစ်နိုင်တဲ့ ကိစ္စကို ကာနေတာ:** comment က "store is cleared externally"
-  လို့ ဆိုပေမယ့် `messagesStore.query` ကို ရေးတဲ့သူ က `FilterBar` **တစ်ခုတည်း** ပဲ
-  (`onSearchInput` နဲ့ `clearSearch` — repo တစ်ခုလုံး grep ပြီး အတည်ပြုတယ်)။
-  ဆိုတော့ mirror လုပ်ရမယ့် external update ဆိုတာ မရှိဘူး။ Page navigation ကို
-  `let localQuery = $state(messagesStore.query)` initialiser ကိုယ်တိုင် ဖြေရှင်းပေးပြီးသား
-  (Inbox က remount ဖြစ်တဲ့အခါ store က query ကို ကျန်ထားတယ်)
-- **Fix (v1.5.0):** effect ကို ဖျက်လိုက်တယ်။ Input က `localQuery` ကို ပိုင်တယ်၊ debounce က
-  store ကို ရေးတယ် — one-way။ `src/lib/pages/Ports.svelte:28-42` က ဒီပုံစံ မှန်မှန်
-  ရေးထားပြီးသား (`rawQuery`/`debouncedQuery`, sync effect မထား)
-- **အတည်ပြုမှု (A/B, browser preview):** effect ရှိတဲ့အခါ — field ဗလာ၊ `35 msgs` အတိုင်း။
-  ဖျက်ပြီးတဲ့အခါ — field က `+469602294397` အပြည့် ကိုင်တယ်၊ `1 msgs` ဆီ ကျဆင်းတယ်၊
-  ကျန်တဲ့ row က အဲ့ sender ကိုယ်တိုင်။ Clear button ပြီးရင် `35 msgs` ပြန်လာတယ်၊
-  clear လုပ်ပြီး ပြန်ရိုက်တာလည် အလုပ်လုပ်တယ် (effect အဆိုးဆုံး ဖြစ်တဲ့ ကိစ္စ)
-- **Rule ၁:** **Runes မှာ plain `let` က effect ရဲ့ guard မဖြစ်နိုင်ဘူး။** `debounceTimer` က
-  reactive မဟုတ်တာမို့ effect က သူ့ကို မ track ဘူး — ဒါပေမယ့် effect **အထဲမှာ** သူ့ကို
-  ဖတ်တာက "ကာထားပြီ" ဆိုတဲ့ အမြင် ပေးတယ်။ Branch တစ်ခုမှာ guard ရေးပြီး နောက်တစ်ခုမှာ
-  မရေးထားတာက ဒီ bug ရဲ့ တိကျတဲ့ ပုံစံ
-- **Rule ၂:** **DOM ရဲ့ value ကို source of truth နှစ်ခု မထားပါ။** `value={localQuery}` က
-  binding ဖြစ်ပြီး input event က `localQuery` ကို ရေးတယ် — ဒီအလယ်မှာ ဝင်ပြီး `localQuery`
-  ကို ရေးတဲ့ effect တိုင်းက user ရဲ့ လက်ကို ယှဉ်ပြိုင်တယ်
-- **Rule ၃:** "external update ကို sync လုပ်တဲ့ effect" ရေးမယ်ဆိုရင် **external writer
-  တကယ် ရှိလား grep လုပ်ပါ**။ မရှိရင် အဲ့ effect က ကာကွယ်မှု မဟုတ်ဘဲ bug ဖြစ်တယ်
-- **Rule ၄:** Frontend ကို unit test မရသေးတဲ့ အလွှာ (component) ဖြစ်ရင် **browser preview
-  မှာ A/B စမ်းပါ** — fix ကို stash လုပ်ပြီး အရင်အခြေအနေ ပြန်ပြေးခိုင်းတာက "ပြင်ပြီး
-  အလုပ်လုပ်တယ်" နဲ့ "ဒါ တကယ် bug ဖြစ်ခဲ့တယ်" နှစ်ခုလုံးကို သက်သေပြတယ်
+  Branch 2 is shielded with `debounceTimer === null` so it cannot clobber during typing.
+  **Branch 1 is not shielded**. And because `debounceTimer` is not `$state`, the effect does not track it —
+  the dependencies are only `messagesStore.query` and `localQuery`. So every keystroke
+  changes `localQuery` → the effect re-runs → `query` is still `''`, so
+  `localQuery = ''` → `value={localQuery}` writes the DOM back. This happens every time `query` is
+  `''` (= when you start typing, and after a clear)
+- **This effect was guarding a case that cannot happen:** the comment says "store is cleared externally",
+  but the only writer of `messagesStore.query` is `FilterBar` **itself**
+  (`onSearchInput` and `clearSearch` — confirmed by grepping the whole repo).
+  So there is no external update to mirror. Page navigation is already resolved by the
+  `let localQuery = $state(messagesStore.query)` initialiser itself
+  (when the Inbox remounts, the store still holds the query)
+- **Fix (v1.5.0):** the effect was deleted. The input owns `localQuery`, and the debounce
+  writes the store — one-way. `src/lib/pages/Ports.svelte:28-42` already had this shape
+  written correctly (`rawQuery`/`debouncedQuery`, no sync effect)
+- **Verification (A/B, browser preview):** with the effect present — the field is empty, still `35 msgs`.
+  After deleting it — the field holds all of `+469602294397`, the count falls to `1 msgs`,
+  and the row that remains is that very sender. After the Clear button `35 msgs` comes back, and
+  typing again after a clear works too (the case where the effect was at its worst)
+- **Rule 1:** **in runes, a plain `let` cannot be an effect's guard.** Because `debounceTimer` is
+  not reactive the effect does not track it — yet reading it **inside** the effect
+  gives the impression that it is guarded. Writing the guard in one branch and
+  not in the other is the exact shape of this bug
+- **Rule 2:** **do not give the DOM's value two sources of truth.** `value={localQuery}` is a
+  binding and the input event writes `localQuery` — any effect that steps in between and writes
+  `localQuery` is racing the user's hands
+- **Rule 3:** if you are going to write "an effect that syncs an external update", **grep for whether an external
+  writer actually exists**. If there is none, that effect is not a protection but a bug
+- **Rule 4:** if it is a layer the frontend cannot unit-test yet (a component), **A/B it in the browser
+  preview** — stashing the fix and re-running the previous state proves both "it is fixed and
+  works" and "this really was a bug"
 
-## 1️⃣6️⃣ Port ခဏ busy ဖြစ်တာနဲ့ "NO MODEM" ဖြစ်ပြီး SIM နံပါတ် disk ပေါ်ကနေ ပျောက်တာ
+## 1️⃣6️⃣ A port going busy for a moment becomes "NO MODEM" and the SIM number disappears from disk
 
-- **Symptom ၂ မျိုး၊ တစ်ခုတည်းသော အကြောင်းရင်း:**
-  1. **Detect** ပြေးတဲ့အချိန် ModemManager ဒါမှမဟုတ် တခြား process က port ကို ခဏ ဖမ်းထားရင်
-     (ဒါမှမဟုတ် EBUSY ခံရင်) အဲ့ port က `NO MODEM` ဖြစ်တယ်၊ deselect ခံတယ်၊ ပြီးတော့
-     **slot→ICCID mapping က `sim_numbers.csv` ကနေ အပြီးအပိုင် ပျောက်တယ်** — SIM နံပါတ်
-     ပြန်ရဖို့ Get SIM Numbers ပြန်ပြေးရမယ်
-  2. **Refresh** (background timer, ၃၀ စက္ကန့်တစ်ခါ default) ပြီးတဲ့အခါ
-     "Reconnecting: Port lost: EIO" / "Serial I/O failed: …" ဆိုတဲ့ error text က **ပျောက်တယ်**၊
-     ပြီးတော့ **ပြန်မလာဘူး** — port က outage ကျန်တဲ့အချိန်တစ်လျှောက် ရိုးရိုး idle row အဖြစ် ပြတယ်
-- **Root Cause (၁):** `detect_ports` က probe ရဲ့ ရလဒ် ၄ မျိုးကို **နှစ်မျိုးအဖြစ် ချုံ့**ခဲ့တယ်:
+- **Symptom in 2 kinds, one single cause:**
+  1. If ModemManager or some other process holds the port for a moment while **Detect** is running
+     (or if it hits EBUSY), that port becomes `NO MODEM`, gets deselected, and then
+     **the slot→ICCID mapping is lost from `sim_numbers.csv` for good** — getting the SIM number
+     back means re-running Get SIM Numbers
+  2. After a **Refresh** (background timer, once every 30 seconds by default) the error text
+     "Reconnecting: Port lost: EIO" / "Serial I/O failed: …" **disappears**,
+     and then **never comes back** — the port shows as an ordinary idle row for the whole remainder of the outage
+- **Root Cause (1):** `detect_ports` **collapsed** the probe's 4 possible outcomes **into two**:
   ```rust
   let (alive, iccid) = match probed {
       Ok(Ok(r)) => (r.alive, r.iccid),
-      _ => (false, None),          // ← Err နဲ့ panic နှစ်ခုလုံး "SIM မရှိ" ဖြစ်သွားတယ်
+      _ => (false, None),          // ← both Err and panic became "no SIM"
   };
   ```
-  ပြီးတော့ `ProbeResult` မှာ error field **မရှိခဲ့ဘူး**၊ ဒါကြောင့် `probe_failure_reason` ရဲ့
-  "silence vs transport failure" ခွဲခြားမှု (scan/USSD/live သုံးခုလုံး လိုက်နာတဲ့ဟာ) က ဒီ path
-  တစ်ခုတည်းမှာ လုံးဝ ပျောက်ခဲ့တယ်။ `alive == false` ဖြစ်တာနဲ့ `sim_dir.clear_slot(&path)`
-- **Root Cause (၂):** `merge_ports` က `live_error: None` ကို **unconditional** ထားခဲ့တယ်။
-  `OutageLatch` က outage တစ်ခုအတွက် event တစ်ခုပဲ ပို့တာမို့ (ထပ်ခါထပ်ခါ မပို့ဘူး) ဖျက်လိုက်တာ
-  **ပြန်မလာဘူး**။ `alive` ကို carry လုပ်ပြီးသားမို့ **silence တစ်ခုတည်း** သာ ကျန်ပြီး
-  operator အလိုအရေးဆုံး ဖြစ်တဲ့ နှစ်ခု က ပျောက်တဲ့ နှစ်ခု ဖြစ်တယ်
-- **Fix (၁) — v1.5.0:** `ProbeResult` မှာ `failure: Option<String>` + `proved_empty()` ထည့်၊ ပြီးတော့
-  `ProbeVerdict` enum ၃ မျိုး:
+  And `ProbeResult` **had no** error field, so `probe_failure_reason`'s
+  "silence vs transport failure" distinction (the one all three of scan/USSD/live obey) was completely
+  absent on this one path. As soon as `alive == false`, `sim_dir.clear_slot(&path)`
+- **Root Cause (2):** `merge_ports` set `live_error: None` **unconditionally**.
+  Since `OutageLatch` sends only one event per outage (it does not resend again and again), what was deleted
+  **never comes back**. `alive` was already being carried over, so **only the silence** remained, and
+  the two things the operator needs most are the two that vanish
+- **Fix (1) — v1.5.0:** add `failure: Option<String>` + `proved_empty()` to `ProbeResult`, and then
+  a 3-variant `ProbeVerdict` enum:
   | Verdict | `alive` | `checked` | `iccid` | `sim_dir` | `live_error` |
   |---|---|---|---|---|---|
-  | `Alive(iccid)` | `Some(true)` | `true` | set (ရရင်) | `set_slot` | `None` |
-  | `Empty` (silence ပဲ) | `Some(false)` | `false` | `None` | `clear_slot` | `None` |
-  | `Inconclusive(why)` | **မထိ** | **မထိ** | **မထိ** | **မထိ** | `Some(why)` |
+  | `Alive(iccid)` | `Some(true)` | `true` | set (when obtained) | `set_slot` | `None` |
+  | `Empty` (silence only) | `Some(false)` | `false` | `None` | `clear_slot` | `None` |
+  | `Inconclusive(why)` | **untouched** | **untouched** | **untouched** | **untouched** | `Some(why)` |
 
-  `Empty` က `alive = Some(false)` သတ်မှတ်ခွင့်ရှိတဲ့ **တစ်ခုတည်းသော** verdict
-- **Fix (၂) — v1.5.0:** `live_error` ကို refresh အတွင်း carry လုပ်တယ် — `live_ready` လိုပဲ **tty name
-  တူမှ**။ Renumber ဖြစ်ပြီးရင် အဲ့ message က မရှိတော့တဲ့ name ရဲ့ worker အကြောင်း ဖြစ်တာမို့
-  လွဲမှားစေတယ်။ **Expire လုပ်စရာ မလိုဘူး**: `start_live`/`stop_live` နှစ်ခုလုံး boundary မှာ
-  `live_error` အားလုံး ရှင်းတယ်၊ `detect_ports` က port အလိုက် ကိုယ်တိုင် overwrite တယ်
-- **Trade-off (တမင် ရွေးထားတာ):** Inconclusive port က **selected အတိုင်း ကျန်**တယ်၊ ဒါကြောင့်
-  နောက် scan က သူ့ timeout ကို ပေးရမယ်။ ICCID mapping ပျောက်တာနဲ့ စာရင် ဒါက အများကြီး သက်သာတယ် —
-  ပြီးတော့ status line က `N port(s) could not be probed — left as they were` လို့ ရှင်းရှင်း ပြောတယ်
-- **လက်ရှိ ကျန်နေတဲ့ အပိုင်း:** အရင် `Empty` ဖြစ်ခဲ့တဲ့ port (`alive == Some(false)`) မှာ
-  Inconclusive verdict တင်ရင် `portStatus` က `alive === false` branch ကို အရင် စစ်တာမို့
-  `NO MODEM` ပဲ ပြပြီး reason text ကို မပြဘူး။ **တမင် ချန်ထားတာ** — branch order ပြောင်းရင်
-  transient failure တစ်ခုအတွက် bank ထဲက slot ဗလာ အားလုံး အနီ ဖြစ်မယ် (`utils/port.ts` ရဲ့
-  comment ကိုယ်တိုင် အဲ့ဒါကို သတိပေးထားတယ်)။ ရှိပြီးသား evidence က "ဗလာ" ဆိုတာမို့ အဲ့ဒါ ပြတာ မှန်တယ်
-- **Rule ၁:** **"မသိဘူး" ကို "မရှိဘူး" နဲ့ တစ်ခုတည်း မလုပ်ပါ။** State ၂ ခုပဲ ရှိတဲ့
-  `bool`/`(bool, Option<_>)` က ဒီ ချုံ့မှုကို ဖိတ်ခေါ်တယ် — verdict ၃ မျိုးဆိုရင် enum ထားပါ၊
-  compiler က arm တိုင်း ဖြေရှင်းခိုင်းလိမ့်မယ်
-- **Rule ၂:** `match probed { Ok(Ok(r)) => …, _ => … }` ဆိုတဲ့ **catch-all arm က ခွဲခြားမှုကို
-  တိတ်တဆိတ် စားတယ်**။ `Err` variant တွေကို တစ်ခုချင်း ဖြေရှင်းပါ
-- **Rule ၃:** State ကို "ရှင်းလင်းတယ်" ဆိုတဲ့ code ရေးတဲ့အခါ **အဲ့ဒါ ပြန်လာမလား** ကို စစ်ပါ။
-  Latch/one-shot event ကနေ လာတဲ့ state ကို ဖျက်တာက **အပြီးအပိုင် ဖျက်တာ** ဖြစ်တယ်
+  `Empty` is the **one and only** verdict allowed to set `alive = Some(false)`
+- **Fix (2) — v1.5.0:** `live_error` is carried across a refresh — but, just like `live_ready`, **only when the tty
+  name is unchanged**. After a renumber, that message is about the worker of a name that no longer exists,
+  so it misleads. **There is nothing to expire**: both `start_live`/`stop_live` clear
+  every `live_error` at their boundaries, and `detect_ports` overwrites it per port itself
+- **Trade-off (deliberately chosen):** an Inconclusive port **stays selected as it was**, so
+  the next scan has to pay its timeout. Compared with losing the ICCID mapping this is far cheaper —
+  and besides, the status line says it plainly: `N port(s) could not be probed — left as they were`
+- **The part that is still outstanding:** on a port that was previously `Empty` (`alive == Some(false)`),
+  posting an Inconclusive verdict still shows only `NO MODEM` and not the reason text, because
+  `portStatus` checks the `alive === false` branch first. **Deliberately left that way** — reordering the branches
+  would turn every empty slot in the bank red for one transient failure (the comment in `utils/port.ts`
+  warns about exactly that itself). The existing evidence says "empty", so showing that is correct
+- **Rule 1:** **do not treat "unknown" as one and the same as "absent".** A `bool`/`(bool, Option<_>)`
+  with only 2 states invites this collapse — if there are 3 verdicts, use an enum, and
+  the compiler will make you handle every arm
+- **Rule 2:** in `match probed { Ok(Ok(r)) => …, _ => … }`, **the catch-all arm silently eats
+  the distinction**. Handle the `Err` variants one by one
+- **Rule 3:** when writing code that says it "clears" state, check **whether it will come back**.
+  Deleting state that came from a latch/one-shot event is **deleting it permanently**
+## 1️⃣7️⃣ The live SIM sweep logs "deleted N" yet the SIM fills up — two copies drifted apart
 
-## 1️⃣7️⃣ Live SIM sweep က "deleted N" လို့ log တင်ပေမယ့် SIM ပြည့်လာတာ — copy နှစ်ခု drift ဖြစ်တာ
-
-- **Symptom:** Live mode ဆက်တိုက် ပြေးနေတဲ့ bank မှာ log က `SIM cleanup deleted N expired
-  message(s)` လို့ ၁၀ မိနစ်တစ်ခါ (`SIM_SWEEP_EVERY`) တင်နေတယ်၊ ဒါပေမယ့် SIM က တဖြည်းဖြည်း
-  ပြည့်လာပြီး modem က SMS အသစ် လက်ခံရာမှာ တိတ်တဆိတ် ငြင်းလာတယ်။ **sweep ရှိတဲ့ အကြောင်းရင်း
-  အတိအကျ ဖြစ်တဲ့ failure**
-- **Root Cause — operation တစ်ခုကို implementation နှစ်ခု ရေးထားပြီး တစ်ခုက drift ဖြစ်ခဲ့တာ:**
+- **Symptom:** On a bank running continuously in Live mode the log reports `SIM cleanup deleted N
+  expired message(s)` once every ten minutes (`SIM_SWEEP_EVERY`), but the SIM fills up little by
+  little and the modem starts silently refusing new SMS. **This is exactly the failure the sweep
+  exists for**
+- **Root Cause — one operation written as two implementations, one of which drifted:**
   | | `modem.rs` (scan path) | `live.rs::delete_indices` (drifted copy) |
   |---|---|---|
-  | `AT+CMGD` ရလဒ် စစ်တာ | `l.trim() == "OK"` (line တစ်ခုလုံး) | `resp.contains("OK")` |
-  | SIM ပြန်ဖတ်ပြီး အတည်ပြုတာ | `slots_still_present` + `confirm_delete` | **ဘာမှ မရှိ** |
+  | Checking the `AT+CMGD` result | `l.trim() == "OK"` (the whole line) | `resp.contains("OK")` |
+  | Re-reading the SIM to confirm | `slots_still_present` + `confirm_delete` | **nothing at all** |
 
-  `contains("OK")` က `+CMS ERROR: 321 ... NOT OK` စတဲ့ စာသား၊ command echo၊ ဒါမှမဟုတ်
-  unsolicited line တစ်ခုထဲ ပါလာတဲ့ `OK` ကိုပါ ခံယူတယ်။ ပြီးတော့ confirmation မရှိတာမို့
-  ရေတွက်တာက modem ကို **ခိုင်းလိုက်တဲ့** အရေအတွက်၊ တကယ် **ပျက်သွားတဲ့** အရေအတွက် မဟုတ်ဘူး
-- **Fix (v1.5.0) — helper ကို ပေါင်းလိုက်တာ (structural)**: `modem::delete_confirmed(ch, port, indices,
-  list_cmd)` ကို `pub(crate)` ထုတ်ပြီး `live::delete_indices` ကို **ဖျက်**လိုက်တယ်။
-  `delete_messages` (port ကို ကိုယ်တိုင် ဖွင့်တယ်) နဲ့ live sweep (မဖွင့်နိုင်ဘူး) နှစ်ခုလုံး
-  အခု entry point တစ်ခုတည်း သုံးတယ် — **ထပ် drift ဖြစ်လို့ မရတော့ဘူး**
-- **`list_cmd` parameter ဘာလို့ လိုလဲ:** `confirm_delete` က `AT+CMGL="ALL"` (text mode form)
-  ကို hardcode ထားခဲ့တယ်။ Live worker က ရနိုင်သရွေ့ **PDU mode** ပြေးတယ် — အဲ့မှာ quoted form
-  က `ERROR` ပြန်တယ် → `slots_still_present` က `None` → per-command count ဆီ တိတ်တဆိတ်
-  ပြန်ကျမယ် (= ပြင်ချင်တဲ့ bug ကို ပြန်ရမယ်)။ `list_all_cmd(pdu_mode)` က `AT+CMGL=4` /
-  `AT+CMGL="ALL"` ရွေးပေးတယ်
+  `contains("OK")` also accepts text such as `+CMS ERROR: 321 ... NOT OK`, a command echo, or an
+  `OK` that merely appears inside an unsolicited line. And because there is no confirmation, what
+  gets counted is the number of deletions the modem was **asked** for, not the number that actually
+  **went**
+- **Fix (v1.5.0) — the helper was merged (structural)**: `modem::delete_confirmed(ch, port, indices,
+  list_cmd)` was exposed as `pub(crate)` and `live::delete_indices` was **deleted**.
+  `delete_messages` (which opens the port itself) and the live sweep (which cannot open it) now both
+  go through a single entry point — **there is nothing left that can drift again**
+- **Why the `list_cmd` parameter is needed:** `confirm_delete` used to hardcode `AT+CMGL="ALL"`
+  (the text-mode form). The live worker runs in **PDU mode** whenever it can — there the quoted form
+  returns `ERROR` → `slots_still_present` gives `None` → it silently falls back to the per-command
+  count (= the very bug being fixed comes back). `list_all_cmd(pdu_mode)` picks `AT+CMGL=4` /
+  `AT+CMGL="ALL"`
 - **Test:** `the_sweep_deletes_high_slots_first_and_confirms_against_the_sim` (highest-first
-  order + **re-read က တကယ် ပို့တာ** — အရင် live loop က မပို့ခဲ့တာ),
+  order + **the re-read is actually sent** — the old live loop never sent it),
   `the_sweep_confirms_with_the_list_form_for_the_mode_it_is_in`
-- **Rule ၁:** **Operation တစ်ခုကို implementation နှစ်ခု မထားပါ။** ဒီ repo မှာ `setup_sms_mode`
-  ကို scan/live နှစ်ခု ခွဲရေးထားခဲ့တာ drift ဖြစ်ပြီး ပေါင်းခဲ့ရတယ် (`modem.rs` doc comment မှာ
-  မှတ်ထား) — ဒါက **တူတဲ့ သင်ခန်းစာ ဒုတိယအခေါက်**။ Channel-taking helper အဖြစ် ထုတ်ပြီး
-  ခေါ်ပါ၊ ကူးမရေးပါ
-- **Rule ၂:** AT reply ကို `contains("OK")` နဲ့ **ဘယ်တော့မှ** မစစ်ပါ။ `lines().any(|l| l.trim()
-  == "OK")` ပဲ သုံးပါ — `OK` က result code ဖြစ်ရမယ်၊ စာသား substring မဟုတ်
-- **Rule ၃:** Helper ကို ပေါင်းတဲ့အခါ **mode-dependent constant တွေ ဝှက်နေလား** စစ်ပါ။
-  `AT+CMGL="ALL"` က hardcode ဖြစ်နေတာမို့ ပေါင်းလိုက်တာနဲ့ PDU-mode caller ဆီမှာ တိတ်တဆိတ်
-  degrade ဖြစ်မယ် — parameter အဖြစ် ထုတ်လိုက်တာက အဲ့ဒါကို ဖြေရှင်းတယ်
+- **Rule 1:** **Never keep two implementations of one operation.** In this repo `setup_sms_mode`
+  had been written twice, once for scan and once for live, drifted, and had to be merged (noted in
+  the `modem.rs` doc comment) — this is **the same lesson a second time**. Expose it as a
+  channel-taking helper and call it; do not copy it
+- **Rule 2:** **Never** check an AT reply with `contains("OK")`. Use only `lines().any(|l| l.trim()
+  == "OK")` — `OK` must be a result code, not a substring of text
+- **Rule 3:** When merging a helper, check **whether a mode-dependent constant is hiding in it**.
+  `AT+CMGL="ALL"` was hardcoded, so merging alone would silently degrade the PDU-mode caller —
+  lifting it out as a parameter is what resolves that
 
-## 1️⃣8️⃣ `reqwest` ကို dependency အသစ် ထည့်လိုက်တာနဲ့ crate ၂၂ ခု + cmake/C toolchain တက်လာတာ၊ ပြီးတော့ client တည်ဆောက်ရင် panic ဖြစ်တာ
+## 1️⃣8️⃣ Adding `reqwest` as a new dependency brought in 22 crates + a cmake/C toolchain, and then building the client panicked
 
-- **Symptom (ဆက်တွဲ ၂ ခု):** Telegram forwarder အတွက် `reqwest = { version = "0.13.4",
-  features = ["blocking", "json", "socks"] }` လို့ ရေးလိုက်တယ်။ Compile က အောင်မြင်တယ်၊
-  test အားလုံး pass တယ် — ဒါပေမယ့်
-  ၁။ `Cargo.lock` က package **501 → 523** ဖြစ်သွားတယ် (`aws-lc-rs`, `aws-lc-sys`, `cmake`,
-  `fs_extra`, `h2`, `encoding_rs`, `chacha20`, `core-foundation` …)။ `aws-lc-sys` က
-  **cmake + C compiler** လိုတယ် — Windows CI leg အတွက် failure mode အသစ်
-  ၂။ `default-features = false` + `rustls-no-provider` နဲ့ ပြန်ပြင်လိုက်တာနဲ့ crate မတက်တော့ဘူး၊
-  ဒါပေမယ့် `build_client()` က **panic** ဖြစ်တယ်:
+- **Symptom (two in a row):** For the Telegram forwarder I wrote `reqwest = { version = "0.13.4",
+  features = ["blocking", "json", "socks"] }`. It compiled, every test passed — but
+  1. `Cargo.lock` went from **501 → 523** packages (`aws-lc-rs`, `aws-lc-sys`, `cmake`,
+  `fs_extra`, `h2`, `encoding_rs`, `chacha20`, `core-foundation` …). `aws-lc-sys` needs
+  **cmake + a C compiler** — a new failure mode for the Windows CI leg
+  2. Putting it back with `default-features = false` + `rustls-no-provider` stopped the crates
+  coming in, but `build_client()` then **panics**:
   `No rustls crypto provider is configured. When using the rustls-no-provider feature you must
   install a crypto provider before building a Client`
-- **Root Cause:** `reqwest` ရဲ့ default features ထဲ `default-tls` ပါတယ် → `rustls` →
-  `__rustls-aws-lc-rs` (aws-lc-rs provider)၊ ပြီးတော့ `charset` (encoding_rs)၊ `http2` (h2)၊
-  `system-proxy`။ ဒါပေမယ့် `tauri-plugin-updater` က reqwest ကို **`default-features = false`,
-  features `["json", "stream"]` + `rustls-no-provider`** နဲ့ သုံးပြီး `rustls` ကို
-  `features = ["ring"]` နဲ့ ဆွဲတယ် — ဆိုတော့ ဒီ binary ထဲ **ring-backed rustls ရှိပြီးသား**၊
-  ငါက ဒုတိယ provider တစ်ခုလုံး ဆွဲထည့်လိုက်တာ။
-  `rustls-no-provider` က process-level provider ကို caller ဆီ လွှဲတယ် — updater က
-  `updater.rs:446` မှာ `CryptoProvider::get_default().is_none()` ဆိုရင် install တယ်၊ ဒါပေမယ့်
-  **updater ပြေးမှ**။ Operator က Verify ကို updater မပြေးခင် နှိပ်ရင် provider မရှိဘူး → panic
-- **Fix:** feature set ကို updater နဲ့ **အတိအကျ တူ**စေပြီး လိုတာ ၂ ခုပဲ ထပ်ထည့်တယ်
-  (`blocking` — ဒီ crate က OS thread နဲ့ blocking I/O သုံးတယ်၊ async task မဟုတ်ဘူး ·
-  `socks` — feature list က `socks = []`၊ crate တစ်ခုမှ မတက်ဘူး)။ ပြီးတော့ `rustls` ကို
-  direct dep အဖြစ် (ring, default-features off — lock ထဲ ရှိပြီးသား) ထည့်ပြီး
-  `telegram::ensure_crypto_provider()` (`std::sync::Once`) က `build_client` အတွင်းမှာ
-  install လုပ်တယ် — updater ကို မမှီခိုဘူး။ `install_default()` က ရှိပြီးသားဆိုရင် `Err`
-  ပြန်တယ်၊ အဲဒါ မျှော်လင့်ထားတာမို့ `let _ =`
-- **ရလဒ်:** `Cargo.lock` diff က **line ၃ ခုပဲ** (`futures-sink`, `futures-channel` edge ၂ ခု +
-  `sms-tauri` ရဲ့ `reqwest` entry)။ Crate အသစ် **သုည**
-- **Test:** `build_client_succeeds_with_no_proxy` (provider ကို ဖမ်းတာ — panic ဖြစ်လို့
-  ဒီ trap ကို CI မှာ တွေ့တယ်၊ operator က Verify နှိပ်တဲ့အခါ မဟုတ်ဘူး)၊
-  `build_client_accepts_a_socks5h_proxy` (`socks` feature ကျွတ်သွားရင် fail — ပိတ်ထားတဲ့
-  network မှာ ဒီ feature ကို အသုံးဝင်စေတဲ့ setting တစ်ခုတည်း)၊
-  `build_client_treats_a_blank_proxy_as_direct`၊ `build_client_rejects_a_malformed_proxy`
-- **Rule ၁:** Dependency အသစ် ထည့်ပြီးတာနဲ့ **`Cargo.lock` ရဲ့ package အရေအတွက်ကို တိုက်ပါ**
-  (`grep -c '^\[\[package\]\]'`)။ "Cargo.lock ထဲ ရှိပြီးသားပါ" ဆိုတာ **feature set တူတာကို
-  မဆိုလိုဘူး** — crate တူပေမယ့် feature မတူရင် transitive tree က တခြားဖြစ်တယ်
-- **Rule ၂:** Crate တစ်ခုကို plugin တစ်ခုက ဆွဲထားပြီးသားဆိုရင် **အဲဒီ plugin ရဲ့ Cargo.toml ကို
-  ဖတ်ပြီး feature set ကို ကူးပါ**။ ခန့်မှန်းရင် ဒုတိယ TLS stack တစ်ခုလုံး ဆွဲမိတယ်
-- **Rule ၃:** `*-no-provider` / `*-no-default` လို feature တွေက **runtime setup ကို caller ဆီ
-  လွှဲတယ်**။ Compile ဖြစ်တာက အလုပ်လုပ်တာ မဟုတ်ဘူး — client/handle တည်ဆောက်တဲ့ test
-  တစ်ခု ရေးပါ (network မလိုဘူး၊ hardware မလိုဘူး)
+- **Root Cause:** `reqwest`'s default features include `default-tls` → `rustls` →
+  `__rustls-aws-lc-rs` (the aws-lc-rs provider), plus `charset` (encoding_rs), `http2` (h2) and
+  `system-proxy`. But `tauri-plugin-updater` uses reqwest with **`default-features = false`,
+  features `["json", "stream"]` + `rustls-no-provider`** and pulls `rustls` with
+  `features = ["ring"]` — so this binary **already contains a ring-backed rustls**, and I was
+  pulling in an entire second provider.
+  `rustls-no-provider` hands the process-level provider over to the caller — the updater installs
+  one at `updater.rs:446` if `CryptoProvider::get_default().is_none()`, but **only when the updater
+  runs**. If the operator presses Verify before the updater has run there is no provider → panic
+- **Fix:** the feature set was made **exactly the same** as the updater's, with only the two
+  additions that are needed (`blocking` — this crate uses OS threads and blocking I/O, not async
+  tasks · `socks` — the feature list has `socks = []`, so it adds no crate at all). Then `rustls`
+  was added as a direct dep (ring, default-features off — already in the lock) and
+  `telegram::ensure_crypto_provider()` (`std::sync::Once`) does the install inside `build_client` —
+  no dependence on the updater. `install_default()` returns `Err` when one already exists, and
+  since that is expected, `let _ =`
+- **Result:** the `Cargo.lock` diff is **3 lines only** (two `futures-sink`, `futures-channel` edges
+  + `sms-tauri`'s `reqwest` entry). **Zero** new crates
+- **Test:** `build_client_succeeds_with_no_proxy` (it catches the provider — because it panics,
+  this trap is found in CI and not when the operator presses Verify),
+  `build_client_accepts_a_socks5h_proxy` (fails if the `socks` feature is dropped — the one setting
+  that makes this feature useful on a locked-down network),
+  `build_client_treats_a_blank_proxy_as_direct`, `build_client_rejects_a_malformed_proxy`
+- **Rule 1:** As soon as a new dependency is added, **check `Cargo.lock`'s package count**
+  (`grep -c '^\[\[package\]\]'`). "It is already in Cargo.lock" **does not mean the feature set is
+  the same** — the same crate with different features has a different transitive tree
+- **Rule 2:** If a plugin already pulls a crate, **read that plugin's Cargo.toml and copy its
+  feature set**. Guess, and you pull in a whole second TLS stack
+- **Rule 3:** Features like `*-no-provider` / `*-no-default` **hand runtime setup over to the
+  caller**. Compiling is not the same as working — write a test that builds the client/handle
+  (no network needed, no hardware needed)
 
-## 1️⃣9️⃣ Network ခဏ ပြတ်တာနဲ့ OTP က Telegram ကို ဘယ်တော့မှ မရောက်တော့ဘူး — error အားလုံးကို တစ်မျိုးတည်း သတ်မှတ်ခဲ့တာ
+## 1️⃣9️⃣ A brief network outage and the OTP never reaches Telegram again — every error had been classified as one and the same thing
 
-- **Symptom:** Field run (2026-09-03 20:58) မှာ live OTP တစ်ခု ဝင်လာတယ်၊ Inbox မှာ ပေါ်တယ်၊
-  ဒါပေမယ့် Telegram ထဲ **ဘယ်တော့မှ မရောက်ဘူး**။ Log မှာ WARN တစ်ခုပဲ:
+- **Symptom:** In a field run (2026-09-03 20:58) a live OTP came in and appeared in the Inbox, but
+  it **never reached Telegram**. The log had one WARN only:
   `Telegram forward failed: Could not reach api.telegram.org: error sending request for url
-  (https://api.telegram.org/bot<token redacted>/sendMessage)`。
-  ၁၀ မိနစ်အလိုမှာ (20:48) တူတဲ့ path က အလုပ်လုပ်ခဲ့တယ်
-- **အရင် အတည်ပြုလိုက်တာ — token redaction က တကယ့် failure ပေါ်မှာ ကိုင်တယ်:**
-  `<token redacted>` ဆိုတာ `03 §18` ရဲ့ ကာကွယ်မှု ဖြစ်တယ်။ အဲဒါ မရှိရင် bot token က
-  `app.log` (5 MB မှ rotate) နဲ့ Logs page ပေါ် **အတိအကျ** ရေးမိမယ်
-- **Root Cause — `SendError::Other` က မတူတဲ့ အရာ ၂ ခုကို ကိုယ်စားပြုနေတာ:**
+  (https://api.telegram.org/bot<token redacted>/sendMessage)`.
+  Ten minutes earlier (20:48) the same path had worked
+- **Confirmed first — the token redaction holds on a real failure:**
+  `<token redacted>` is the protection from `03 §18`. Without it the bot token would be written
+  **verbatim** into `app.log` (which rotates at 5 MB) and onto the Logs page
+- **Root Cause — `SendError::Other` was standing for two different things:**
 
-  | အမျိုးအစား | ဥပမာ | ပြန်ကြိုးစားရင် |
+  | Category | Example | On a retry |
   |---|---|---|
-  | Telegram က **ငြင်း**တာ | `401 Unauthorized`၊ `chat not found` | ဘယ်တော့မှ မရဘူး |
-  | **လမ်း မရောက်**တာ | DNS၊ route ပျက်၊ timeout၊ ISP block page | ခဏနေ **ရနိုင်တယ်** |
+  | Telegram **rejects** it | `401 Unauthorized`, `chat not found` | never succeeds |
+  | The **route does not reach** | DNS, broken route, timeout, ISP block page | **may succeed** shortly |
 
-  `forwarder::run` က `Err(e) => { report(); }` နဲ့ **နှစ်ခုလုံးကို လက်လွှတ်**ခဲ့တယ် —
-  comment မှာ "keeping it would block every code behind it" လို့ ရေးထားတာ ငြင်းပယ်တာ
-  အတွက်ပဲ မှန်တယ်၊ transport failure အတွက် **queue ရှိတဲ့ အကြောင်းရင်း ကိုယ်တိုင်ကို ဖျက်**လိုက်တာ
-- **ဘာလို့ ခဏ ပြတ်သွားလဲ (စစ်ပြီး):** `api.telegram.org` က A + AAAA နှစ်မျိုးလုံး ရှိတယ်။
-  ဒီစက်မှာ **IPv6 route က ပျက်နေတယ်** (`curl -6` → 0 ms မှာ "Could not connect"၊
-  `curl -4` → `302`, 0.3 s)၊ ပြီးတော့ system resolver က IPv6 ကို ဦးစားပေးတယ်
-  (`getent hosts` က AAAA ကို အရင် ပြန်တယ်)။
-  **ဒါပေမယ့် connector ကို IPv4 အတင်း မခိုင်းရ:** 20:48 က အလုပ်လုပ်ခဲ့တာက hyper ရဲ့
-  happy-eyeballs fallback ကိုင်နေတာ သက်သေပြတယ်။ IPv6-only network တစ်ခုပေါ်မှာ
-  `local_address(0.0.0.0)` က forwarding တစ်ခုလုံး ပိတ်စေမယ် — ဖြေရှင်းချက်က retry ဖြစ်တယ်၊
-  address family မဟုတ်ဘူး
-- **Fix:** `SendError::Other` ကို **`Unreachable` နဲ့ `Rejected`** ခွဲလိုက်တယ် +
-  `is_transient()`。 `post()` ရဲ့ `.send()` / `.text()` failure နဲ့ non-JSON body
-  (block page — Telegram မဟုတ်တဲ့ တစ်ခုခု ဖြေတာ) နဲ့ Telegram ရဲ့ **5xx** က `Unreachable`၊
-  4xx `ok:false` က `Rejected`。 `Unreachable` ဆိုရင် queue ထဲ ပြန်ထည့်ပြီး
-  `RETRY_BASE` 5 s ကနေ `MAX_BACKOFF` 60 s အထိ ခုန်တက်တယ် (success မှာ reset)
-- **Test:** `only_network_and_rate_limit_failures_are_retryable` (classification ကိုယ်တိုင်)၊
-  `interpret_treats_a_telegram_5xx_as_retryable`၊
-  `interpret_reports_a_non_json_body_with_a_bounded_preview` (block page = `Unreachable`)၊
+  `forwarder::run` **let both go** with `Err(e) => { report(); }` — the comment saying
+  "keeping it would block every code behind it" is only true for a rejection; for a transport
+  failure it **deletes the very reason the queue exists**
+- **Why it dropped out briefly (verified):** `api.telegram.org` has both A and AAAA records.
+  On this machine **the IPv6 route is broken** (`curl -6` → "Could not connect" at 0 ms,
+  `curl -4` → `302`, 0.3 s), and the system resolver prefers IPv6
+  (`getent hosts` returns the AAAA first).
+  **But the connector must not be forced to IPv4:** that 20:48 worked is proof that hyper's
+  happy-eyeballs fallback does hold. On an IPv6-only network `local_address(0.0.0.0)` would shut
+  down forwarding entirely — the fix is retry, not address family
+- **Fix:** `SendError::Other` was split into **`Unreachable` and `Rejected`** +
+  `is_transient()`. A `.send()` / `.text()` failure in `post()`, a non-JSON body
+  (a block page — something other than Telegram answering) and Telegram's own **5xx** are
+  `Unreachable`; a 4xx `ok:false` is `Rejected`. On `Unreachable` the item goes back into the queue
+  and the backoff climbs from `RETRY_BASE` 5 s to `MAX_BACKOFF` 60 s (reset on success)
+- **Test:** `only_network_and_rate_limit_failures_are_retryable` (the classification itself),
+  `interpret_treats_a_telegram_5xx_as_retryable`,
+  `interpret_reports_a_non_json_body_with_a_bounded_preview` (block page = `Unreachable`),
   `interpret_surfaces_a_rejection_description` (401 = `Rejected`)
-- **Rule ၁:** Error enum ရဲ့ variant က **caller ရဲ့ ဆုံးဖြတ်ချက်ကို** ကိုယ်စားပြုရမယ်၊
-  message အလွှာကို မဟုတ်ဘူး။ `Other` က "ဒီ error ကို ဘာလုပ်ရမလဲ" ဆိုတာ ဖျောက်ပစ်တယ် —
-  retry လုပ်လို့ ရ/မရ ဆိုတာ type ကနေ ဖတ်လို့ ရရမယ်
-- **Rule ၂:** Queue တစ်ခု ရေးတဲ့အခါ **transport failure ကို drop path မှာ ထည့်မိလား** စစ်ပါ။
-  Queue ရှိတာက အဲဒီ failure အတွက် ဖြစ်တယ်
-- **Rule ၃:** "ခဏ ပြတ်တယ်" ကို ခန့်မှန်းမနေဘဲ **တကယ် စစ်ပါ** (`curl -4` / `curl -6` /
-  `getent ahostsv4|v6`)。 ဒီ case မှာ IPv6 route ပျက်နေတာ တွေ့တယ် — ဒါပေမယ့် တွေ့ပြီးမှ
-  fallback က ကိုင်နေတာလည် သက်သေရလို့ **connector ကို မထိတာ** ဆုံးဖြတ်နိုင်ခဲ့တယ်
+- **Rule 1:** An error enum's variant must stand for **the caller's decision**, not for a layer of
+  message. `Other` hides "what should be done with this error" — whether a retry is possible or not
+  has to be readable from the type
+- **Rule 2:** When writing a queue, check **whether a transport failure ends up on the drop path**.
+  The queue exists for exactly that failure
+- **Rule 3:** Do not guess at "it dropped out briefly" — **actually check** (`curl -4` / `curl -6` /
+  `getent ahostsv4|v6`). In this case the broken IPv6 route was found — but only after finding it,
+  and proving that the fallback does hold, was it possible to decide **not to touch the connector**
 
-## 2️⃣0️⃣ Forwarding က `CHAT_WRITE_FORBIDDEN` နဲ့ ရပ်တာ — Send Test ပါ မရဘူး၊ ဒါပေမယ့် code မှားတာ မဟုတ်ဘူး
+## 2️⃣0️⃣ Forwarding stops with `CHAT_WRITE_FORBIDDEN` — even Send Test fails, but the code is not what is wrong
 
-- **Symptom:** အလုပ်လုပ်နေခဲ့တဲ့ setup မှာ (20:48 ရောက်ခဲ့တယ်) 21:39 မှာ forward အားလုံး
-  ရပ်တယ်၊ **Send Test ခလုတ်ပါ** မရဘူး:
-  `Telegram forward failed: Telegram rejected the request: Bad Request: CHAT_WRITE_FORBIDDEN`。
-  Token မှန်တယ် (Verify ရတယ်)၊ chat id မှန်တယ်၊ network ကောင်းတယ်
-- **Root Cause — code မဟုတ်ဘူး၊ group setting:** bot က group ထဲ ရှိပေမယ့် **post လုပ်ခွင့်
-  မရှိတော့ဘူး**။ ဖြစ်နိုင်တာ ၂ ခု:
-  1. Group ရဲ့ **Permissions → Send Messages ကို ပိတ်လိုက်တာ**။ အဲဒါက ordinary member
-     တွေကို တားတယ် — ပြီးတော့ **bot က ordinary member ပဲ**
-  2. Bot ကို group ကနေ ဖယ်လိုက်တာ
-- **ဒီ case က ဘယ်လို ဖြစ်လာလဲ:** `05 §၁.၁` ရဲ့ trade-off list မှာ "group invite ကို
-  password လို ကာကွယ်ပါ · Add Members ကို admin ပဲ ခွင့်ပြုပါ" လို့ ရေးထားတယ်။ Owner က
-  Permissions ကို လာပြင်တဲ့အခါ **Send Messages ပါ လိုက်ပိတ်မိတာ** — ဒါက ကိုယ့်
-  လုံခြုံရေး အကြံပြုချက် ကိုယ်တိုင် ဖန်တီးလိုက်တဲ့ failure mode ဖြစ်တယ်
-- **Fix (Telegram ဘက်):** bot ကို **admin promote** လုပ်ပါ — admin က member restriction
-  ကို မခံရဘူး၊ ပြီးတော့ bot က `sendMessage` တစ်ခုပဲ သုံးတာမို့ ပိုတဲ့ အခွင့်အရေး မလိုဘူး။
-  ဒါမှမဟုတ် Send Messages ကို ပြန်ဖွင့်ပါ
-- **Fix (code ဘက်) — error message ကို လုပ်ရမယ့်အလုပ် ဖြစ်အောင်:** `rejection_hint()`
-  ထည့်လိုက်တယ်။ Telegram ရဲ့ string က **diagnosis တစ်ခုလုံး** ဖြစ်ပေမယ့် ဘာလုပ်ရမလဲ
-  မပြောဘူး — `CHAT_WRITE_FORBIDDEN` ဖတ်တဲ့ operator က group Permissions ဆီ
-  ကြည့်ရမယ်ဆိုတာ သိစရာ အကြောင်း မရှိဘူး။ အခု toast မှာ Telegram ရဲ့ မူရင်း စာသား
-  (search လုပ်ဖို့) **ရော** ဖြေရှင်းချက် **ရော** ပါတယ်။ `CHAT_WRITE_FORBIDDEN` /
+- **Symptom:** On a setup that had been working (it got through at 20:48), at 21:39 every forward
+  stopped, and **even the Send Test button** failed:
+  `Telegram forward failed: Telegram rejected the request: Bad Request: CHAT_WRITE_FORBIDDEN`.
+  The token is right (Verify succeeds), the chat id is right, the network is fine
+- **Root Cause — not the code, a group setting:** the bot is in the group but **no longer has
+  permission to post**. Two possibilities:
+  1. The group's **Permissions → Send Messages was turned off**. That restricts ordinary members —
+     and **the bot is an ordinary member**
+  2. The bot was removed from the group
+- **How this case came about:** the trade-off list in `05 §1.1` says "protect the group invite like
+  a password · allow Add Members to admins only". When the owner went in to change Permissions,
+  **Send Messages got turned off along with it** — this is a failure mode created by our own
+  security advice
+- **Fix (Telegram side):** **promote the bot to admin** — an admin is not subject to member
+  restrictions, and since the bot only uses `sendMessage` it needs no further rights.
+  Or turn Send Messages back on
+- **Fix (code side) — make the error message into the work to be done:** `rejection_hint()`
+  was added. Telegram's string is **a complete diagnosis** but says nothing about what to do —
+  an operator reading `CHAT_WRITE_FORBIDDEN` has no reason to know to go and look at the group
+  Permissions. The toast now carries **both** Telegram's original text
+  (to search for) **and** the fix. It covers five kinds: `CHAT_WRITE_FORBIDDEN` /
   `NOT ENOUGH RIGHTS` · `KICKED` · `CHAT NOT FOUND` · `UNAUTHORIZED` ·
-  `CAN'T PARSE ENTITIES` ၅ မျိုး cover တယ် (case-insensitive)
-- **Classification မှန်ခဲ့တယ်:** `§19` ရဲ့ `Rejected` အဖြစ် သတ်မှတ်တာ **မှန်တယ်** —
-  ဘယ်လောက် retry လုပ်လည် group permission ပြန်မပွင့်ဘူး။ Retry လုပ်ခဲ့ရင် queue က
-  ပိတ်နေပြီး ကျန်တဲ့ OTP အားလုံး နောက်မှာ တန်းစီနေမယ်
-- **Rule ၁:** Third-party API ရဲ့ error string ကို **အတိအကျ ပြရမယ်** (search လုပ်ဖို့)၊
-  ဒါပေမယ့် **သူတစ်ခုတည်း မပြရဘူး**။ Operator လိုတာက "ဘာ ဖြစ်တာလဲ" မဟုတ်ဘူး၊
-  "ဘာ လုပ်ရမလဲ" ဖြစ်တယ်
-- **Rule ၂:** Security အကြံပြုချက် ရေးတဲ့အခါ **ဘယ် setting ကို မထိရဘူး** ဆိုတာပါ ရေးပါ။
-  "Add Members ကို ကန့်သတ်ပါ" လို့ ပြောလိုက်တာ Send Messages ပါ ပိတ်စေခဲ့တယ်
+  `CAN'T PARSE ENTITIES` (case-insensitive)
+- **The classification was right:** treating this as `§19`'s `Rejected` is **correct** —
+  no amount of retrying reopens the group permission. Had it retried, the queue would be
+  blocked and every remaining OTP would be queued up behind it
+- **Rule 1:** A third-party API's error string must be shown **verbatim** (so it can be searched),
+  but **must never be shown on its own**. What the operator needs is not "what happened" but
+  "what to do"
+- **Rule 2:** When writing security advice, write **which setting must not be touched** as well.
+  Saying "restrict Add Members" is what got Send Messages turned off too
 
-## 2️⃣1️⃣ `extract_otp` က ရက်စွဲထဲက ခုနှစ် `2026` ကို OTP လို့ ဖတ်တာ — login notification ကို forward မိတာ
+## 2️⃣1️⃣ `extract_otp` reads the year `2026` out of a date as an OTP — a login notification got forwarded
 
-- **Symptom (field, 2026-09-03 21:59):** MyID ရဲ့ **login notification** (OTP message
-  မဟုတ်ဘူး) ကို Telegram group ထဲ forward လုပ်ပြီး OTP badge မှာ **`2026`** ပြတယ်။
-  Message ထဲမှာ `2026/09/03 21:59:21` ဆိုတဲ့ ရက်စွဲ ပါတယ် — code မပါဘူး
-- **Root Cause — cascade ရဲ့ အဆုံးဆတ် `P4` က ရက်စွဲကို ဖမ်းတာ:**
-  1. `KEYWORD_RE` gate က **ဖွင့်လိုက်တယ်** — message ထဲ "OTP" ပါတယ်၊ ဒါပေမယ့် အဲဒါက
-     *"OTP ကို မည်သူ့မျှ မမျှဝေရန်"* ဆိုတဲ့ **သတိပေးစာ** ပါ။ Notification တွေက
-     ကိုယ်တိုင် keyword ကို သယ်လာတယ် — gate ကို ဖြတ်ဖို့ code ရှိရမယ် လို့ မဆိုလိုဘူး
-  2. `P1` (keyword ပြီး ၂၄ လုံးအတွင်း digit) မတွေ့ဘူး · `P2`/`P3` မတွေ့ဘူး
-  3. **`P4` (`\b[0-9]{4,8}\b`)** က `2026` ကို ဖမ်းလိုက်တယ် — `\b` က `/` ဘေးမှာ
-     boundary ဖြစ်တာမို့ ရက်စွဲ field က bare digit run နဲ့ **မခွဲခြားနိုင်ဘူး**
-- **`Memory/05 §B.1` က ဒါကို ကြိုမြင်ထားခဲ့တယ်:** "P3/P4 က bare digit ကို match တယ်၊
-  keyword gate ရှိလို့ပဲ safe တယ် · promotional SMS ရဲ့ balance, **ရက်စွဲ**, number
-  fragment တွေ match လာမယ်" — အဲဒီ ရက်စွဲ case က field မှာ တကယ် ပေါ်လာတာ
-- **Forwarding က ဒါကို ပိုဆိုးစေတယ် (ဒါပေမယ့် regression မဟုတ်ဘူး):** `extract_otp` ကို
-  Telegram change တွေ **မထိခဲ့ဘူး** — v1.5.0 ကတည်းက ဒီအတိုင်း။ အရင်က screen ပေါ်မှာ
-  တစ်ယောက်ပဲ မြင်တာ၊ အခု team တစ်ခုလုံးရဲ့ ဖုန်းဆီ ရောက်တယ်၊ ပြီးတော့ ၂၀/min ဘောင်ကိုပါ စားတယ်
-- **Fix — `in_date_or_time()` guard, cascade ကို မထိဘဲ:**
-  * `extract_otp` က `captures()` ကနေ **`captures_iter()`** ဖြစ်သွားတယ် — ရှေ့မှာ ရက်စွဲ
-    ရှိရင် နောက်မှာ ရှိတဲ့ **တကယ့် code ကို ဖျောက်မပစ်ဘူး**
-  * `FIELD_SEPARATORS` = `/ : - .`。 Separator **တစ်ခုတည်း**နဲ့ မဖျက်ဘူး —
-    ဖျက်ရမယ့် အချက်က separator ရဲ့ တစ်ဖက်မှာ **digit ၁-၂ လုံး field** ရှိတာ ဖြစ်တယ်။
-    ဒါက `G-483920` (Google), `code 483920.`, `1234-5678` (code ကို ၂ ခြမ်း ခွဲပို့တာ)
-    တွေကို **ဆက်အလုပ်လုပ်စေတယ်**
-  * Byte index ကို တိုက်ရိုက် စစ်လို့ ရတယ်: multi-byte UTF-8 sequence ရဲ့ byte
-    တစ်ခုမှ ASCII separator/digit နဲ့ မတူဘူး — မြန်မာစာ က ရက်စွဲလို မဖတ်မိဘူး
-- **Gate နဲ့ cascade ကို မထိထားဘူး** (`05 §B.1` hard refusal) — guard က
-  **filter တစ်ခုပဲ**၊ pattern အသစ် မဟုတ်ဘူး
-- **Test ၄ ခု:** `a_login_notification_with_a_date_is_not_an_otp` (မြန်မာစာ message
-  အစစ်)၊ `a_date_does_not_hide_a_real_code_later_in_the_message`၊
-  `a_year_is_rejected_at_either_end_of_a_date` (`2026/09/03` နဲ့ `09/03/2026` နှစ်မျိုးလုံး)၊
+- **Symptom (field, 2026-09-03 21:59):** MyID's **login notification** (not an OTP message)
+  was forwarded into the Telegram group and the OTP badge showed **`2026`**.
+  The message contains the date `2026/09/03 21:59:21` — there is no code in it
+- **Root Cause — the last rung of the cascade, `P4`, caught the date:**
+  1. The `KEYWORD_RE` gate **opened** — the message contains "OTP", but that is the
+     **warning line** *"do not share your OTP with anyone"*. Notifications carry
+     the keyword themselves — getting past the gate does not mean a code has to be there
+  2. `P1` (digits within 24 characters after the keyword) found nothing · `P2`/`P3` found nothing
+  3. **`P4` (`\b[0-9]{4,8}\b`)** caught `2026` — because `\b` is a boundary next to `/`,
+     a date field **cannot be told apart** from a bare digit run
+- **`Memory/05 §B.1` had foreseen this:** "P3/P4 match bare digits and are only safe because the
+  keyword gate ran first · promotional SMS balances, **dates** and number
+  fragments will start matching" — that date case is the one that really turned up in the field
+- **Forwarding makes it worse (but it is not a regression):** the Telegram changes
+  **never touched** `extract_otp` — it has been like this since v1.5.0. Before, one person
+  saw it on a screen; now it reaches a whole team's phones, and it eats into the 20/min ceiling too
+- **Fix — the `in_date_or_time()` guard, without touching the cascade:**
+  * `extract_otp` went from `captures()` to **`captures_iter()`** — a date earlier in the message
+    **no longer hides a real code** that comes after it
+  * `FIELD_SEPARATORS` = `/ : - .`. A separator **on its own** is not grounds for rejection —
+    what rejects is a **1–2 digit field** on the other side of the separator.
+    That keeps `G-483920` (Google), `code 483920.` and `1234-5678` (a code sent split in two)
+    **working**
+  * The byte index can be checked directly: no byte of a multi-byte UTF-8 sequence is ever equal
+    to an ASCII separator or digit — so Myanmar script is never misread as a date
+- **The gate and the cascade were left untouched** (`05 §B.1` hard refusal) — the guard is
+  **only a filter**, not a new pattern
+- **Four tests:** `a_login_notification_with_a_date_is_not_an_otp` (a real Myanmar-script
+  message), `a_date_does_not_hide_a_real_code_later_in_the_message`,
+  `a_year_is_rejected_at_either_end_of_a_date` (both `2026/09/03` and `09/03/2026`),
   `a_dash_or_dot_next_to_a_code_is_still_a_code`
-- **Rule ၁:** Keyword gate က "ဒီ message က code ပါတယ်" လို့ **မဆိုလိုဘူး** —
-  "code အကြောင်း ပြောတယ်" လို့ပဲ ဆိုလိုတယ်။ Notification၊ သတိပေးစာ၊ ကြော်ငြာ တွေက
-  keyword ကို ကိုယ်တိုင် သယ်လာတယ်
-- **Rule ၂:** `\b` က digit run ကို **context ကနေ မခွဲပေးဘူး**။ Bare-digit pattern
-  ရေးရင် ဘေးတစ်ဝိုက်ကို ကိုယ်တိုင် စစ်ရမယ်
-- **Rule ၃:** `captures()` (ပထမဆုံး match) က pattern တစ်ခုမှာ match အများ ဖြစ်နိုင်ရင်
-  **ဆုံးရှုံးမှု ဖန်တီးတယ်** — ရက်စွဲကို ဖယ်လိုက်တာနဲ့ ကျန်တဲ့ match တွေဆီ ဆက်သွားရမယ်
+- **Rule 1:** The keyword gate **does not mean** "this message contains a code" —
+  it only means "this message talks about a code". Notifications, warnings and advertisements
+  carry the keyword themselves
+- **Rule 2:** `\b` **does not separate a digit run from its context**. If you write a bare-digit
+  pattern, you have to inspect the surroundings yourself
+- **Rule 3:** `captures()` (the first match) **creates loss** whenever a pattern can match more
+  than once — once the date is rejected, it has to carry on to the remaining matches
 
-## 2️⃣2️⃣ `extract_otp` က Call Center ဖုန်းနံပါတ် `3211` ကို OTP လို့ ဖတ်တာ
+## 2️⃣2️⃣ `extract_otp` reads the Call Center phone number `3211` as an OTP
 
-- **Symptom (field, 2026-09-04 01:12):** KBZPay ရဲ့ **logout notification** ကို Telegram
-  group ထဲ forward လုပ်ပြီး OTP badge မှာ **`3211`** ပြတယ် — အဲဒါ KBZPay ရဲ့ **Call Center
-  နံပါတ်** ပါ။ တူတူ body က ၂ bubble ပေါ်ခဲ့တယ် (message ကိုယ်တိုင် ၂ ခါ လာတာလား ဆိုတာ
-  မစစ်ရသေးဘူး — forwarder ရဲ့ `Amend` path က id တူရင် **edit** ပဲ လုပ်တာမို့ bubble အသစ်
-  မဖန်တီးဘူး၊ ဒါကြောင့် id ၂ ခု ဖြစ်ဖွယ် ရှိတယ်)
-- **Message ထဲမှာ ရှိတာ:** `... please change your PIN immediately or contact KBZPay Call
-  Center 3211.` ပြီးတော့ `... employees will never ask for personal information such as
-  OTP, PIN, or NRC ...` — **code မပါဘူး**
-- **Root Cause — §21 နဲ့ shape တူတူ၊ ဒါပေမယ့် guard အသစ် လိုတယ်:**
-  1. `KEYWORD_RE` gate က ဖွင့်လိုက်တယ် — "PIN"၊ "OTP" ပါတယ်၊ ဒါပေမယ့် အဲဒါက *"ဘယ်တော့မှ
-     မတောင်းဘူး"* ဆိုတဲ့ **သတိပေးစာ** ပါ (§21 Rule ၁ ထပ်အတည်ဖြစ်တာ)
-  2. `PIN` ကနေ `3211` ထိ **၄၃ လုံး** ကွာတယ် — `P1` ရဲ့ ၂၄ လုံးဘောင် မမိဘူး · `P2`/`P3` မတွေ့ဘူး
-  3. **`P4` (`\b[0-9]{4,8}\b`)** က `3211` ကို ဖမ်းလိုက်တယ် — hotline က code နဲ့ **shape
-     အတိအကျ တူတယ်**၊ ရှေ့မှာ ရှိတဲ့ စကားလုံးကပဲ ခွဲပြတယ်
-- **`in_date_or_time` က ဒါကို မကာနိုင်ဘူး** — `3211` ဘေးမှာ separator မရှိဘူး၊ space နဲ့
-  full stop ပဲ။ ဒါကြောင့် **structural guard မဟုတ်ဘဲ lexical guard** လိုတယ်
-- **`Memory/05 §B.1` က ဒါကိုပါ ကြိုမြင်ထားခဲ့တယ်:** "promotional SMS ရဲ့ ငွေလက်ကျန်၊ ရက်စွဲ၊
-  **ဖုန်းနံပါတ် အပိုင်းအစ** တွေ OTP အဖြစ် match လာတယ်" — ရက်စွဲ (§21) ပြီးတော့ ဖုန်းနံပါတ်
-  (ဒီတစ်ခု)၊ ၂ ခုလုံး field မှာ တကယ် ပေါ်လာပြီ။ ကျန်တာ **ငွေလက်ကျန်** ပဲ
-- **Fix — `after_phone_label()` (guard #၂)၊ cascade ကို မထိဘဲ:**
+- **Symptom (field, 2026-09-04 01:12):** KBZPay's **logout notification** was forwarded into the
+  Telegram group and the OTP badge showed **`3211`** — that is KBZPay's **Call Center
+  number**. The same body appeared as 2 bubbles (whether the message itself arrived twice
+  has not been checked — the forwarder's `Amend` path only **edits** when the id is the same, so it
+  creates no new bubble, which makes two ids the likely explanation)
+- **What is in the message:** `... please change your PIN immediately or contact KBZPay Call
+  Center 3211.` and `... employees will never ask for personal information such as
+  OTP, PIN, or NRC ...` — **there is no code**
+- **Root Cause — the same shape as §21, but a new guard is needed:**
+  1. The `KEYWORD_RE` gate opened — "PIN" and "OTP" are present, but as the **warning line**
+     *"will never ask"* (§21 Rule 1 confirmed again)
+  2. From `PIN` to `3211` is **43 characters** — outside `P1`'s 24-character window ·
+     `P2`/`P3` found nothing
+  3. **`P4` (`\b[0-9]{4,8}\b`)** caught `3211` — a hotline has **exactly the same shape** as a
+     code; only the words in front of it tell them apart
+- **`in_date_or_time` cannot cover this** — there is no separator next to `3211`, only a space and
+  a full stop. So what is needed is a **lexical guard, not a structural one**
+- **`Memory/05 §B.1` had foreseen this one too:** "promotional SMS balances, dates and
+  **phone-number fragments** start matching as OTPs" — the date (§21) and now the phone number
+  (this one), both have really turned up in the field. What is left is **the balance**
+- **Fix — `after_phone_label()` (guard #2), without touching the cascade:**
   * `PHONE_LABELS`: call center/centre · customer service/care · service center/centre ·
     hotline · hot line · helpline · help line · contact · call · dial · tel · telephone ·
-    phone · **ဖုန်း**
-  * `LABEL_FILLER`: `at` · `on` · `no.` · `no` · `number` · `is` · `us` · `our` · **နံပါတ်** —
-    "Call Center **at** 3211"၊ "hotline **number is** 3211"၊ "contact **us** 3211" အတွက်
-  * **Window မဟုတ်ဘူး — suffix match:** number ရဲ့ ရှေ့ text က label နဲ့ **အဆုံးသတ်ရမယ်**။
-    Window ဆိုရင် message ထဲ ဘယ်နေရာက "call" မဆို မဆိုင်တဲ့ code ကို veto လုပ်နိုင်တယ်
-  * **`LABEL_GLUE` ထဲ `.` နဲ့ `,` မထည့်ဘူး** — အဲဒါက clause ကို ပိတ်တယ်။ "We blocked a
-    call. 123456 is your code" က code ကို **ဆက်ရရမယ်**
-  * **Word boundary:** `hotel 3211` က `tel` မဟုတ်ဘူး၊ `recall` က `call` မဟုတ်ဘူး။ ဒါပေမယ့်
-    label ရဲ့ ပထမ char က ASCII **မဟုတ်ရင်** boundary မတောင်းဘူး — မြန်မာစာက စကားလုံးကြား
-    space မခြားတာမို့ "ဖုန်းနံပါတ်" ကို ခွဲဖို့ ဒါပဲ လုပ်လို့ ရတယ်
-- **Full MSISDN က ဒီ guard မလိုဘူး:** `09…` က ၁၁ လုံး၊ `P4` က ၈ လုံးမှာ ရပ်တယ်၊ `\b` က
-  ပိုရှည်တဲ့ digit run **အတွင်း** match မလုပ်ဘူး — အဲဒါ အရင်ကတည်းက လွတ်နေတယ်။ ကျန်တာက
-  **short code** (4–8 digit) ပဲ
-- **`to_ascii_lowercase()` က byte index ကို မပြောင်းဘူး** — ASCII case fold က byte
-  အရေအတွက် တူတူပဲ၊ multi-byte sequence ကို မထိဘူး၊ ဒါကြောင့် `normalized` ကနေ ရတဲ့ match
-  offset က `lower` မှာ **တူတူ text** ကို ရည်ညွှန်းတယ်
-- **Test ၄ ခု:** `a_call_centre_number_is_not_an_otp` (KBZPay logout body အစစ်)၊
-  `a_call_centre_number_does_not_hide_the_real_code` (hotline ရှေ့၊ code နောက်)၊
-  `a_labelled_number_is_rejected_however_it_is_written` (label ၅ မျိုး + မြန်မာ
-  "ဖုန်းနံပါတ် ၃၂၁၁")၊ `a_label_in_another_clause_does_not_veto_a_code` (`.` · `,` · `hotel`)
-- **Rule ၁:** OTP false positive က **pattern ပြင်ရမယ့် ပြဿနာ မဟုတ်ဘူး** — filter ထပ်ထည့်ရမယ့်
-  ပြဿနာ ဖြစ်တယ်။ §21 နဲ့ ဒီတစ်ခု နှစ်ခုလုံး guard ပဲ ထည့်တယ်၊ `P1`–`P4` နဲ့ gate ကို
-  လက်မထိဘူး (`05 §B.1` hard refusal)
-- **Rule ၂:** Lexical guard မှာ **glue ထဲ ဘယ် punctuation ထည့်လဲ** က အဓိကပါ။ `.` ကို glue
-  လုပ်လိုက်ရင် အရင် sentence ထဲက label က နောက် sentence ရဲ့ code ကို ဖျက်တယ် — ဒီ app မှာ
-  **false negative က false positive ထက် ပိုဆိုးတယ်**: `forwardNonOtp` default က `false`
-  ဖြစ်တာမို့ OTP မတွေ့ရင် အဲဒီ message က Telegram ဆီ **လုံးဝ မရောက်ဘူး**
-- **Rule ၃:** Bank/telco notification တွေက hotline ကို **message တိုင်းမှာ** ထည့်တယ်။ `P4`
-  က bare digit ဖမ်းတဲ့အခါ hotline နဲ့ တွဲမြင်တာ **ပုံမှန်**၊ ကြုံရာ မဟုတ်ဘူး
+    phone · **`KW_PHONE`**
+  * `LABEL_FILLER`: `at` · `on` · `no.` · `no` · `number` · `is` · `us` · `our` · **`KW_NUMBER`** —
+    for "Call Center **at** 3211", "hotline **number is** 3211", "contact **us** 3211"
+  * **Not a window — a suffix match:** the text in front of the number **must end** in a label.
+    With a window, a "call" anywhere in the message could veto an unrelated code
+  * **`.` and `,` are not put into `LABEL_GLUE`** — they close a clause. "We blocked a
+    call. 123456 is your code" **must still yield** the code
+  * **Word boundary:** `hotel 3211` is not `tel`, `recall` is not `call`. But when a label's first
+    char is **not** ASCII no boundary is required — since Myanmar script does not separate words
+    with spaces, this is the only way to split off "phone number"
+- **A full MSISDN does not need this guard:** `09…` is 11 digits, `P4` stops at 8, and `\b` does
+  not match **inside** a longer digit run — that was already safe before. What is left is
+  the **short code** (4–8 digits) only
+- **`to_ascii_lowercase()` does not move byte indexes** — an ASCII case fold keeps the byte
+  count the same and does not touch multi-byte sequences, so a match offset obtained from
+  `normalized` refers to **the same text** in `lower`
+- **Four tests:** `a_call_centre_number_is_not_an_otp` (the real KBZPay logout body),
+  `a_call_centre_number_does_not_hide_the_real_code` (hotline first, code after),
+  `a_labelled_number_is_rejected_however_it_is_written` (five kinds of label + the Myanmar
+  "phone number 3211"), `a_label_in_another_clause_does_not_veto_a_code` (`.` · `,` · `hotel`)
+- **Rule 1:** An OTP false positive is **not a pattern-fixing problem** — it is an
+  add-another-filter problem. §21 and this one both only add a guard, and keep hands off
+  `P1`–`P4` and the gate (`05 §B.1` hard refusal)
+- **Rule 2:** In a lexical guard, **which punctuation goes into the glue** is the crux. Make `.`
+  glue and a label in the previous sentence deletes the next sentence's code — and in this app
+  **a false negative is worse than a false positive**: `forwardNonOtp` defaults to `false`,
+  so when no OTP is found that message reaches Telegram **not at all**
+- **Rule 3:** Bank/telco notifications put the hotline in **every message**. When `P4`
+  catches bare digits, running into a hotline is **the normal case**, not a coincidence
+## 2️⃣3️⃣ `SIM cleanup done. Deleted 14 | FAILED: 30/64` — counting 30 empty slots with no modem as failures
 
-## 2️⃣3️⃣ `SIM cleanup done. Deleted 14 | FAILED: 30/64` — modem မရှိတဲ့ ဗလာ slot ၃၀ ကို failure လို့ ရေတွက်တာ
-
-- **Symptom (field, v1.5.0 64-port run):** Detect မလုပ်ခင် **port ၆၄ လုံးအပေါ်** SIM cleanup
-  ပြေးခဲ့တယ်။ Status line က `SIM cleanup done. Deleted 14  |  FAILED: 30/64`။ **တကယ့်
-  failure က သုည** — အဲ့ ၃၀ က modem လုံးဝ မရှိတဲ့ ဗလာ slot (Detect က နောက်ပိုင်း `34/64`
-  လို့ ပြတယ်၊ တစ်ခုချင်းစီ `Modem not responding` log ရှိတယ်)
-- **ဒီ case ရဲ့ အဓိကက operator ဆီ ရောက်တဲ့ ကုန်ကျစရိတ်:** bank ရှေ့မှာ ရပ်ပြီး incident
-  debug လုပ်နေချိန်မှာ "၃၀ ခု ပျက်တယ်" ဆိုတဲ့ line က **အလုပ်လုပ်နေတဲ့ bank ကို ပျက်နေတယ်
-  လို့ ကြေညာတာ** — operator က မရှိတဲ့ failure ၃၀ ကို လိုက်ရှာရမယ်၊ ပြီးတော့ တကယ့်
-  ပြဿနာက အဲ့ဒီ အောက်မှာ ဝှက်ခံရမယ်
-- **Root Cause:** cleanup worker ရဲ့ counter က `expire_old` ရဲ့ **non-ok result တိုင်း**နဲ့
-  panic arm ကို `failed` **တစ်ခုတည်းထဲ** ထည့်ခဲ့တာ။ `modem::expire_old` က `read_port` ရဲ့
-  error ကို **verbatim** ပြန်ပေးတာမို့ probe silence က `NOT_RESPONDING` ဆိုတာ ကုဒ်ထဲ
-  **သိပြီးသား** — counter ကပဲ မခွဲတာ။ Status line ရော `sim_cleanup:done` payload ရော
-  အဲ့ single number ကနေ တည်ခဲ့တယ် (`deleted`/`failed` ၂ ခုပဲ)
-- **မှန်တဲ့ ပုံစံက project ထဲ ရှိပြီးသား:** `detect_done_status`
-  (`src-tauri/src/commands/mod.rs:519`) က #19 ကတည်းက `Empty` နဲ့ `Inconclusive` ကို ခွဲပြီး
-  `30 port(s) with no modem deselected` လို့ တိတိကျကျ ပြောတယ် — **cleanup က အဲ့ဒီ ပုံစံကို
-  မလိုက်ခဲ့တာ ပဲ**
-- **Fix (v1.6.2၊ branch `fix/status-and-log-accuracy` — merge/release မလုပ်ရသေး):**
-  * Counter တတိယခု `empty` (`commands/mod.rs:1704`)၊ arm က
-    `r.error.as_deref() == Some(crate::core::modem::NOT_RESPONDING)` **အတိအကျ**
-    (`:1734`) — ဒီ string တစ်ခုတည်းပဲ။ `AtChannel::open` error၊ `Serial I/O failed: …`
-    တွေက **host ဘက် အမှား** ဖြစ်တာမို့ `failed` အတိုင်း ကျန်တယ်၊ panic arm (`:1745`) လည်း
-    `failed` အတိုင်း
-  * အဲ့ arm က **log မတင်ဘူး** (တမင်) — `modem::probe_failure` က port တစ်ခုအတွက် silence ကို
-    တစ်ခါ မှတ်ပြီးသား၊ ဒါကြောင့် ထပ်တင်ရင် log ကို ၂ ဆ ဖြစ်စေတယ်။ ရေတွက်မှုက status line
-    နဲ့ event payload ကနေ ရောက်တယ်
-  * Builder အသစ် `cleanup_done_status(deleted, empty, failed, total)` (`:627`) —
-    `detect_done_status`/`scan_done_status` ဘေးမှာ၊ pure function မို့ test လုပ်နိုင်တယ်။
-    Clause တိုင်း **zero မှာ ချန်ထားတယ်** ဆိုတော့ ပြေတဲ့ run က one sentence ပဲ၊
-    `FAILED` က ဘာမှ မပျက်တဲ့အခါ **ပေါ်လာခြင်း မရှိ**။ Field case က အခု:
+- **Symptom (field, v1.5.0 64-port run):** SIM cleanup ran across **all 64 ports** before Detect
+  had been run. The status line read `SIM cleanup done. Deleted 14  |  FAILED: 30/64`. **The real
+  failure count was zero** — those 30 were slots with no modem in them at all (Detect afterwards
+  reported `34/64`, and there was a `Modem not responding` log for every one of them)
+- **What this case costs the operator:** while standing in front of the bank debugging an
+  incident, a line saying "30 failed" is **a working bank declaring itself broken** — the
+  operator has to go hunting for 30 failures that do not exist, and the real problem is buried
+  underneath them
+- **Root Cause:** the cleanup worker's counter folded **every non-ok result** from `expire_old`
+  and the panic arm into the **single** `failed` bucket. `modem::expire_old` returns `read_port`'s
+  error **verbatim**, so the code **already knows** that probe silence means `NOT_RESPONDING` —
+  it is only the counter that does not separate them. Both the status line and the
+  `sim_cleanup:done` payload were built out of that single number (only `deleted`/`failed`)
+- **The right shape already existed in the project:** `detect_done_status`
+  (`src-tauri/src/commands/mod.rs:519`) has separated `Empty` from `Inconclusive` since #19 and
+  says precisely `30 port(s) with no modem deselected` — **cleanup simply did not follow that
+  shape**
+- **Fix (shipped in v1.6.2):**
+  * A third counter, `empty` (`commands/mod.rs:1704`), whose arm matches
+    `r.error.as_deref() == Some(crate::core::modem::NOT_RESPONDING)` **exactly** (`:1734`) — that
+    one string and nothing else. An `AtChannel::open` error or a `Serial I/O failed: …` is a
+    **host-side fault**, so it stays in `failed`, and so does the panic arm (`:1745`)
+  * That arm **writes no log line** (deliberately) — `modem::probe_failure` has already recorded
+    the silence once for that port, so logging it again would double the log. The count reaches
+    the operator through the status line and the event payload
+  * A new builder, `cleanup_done_status(deleted, empty, failed, total)` (`:627`), sitting beside
+    `detect_done_status`/`scan_done_status`; being a pure function, it is testable. **Every
+    clause is omitted at zero**, so a clean run is one sentence and `FAILED` **never appears**
+    when nothing failed. The field case now reads:
     `SIM cleanup done. Deleted 14 expired SIM slot(s)  |  30 port(s) with no modem`
-  * **"deselected" ဆိုတဲ့ စကားလုံး မထည့်ဘူး** (detect နဲ့ မတူတဲ့ အချက်) — cleanup က port
-    ရွေးချယ်မှုကို မပြောင်းဘူး
-  * `sim_cleanup:done` payload ထဲ `empty` (`:1772`)၊ frontend listener
-    (`src/lib/services/api.ts:414`–`:432`) က ကိုယ်ပိုင် clause အဖြစ် ပြတယ်၊ **empty အတွက်
-    Warning severity မတင်ဘူး** (`failed > 0` မှသာ Warning)၊ ပြီးတော့
-    `deleted == 0 && failed == 0` ဆိုရင် **တိတ်တိတ်** (`:424`) — ၁၀ မိနစ်တစ်ခါ unattended
-    fire ဖြစ်တာမို့၊ ဗလာ slot က steady state ဖြစ်တာမို့။ Payload မှာ `empty` မပါတဲ့
-    backend အတွက် `?? 0` (`:419`)
-- **`05 §C.10` ရဲ့ field sighting ပထမဆုံး:** supervisor ၄ ခုရဲ့ failure-accounting policy
-  ၄ မျိုး မတူတာကို C.10 က table နဲ့ မှတ်ထားခဲ့တယ် (cleanup = "failure counter တိုးတယ်")၊
-  ဒါပေမဲ့ **operator ဆီ တကယ် ရောက်လာတာ ဒါ ပထမဆုံး**။ ဆိုတော့ ဒီ fix က detour မဟုတ်ဘူး —
-  C.10 အတွက် **down payment**
-- **Test ၄ ခု** (`commands/mod.rs:1902`–`:1938`):
-  `cleanup_status_stays_one_sentence_when_there_is_nothing_to_report`၊
-  `cleanup_status_counts_empty_slots_without_calling_them_failures` (field case အစစ်၊
-  `!contains("FAILED")` ပါ စစ်တယ်)၊ `cleanup_status_reports_real_failures_against_the_port_total`၊
+  * **The word "deselected" is not included** (the point where it differs from detect) — cleanup
+    does not change the port selection
+  * `empty` in the `sim_cleanup:done` payload (`:1772`), and the frontend listener
+    (`src/lib/services/api.ts:414`–`:432`) shows it as its own clause, **raises no Warning
+    severity for empty** (Warning only when `failed > 0`), and stays **silent** when
+    `deleted == 0 && failed == 0` (`:424`) — it fires unattended every 10 minutes, and empty
+    slots are a steady state. `?? 0` (`:419`) for a backend whose payload carries no `empty`
+- **The first field sighting of `05 §C.10`:** C.10 had already recorded in a table that the four
+  supervisors have four different failure-accounting policies (cleanup = "increments the failure
+  counter"), but **this is the first time it actually reached an operator**. So this fix is not a
+  detour — it is a **down payment** on C.10
+- **Four tests** (`commands/mod.rs:1902`–`:1938`):
+  `cleanup_status_stays_one_sentence_when_there_is_nothing_to_report`,
+  `cleanup_status_counts_empty_slots_without_calling_them_failures` (the real field case, which
+  also asserts `!contains("FAILED")`),
+  `cleanup_status_reports_real_failures_against_the_port_total`,
   `cleanup_status_keeps_empty_slots_and_failures_apart`
-- **Rule ၁:** **"ဗလာ" နဲ့ "ပျက်" ကို counter တစ်ခုထဲ မထည့်ပါ။** ဒါက §16 Rule ၁ ("မသိဘူး"
-  ကို "မရှိဘူး" နဲ့ တစ်ခုတည်း မလုပ်ရ) ရဲ့ **counter version** — ဒီ repo မှာ bank တစ်ဝက်
-  ဗလာဖြစ်တာက ပုံမှန်
-- **Rule ၂:** **Zero clause ကို မပြပါ။** `FAILED: 0` ကိုယ်တိုင် operator ကို ရှာစေတယ် —
-  ပျက်တာ ရှိမှသာ clause တင်ပါ
-- **Rule ၃:** Status wording ရေးခင် **ရှိပြီးသား honest pattern ကို ရှာပါ**။ Detect က ဒီ
-  ခွဲခြားမှုကို လုပ်ပြီးသား ဖြစ်တာမို့ cleanup က ကူးရမယ့်ဟာ ဖြစ်တယ်၊ တီထွင်ရမယ့်ဟာ မဟုတ်
+- **Rule 1:** **Never put "empty" and "broken" into one counter.** This is the **counter
+  version** of §16 Rule 1 ("don't know" must not be folded into "not there") — in this repo half
+  a bank being empty is normal
+- **Rule 2:** **Do not show a zero clause.** `FAILED: 0` all by itself sends the operator
+  searching — only add the clause when something really failed
+- **Rule 3:** Before writing status wording, **look for an honest pattern that already exists**.
+  Detect had already made this distinction, so cleanup had something to copy, not something to
+  invent
 
-## 2️⃣4️⃣ Worker သေပြီးရင်လည် status line က `Live 34/34 ready` — ဖန်သားပြင်တစ်ခုတည်းပေါ် ကိန်း ၂ ခု မတည့်တာ
+## 2️⃣4️⃣ The status line still reads `Live 34/34 ready` after a worker has died — two numbers on one screen that do not agree
 
-- **Symptom:** live worker တစ်ခု လုံးလုံး ထွက်သွားရင် (transport သေတာ ဒါမှမဟုတ် panic)
-  port row က အနီ ဖြစ်တယ်၊ ဒါပေမဲ့ status line က အဲ့ port ကို **`Live N/N ready` ထဲ ဆက်
-  ရေတွက်နေတယ်**
-- **ဖန်သားပြင်တစ်ခုတည်းပေါ် counter ၂ ခု မတည့်တာ:** `Closed` arm က `ports:updated` emit
-  လုပ်တာမို့ frontend က `readyPorts` ကို `ports.filter(p => p.live_ready)` နဲ့ **ကိုယ်တိုင်
-  ပြန်တွက်တယ်** (`src/lib/services/api.ts:242` listener၊ derive `:248`–`:250`) — ဆိုတော့
-  badge (`Toolbar.svelte:39`) က `Live 33/34` (မှန်တယ်)၊ Rust ကနေ လာတဲ့ footer status line က
-  `Live 34/34 ready` (မှားတယ်)။ Operator က ကိန်း ၂ ခုကို တစ်ချိန်တည်း မြင်နေရတယ်
-- **v1.5.0 က ၂ ချက်နဲ့ ပိုဆိုးစေခဲ့တယ်:**
-  1. **`statusText` ကို Inbox footer ပေါ် တင်လိုက်တာ** (`05 §C.8`) — အရင်က Ports page မှာပဲ
-     မြင်ရတဲ့ မှားနေတဲ့ ကိန်းက အခု **operator အလုပ်လုပ်တဲ့ main page ပေါ်** ရောက်ပြီ
-  2. **worker panic ကို `Closed` ကနေ report လုပ်စေတာ** (`live::WORKER_PANIC`) — ဆိုတော့
-     v1.5.0 မှာ အသစ် ရောက်လာနိုင်တဲ့ panic path က **ready count မလျှော့တဲ့ arm
-     တစ်ခုတည်းဆီ** တည့်တည့် ဝင်တယ်
-- **Root Cause:** `Closed` arm က `p.live_ready = false` ရေးတယ်၊ `p.live_error` set တယ်၊
-  `st.live_failed.push(...)` လုပ်တယ် — ဒါပေမဲ့ **`live_ports_ready` ကို မထိဘူး**၊
-  `live_status` ကိုလည် ပြန်မခေါ်ဘဲ `status_text` ကို `"{port} FAILED: {e}"` နဲ့ **တိုက်ရိုက်
-  လဲပစ်ခဲ့တယ်**။ ဆိုတော့ နောက် `Ready`/`Offline` event တစ်ခုခုက line ကို ပြန်တွက်ချိန်မှာ
-  ကျွတ်သွားတဲ့ port က ready list ထဲ ကျန်နေပြီးသား
-- **ပြီးတော့ `live_failed` က write-only state ခဲ့တယ်** — နေရာ ၂ ခုမှာ push တယ်၊
-  `start_live` မှာ clear တယ်၊ **ဖတ်တဲ့သူ မရှိ**။ ဆိုတော့ "worker သေတယ်" ဆိုတဲ့ အချက်ကို
-  app က မှတ်ထားပေမဲ့ ဘယ်ကိန်းထဲမှ မပါခဲ့ဘူး
-- **Fix (v1.6.2၊ branch `fix/status-and-log-accuracy` — merge/release မလုပ်ရသေး) — bucket
-  ကို state အဖြစ် အသိမှတ်ပြုလိုက်တာ:**
-  * `live_status` (`src-tauri/src/commands/mod.rs:543`) မှာ `N failed` clause ထည့်၊ အစဉ်က
+- **Symptom:** when a live worker exits altogether (the transport dies, or it panics) the port row
+  turns red, but the status line **keeps counting that port inside `Live N/N ready`**
+- **Two counters on one screen that do not agree:** the `Closed` arm emits `ports:updated`, so the
+  frontend **recomputes `readyPorts` itself** from `ports.filter(p => p.live_ready)`
+  (`src/lib/services/api.ts:242` listener, derive `:248`–`:250`) — so the badge
+  (`Toolbar.svelte:39`) said `Live 33/34` (correct) while the footer status line coming out of Rust
+  said `Live 34/34 ready` (wrong). The operator is looking at both numbers at the same time
+- **v1.5.0 made it worse in two ways:**
+  1. **`statusText` was put onto the Inbox footer** (`05 §C.8`) — a wrong number that used to be
+     visible only on the Ports page is now **on the main page the operator works on**
+  2. **worker panics were made to report through `Closed`** (`live::WORKER_PANIC`) — so the panic
+     path that became newly reachable in v1.5.0 leads straight into **the one arm that does not
+     decrement the ready count**
+- **Root Cause:** the `Closed` arm wrote `p.live_ready = false`, set `p.live_error` and did
+  `st.live_failed.push(...)` — but **never touched `live_ports_ready`**, and instead of calling
+  `live_status` again it **replaced `status_text` outright** with `"{port} FAILED: {e}"`. So by the
+  time some later `Ready`/`Offline` event recomputed the line, the port that had dropped out was
+  still sitting in the ready list
+- **And `live_failed` was write-only state** — pushed in two places, cleared in `start_live`, with
+  **no reader at all**. So the app recorded the fact that a worker had died without that fact
+  entering any number
+- **Fix (shipped in v1.6.2) — recognising the bucket as state:**
+  * An `N failed` clause added to `live_status` (`src-tauri/src/commands/mod.rs:543`), in the order
     ready → `no modem` → `failed` → `connecting…`
-  * **`connecting…` က bucket မဟုတ်ဘူး — remainder** `total - (ready + offline + failed)`
-    (`:554`) မို့ **အနောက်ဆုံး**ပဲ တွက်လို့ ရတယ်။ ဒါကြောင့် bucket ၃ ခု **disjoint ဖြစ်ရမယ်** —
-    port တစ်ခုကို ၂ ခါ ရေတွက်လိုက်ရင် လိမ်လာမယ့်ဟာက အဲ့ remainder ပဲ
-  * `mark_port_failed(st, port, reason)` (`:579`) — **bucket rule တွေ ရှိတဲ့ တစ်ခုတည်းသော
-    နေရာ**။ ready list ကနေရော `live_offline` ကနေရော ဖြုတ်ပြီးမှ `live_failed` ကို push တယ်၊
-    ပြီးတော့ port က ရှိပြီးသား မဟုတ်မှသာ push တယ်
-  * **Rule ၁ — port အလိုက် dedup:** `run_live` ကိုယ်တိုင်က သူ့ panic ကို ဖမ်းပြီး `Closed`
-    အဖြစ် report တယ်၊ အဲ့ဒါ ကျော်လွန်တဲ့ panic ကို worker ရဲ့ **outer `catch_unwind`**
-    (`:1334`) က **တူတဲ့ port ကို ထပ်** report တယ် — entry ၂ ခု ဖြစ်ရင် line က bank မှာ
-    ရှိတာထက် ပိုတဲ့ failed count ကို ကြေညာမယ်။ ပထမ reason ကို ထားတယ် (အဲ့ဒါက specific၊
-    ဒုတိယက generic backstop)၊ row ရဲ့ `live_error` က နောက်ဆုံး text ကို ပြပြီးသား
-  * **Rule ၂ — "failed" က "no modem" ကို အနိုင်ရတယ်:** တိတ်နေတဲ့ slot ရဲ့ worker သေသွားရင်
-    **အဲ့ port ကို ဘာမှ retry လုပ်နေတာ မရှိတော့ဘူး**၊ bucket ၂ ခုထဲ ချန်ထားရင် port
-    တစ်ခုကို ၂ ခါ ရေတွက်တယ်။ ပြောင်းပြန် (failed ပြီးမှ offline) မဖြစ်နိုင်ဘူး — worker က
-    `Closed` ပြီးရင် event မထုတ်တော့ဘူး
-- **Arm ၃ ခု ပြင်လိုက်တယ်:**
-  | Arm | ဘာ လုပ်လဲ | ဘယ် bucket |
+  * **`connecting…` is not a bucket — it is the remainder** `total - (ready + offline + failed)`
+    (`:554`), so it can only be computed **last**. That is exactly why the three buckets **must be
+    disjoint** — count a port twice and the thing that starts lying is that remainder
+  * `mark_port_failed(st, port, reason)` (`:579`) — **the single place where the bucket rules
+    live**. It removes the port from the ready list and from `live_offline` first and only then
+    pushes onto `live_failed`, and it pushes only if the port is not already there
+  * **Rule 1 — dedup per port:** `run_live` catches its own panic and reports it as `Closed`, and a
+    panic that escapes that is reported **again for the same port** by the worker's **outer
+    `catch_unwind`** (`:1334`) — two entries and the line announces a failed count higher than the
+    bank has ports. The first reason is kept (that one is specific, the second is a generic
+    backstop), and the row's `live_error` already shows the latest text
+  * **Rule 2 — "failed" beats "no modem":** when the worker of a silent slot dies, **nothing is
+    retrying that port any more**, and leaving it in both buckets counts one port twice. The
+    reverse (offline after failed) cannot happen — a worker emits no more events after `Closed`
+- **Three arms were fixed:**
+  | Arm | What it does | Which bucket |
   |---|---|---|
-  | `LiveEvent::Closed` (`:1297`) | `mark_port_failed` (`:1314`) + `live_status` ပြန်တည် (`:1315`) | `live_failed` |
-  | Outer `catch_unwind` (`:1334`) | `mark_port_failed` (`:1351`) + `live_status` (`:1352`) | `live_failed` (dedup ကြောင့် ၂ ခါ မတိုး) |
-  | `LiveEvent::Reconnecting` (`:1141`) | ready list ကနေပဲ ဖြုတ် (`:1155`) + `live_status` (`:1156`) | **ဘယ် bucket မှ မဟုတ်** → `connecting…` remainder |
+  | `LiveEvent::Closed` (`:1297`) | `mark_port_failed` (`:1314`) + rebuild `live_status` (`:1315`) | `live_failed` |
+  | Outer `catch_unwind` (`:1334`) | `mark_port_failed` (`:1351`) + `live_status` (`:1352`) | `live_failed` (the dedup keeps it from incrementing twice) |
+  | `LiveEvent::Reconnecting` (`:1141`) | drops from the ready list only (`:1155`) + `live_status` (`:1156`) | **no bucket at all** → the `connecting…` remainder |
 
-  Reconnecting က transient ဖြစ်တာမို့ `connecting…` ထဲ ရောက်တာ **တကယ့် အခြေအနေ** ပဲ၊
-  ပြီးတော့ `Ready` arm က မောင်းပြန်လာရင် သူ့ကိုယ်တိုင် ပြန်ထည့်တယ်
-- **၃ ခုလုံးမှာ hand-written `status_text` override ကို ဖျက်လိုက်တယ်။** Reason က
-  ပျောက်မသွားဘူး — တူတဲ့ arm ရဲ့ `ports:updated` payload ထဲ row ရဲ့ `live_error` အဖြစ်
-  ရောက်တယ်၊ `Ports.svelte` နဲ့ `PortDetail.svelte` က အဲ့ဒါကို render တယ်။ Status line က
-  **bank-wide count** ဖြစ်တာမို့ port နာမည် တစ်ခုတည်းကို မသယ်ရဘူး
-- **`p.alive` ကို ၃ ခုလုံးမှာ မထိဘူး** — probe silence ပဲ slot ကို "ဗလာ" style ခွင့်ရှိတယ်
-  (§16၊ AGENTS.md invariant)
-- **တမင် ဆုံးဖြတ်ချက် — သေတဲ့ worker ကို `no modem` အဖြစ် မရေတွက်ဘူး:** worker သေတာက slot
-  ထဲ SIM ရှိမရှိ အကြောင်း **ဘာမှ မဆိုဘူး**။ `live_offline` ထဲ ထည့်လိုက်ရင် လွဲမှားချက်
-  အသစ် (empty slot ၃၀ လို့ ပြောတာ) ဖြစ်မယ် — ဒါကြောင့် bucket အသစ် လိုတယ်
-- **ဒီ entry က `05 §C.6` (L3) latent trap ကို အစားထိုးတယ်** — အဲ့ entry က အခု
-  `✅ DONE (v1.6.2)` ဖြစ်ပြီ၊ သက်သေက history အတွက် ကျန်ထားတယ်
-- **Test ၅ ခု** (`commands/mod.rs:2167`–`:2250`):
-  `live_status_moves_a_reconnecting_port_into_the_remainder` (offline ရော failed ရော
-  ဗလာ ဆိုတာပါ စစ်တယ်)၊ `live_status_drops_a_port_whose_worker_closed`၊
-  `a_port_reported_failed_twice_is_counted_once` (reason ပထမခုကို ထားတာပါ)၊
-  `a_silent_port_whose_worker_died_is_counted_as_failed_only`၊
+  Reconnecting is transient, so landing in `connecting…` is **the true state**, and when the
+  `Ready` arm comes back round it puts the port back itself
+- **The hand-written `status_text` override was deleted in all three.** The reason is not lost — it
+  arrives as the row's `live_error` inside the same arm's `ports:updated` payload, and
+  `Ports.svelte` and `PortDetail.svelte` render it. The status line is a **bank-wide count**, so it
+  must not carry one single port name
+- **`p.alive` is untouched in all three** — only probe silence is allowed to style a slot as
+  "empty" (§16, AGENTS.md invariant)
+- **Deliberate decision — a dead worker is not counted as `no modem`:** a worker dying says
+  **nothing at all** about whether there is a SIM in the slot. Putting it into `live_offline` would
+  create a new falsehood (claiming 30 empty slots) — which is why a new bucket was needed
+- **This entry supersedes the `05 §C.6` (L3) latent trap** — that entry is now
+  `✅ DONE (v1.6.2)`, and the evidence is kept there for the history
+- **Five tests** (`commands/mod.rs:2167`–`:2250`):
+  `live_status_moves_a_reconnecting_port_into_the_remainder` (which also asserts that both offline
+  and failed are empty), `live_status_drops_a_port_whose_worker_closed`,
+  `a_port_reported_failed_twice_is_counted_once` (including that the first reason is kept),
+  `a_silent_port_whose_worker_died_is_counted_as_failed_only`,
   `live_status_reports_every_bucket_it_has` (`Live 1/5 ready | 1 no modem | 1 failed | 2 connecting…`)
-- **Rule ၁:** **Remainder နဲ့ တွက်တဲ့ ကိန်း ရှိရင် bucket တွေက disjoint ဖြစ်ရမယ်** —
-  ပြီးတော့ disjointness ကို arm တစ်ခုချင်းစီမှာ လက်နဲ့ မထိန်းပါနဲ့၊ **helper တစ်ခုထဲ
-  သွတ်ပါ**။ Arm ၃ ခုမှာ rule ၂ ခုကို ကူးရေးရင် နောက် arm လေးခုမြောက်က မေ့မယ်
-- **Rule ၂:** **Write-only state က bug ရဲ့ လက်ဟန်** — `live_failed` ကို push တယ်၊ clear တယ်၊
-  ဖတ်တဲ့သူ မရှိ ဆိုတာက "ဒီ အချက်က ဘယ်ကိန်းထဲမှ မပါဘူး" ဆိုတာ ပြတယ်။ Grep နဲ့ ရှာလို့
-  ရတယ်: field တစ်ခုကို ရေးတဲ့ site ရှိပြီး ဖတ်တဲ့ site မရှိရင် သတိထားပါ
-- **Rule ၃:** UI နဲ့ backend ၂ ခုက ကိန်းတူတူကို **သီးသန့် တွက်နေရင်** ဖန်သားပြင်ပေါ်
-  မတည့်တာ အချိန်ကြာလာမှ ပေါ်လာမယ်။ Frontend က `p.live_ready` ကနေ derive တာက ဒီနေရာမှာ
-  မှန်ခဲ့တယ် — ဒါပေမဲ့ "တစ်ဖက် မှန်တယ်" ဆိုတာ fix မဟုတ်ဘူး၊ **အခြားတစ်ဖက်က မှားနေတယ်
-  ဆိုတဲ့ သက်သေ** ပဲ
+- **Rule 1:** **Where there is a number computed as a remainder, the buckets have to be disjoint** —
+  and do not hold that disjointness together by hand in each individual arm, **push it into one
+  helper**. Copy two rules across three arms and the fourth arm will forget them
+- **Rule 2:** **Write-only state is the handwriting of a bug** — pushed to `live_failed`, cleared
+  again, with no reader, tells you "this fact is not part of any number". It is greppable: if a
+  field has a site that writes it and no site that reads it, take notice
+- **Rule 3:** When the UI and the backend **compute the same number separately**, the disagreement
+  on screen only shows up later. The frontend deriving from `p.live_ready` happened to be right
+  here — but "one side is right" is not a fix, it is only **evidence that the other side is
+  wrong**
 
-## 2️⃣5️⃣ `read -> 2 msg(s)` ပြီးရင် `deleted 5 msg(s)` — log က မှန်ပေမဲ့ မှားပုံပေါက်တာ
+## 2️⃣5️⃣ `read -> 2 msg(s)` followed by `deleted 5 msg(s)` — a log that is correct but looks wrong
 
-- **Symptom (field, v1.5.0 run):** log ၂ လိုင်းက ကိန်းဂဏန်း မကိုက်တဲ့ ပုံပေါက်တယ်:
+- **Symptom (field, v1.5.0 run):** two log lines whose numbers look like they do not add up:
 
   ```
   COM39: pdu-mode read -> 2 msg(s)
   COM39: deleted 5 msg(s)
   ```
 
-  **၂ ခုလုံး မှန်တယ်** — ဖတ်ရတာက မှားနေတာ
-- **ဒီ case ရဲ့ ချောင်းက အဲ့ဒါပဲ:** မှန်နေတဲ့ log က မှားပုံပေါက်တာ။ Operator က မရှိတဲ့
-  data bug တစ်ခုကို လိုက်ရှာတယ်၊ ပြီးတော့ တစ်ခါ "ဒီ log က မှန်လား" လို့ ဖြစ်သွားရင်
-  **field debugging ရဲ့ ကိရိယာ ကိုယ်တိုင် ပျက်တယ်** — အဲ့ဒါက ဆုံးရှုံးမှု
-- **Root Cause — unit `msg(s)` တစ်လုံးက အရာ ၂ မျိုးကို ကိုယ်စားပြုခဲ့တာ:**
-  | | ရေတွက်တာ | သက်သေ |
+  **Both of them are correct** — what goes wrong is the reading
+- **That is exactly where this case lies in wait:** a correct log that looks wrong. The operator
+  goes hunting for a data bug that does not exist, and once "is this log even true?" has been
+  asked, **the instrument of field debugging is itself broken** — that is the loss
+- **Root Cause — one unit, `msg(s)`, standing for two different things:**
+  | | What it counts | Evidence |
   |---|---|---|
-  | Read side | **reassemble ပြီးတဲ့ row** (`msgs.len()`) | `src-tauri/src/core/modem.rs:379` (pdu)၊ `:400` (text) |
-  | Delete side | **SIM slot** (`gone.len()`) | `modem.rs:549`၊ partial `:558`၊ confirm မရတဲ့ form `:531` |
+  | Read side | **the reassembled row** (`msgs.len()`) | `src-tauri/src/core/modem.rs:379` (pdu), `:400` (text) |
+  | Delete side | **the SIM slot** (`gone.len()`) | `modem.rs:549`, partial `:558`, the form that cannot confirm `:531` |
 
-  Concat SMS တစ်စောင်က fragment တစ်ခုလျှင် slot တစ်ခု စားတာမို့ **row ၂ ခု = slot ၅ ခု**
-  ဖြစ်တာ ပုံမှန်ပဲ
-- **Status line ကတော့ အရင်ကတည်းက ခွဲထားပြီးသား:** `Deleted 1 message(s) (1 SIM slot(s)
-  freed)` (`commands/mod.rs:1566`) က unit ၂ ခုကို ၂ မျိုး ရေးထားတယ် — **per-port log line
-  ကပဲ ကျန်နေခဲ့တာ**
-- **Fix (v1.6.2၊ branch `fix/status-and-log-accuracy` — merge/release မလုပ်ရသေး) —
-  convention:** noun က အမြဲ **`slot(s)`**၊ operator-facing status line မှာပဲ **`SIM slot(s)`**
-  လို့ qualify လုပ်တယ်။ Site ၈ ခု:
-  * `modem.rs::confirm_delete` ၃ လိုင်း (`:531`၊ `:549`၊ `:558`)
-  * `commands/mod.rs` ၃ လိုင်း — cleanup status line (`:628`)၊ per-port cleanup log (`:1722`)၊
-    `Deleted N slot(s) from PORT` (`:1538`)
-  * `core/live.rs` ၂ လိုင်း — live worker ရဲ့ retention sweep (`:284` initial၊ `:381` periodic)
-- **တမင် မထိတဲ့ဟာ (တကယ် row ဖြစ်လို့):** `Auto-purged N expired message(s)`
-  (`commands/mod.rs:1652` — inbox row)၊ `Deleting N message(s)...` (`:1507` — ရွေးထားတဲ့ row)၊
-  ပြီးတော့ unit ၂ ခုလုံး ရေးပြီးသား status line ၂ ခု (`:1566`၊ `:1572`)
-- **Plan (`07 §D.1`) က `modem.rs` ကိုပဲ မှတ်ခဲ့တယ်** — review မှာ ကျန် site ၅ ခု
-  (`commands/mod.rs` ၃ ခု၊ `live.rs` ၂ ခု) တွေ့လို့ ထည့်လိုက်တာ။ ဖိုင်တစ်ခုပဲ ပြင်ရင်
-  unit က ဖိုင်ကြားမှာ ကွဲသေးမယ်၊ ပြီးတော့ live sweep ရဲ့ line က `SIM cleanup deleted N …`
-  ဖြစ်တာမို့ cleanup status line နဲ့ ဘေးချင်း ဖတ်ရမယ့်ဟာ
-- **`confirm_delete` ရဲ့ doc comment (`modem.rs:517`–`:521`) မှာ ဒီ ကွာဟမှုကို မှတ်ထားတယ်** —
-  နောက်ထပ် count log ရေးမယ့်သူက ဘယ်ဟာ row၊ ဘယ်ဟာ slot ဆိုတာ ကုဒ်ထဲကတည်းက ဖတ်ရမယ်
-- **Rule ၁:** Count ကို log တင်ရင် **ဘာကို ရေတွက်တာလဲ ဆိုတာ unit နဲ့ တွဲပါ**။ Unit နာမည်
-  တူတူနဲ့ ကိန်း ၂ မျိုးက wording ပြဿနာ မဟုတ်ဘူး — **data bug လို ပေါ်တယ်**
-- **Rule ၂:** **မှားပုံပေါက်တဲ့ log က သူ့ကိုယ်တိုင် bug ဖြစ်တယ်။** Field debugging က log ကို
-  ယုံရတာ ဖြစ်တာမို့ "code က မှန်တယ်" ဆိုတာ ဒီ case ကို မဖြေဘူး
-- **Rule ၃:** Unit ပြောင်းရင် **site အားလုံးကို grep နဲ့ ရှာပါ** (`msg(s)` · `message(s)` ·
-  `slot(s)`) — ဖိုင်တစ်ခုပဲ ပြင်တာက ကွာဟမှုကို ဖျက်တာ မဟုတ်ဘဲ **ရွှေ့တာ** ဖြစ်တယ်
+  A concatenated SMS eats one slot per fragment, so **2 rows = 5 slots** is perfectly normal
+- **The status line had separated them all along:** `Deleted 1 message(s) (1 SIM slot(s) freed)`
+  (`commands/mod.rs:1566`) writes the two units two different ways — **it was only the per-port log
+  line that was left behind**
+- **Fix (shipped in v1.6.2) — the convention:** the noun is always **`slot(s)`**, qualified as
+  **`SIM slot(s)`** only in the operator-facing status line. Eight sites:
+  * three lines in `modem.rs::confirm_delete` (`:531`, `:549`, `:558`)
+  * three lines in `commands/mod.rs` — the cleanup status line (`:628`), the per-port cleanup log
+    (`:1722`), and `Deleted N slot(s) from PORT` (`:1538`)
+  * two lines in `core/live.rs` — the live worker's retention sweep (`:284` initial, `:381`
+    periodic)
+- **Deliberately left alone (because they really are rows):** `Auto-purged N expired message(s)`
+  (`commands/mod.rs:1652` — inbox rows), `Deleting N message(s)...` (`:1507` — the selected rows),
+  and the two status lines that already write both units (`:1566`, `:1572`)
+- **The plan (`07 §D.1`) had recorded `modem.rs` only** — the remaining five sites (three in
+  `commands/mod.rs`, two in `live.rs`) were found during review and added. Fix one file only and the
+  unit is still split between files, and the live sweep's line is `SIM cleanup deleted N …`, which
+  is something you have to read side by side with the cleanup status line
+- **`confirm_delete`'s doc comment (`modem.rs:517`–`:521`) records this gap** — whoever writes the
+  next count log has to be able to read out of the code itself which one is a row and which one is a
+  slot
+- **Rule 1:** When you log a count, **pair it with a unit that says what is being counted**. Two
+  different kinds of number under the same unit name are not a wording problem — **they look like a
+  data bug**
+- **Rule 2:** **A log that looks wrong is itself a bug.** Field debugging rests on trusting the log,
+  so "the code is correct" does not answer this case
+- **Rule 3:** When you change a unit, **grep for every site** (`msg(s)` · `message(s)` ·
+  `slot(s)`) — fixing one file does not remove the gap, it **moves** it
 
-## 2️⃣6️⃣ `USSD *88# rejected (+CME ERROR: 100)` ၂ လိုင်း၊ 15 ms အကွာ — duplicate log မဟုတ်ဘူး
+## 2️⃣6️⃣ Two `USSD *88# rejected (+CME ERROR: 100)` lines, 15 ms apart — not a duplicate log
 
 - **Symptom (field, v1.5.0 run):**
 
   ```
   18:39:31.846  COM38: USSD *88# rejected (+CME ERROR: 100)
   18:39:31.861  COM38: USSD *88# rejected (+CME ERROR: 100)
-  18:39:36.585  COM38: SIM number ***573      ← *124# fallback အောင်မြင်
+  18:39:36.585  COM38: SIM number ***573      ← the *124# fallback succeeded
   ```
 
-  တစ်လုံးမကွာ တူတဲ့ line ၂ ခု — **duplicate-logging bug လို့ ဖတ်ရတယ်၊ တကယ်က မဟုတ်ဘူး**
-- **Root Cause — attempt ၂ ခုက တကယ် မတူဘူး၊ log ကပဲ မခွဲတာ:** `ussd_query`
-  (`src-tauri/src/core/modem.rs:805`) က `AT+CUSD=1,"*88#",15` ကို အရင် ပို့တယ် (`:810`)၊
-  `Rejected` ဆိုရင် `AT+CUSD=2` နဲ့ session ဖျက်ပြီး (`:814`) **bare form
-  `AT+CUSD=1,"*88#"`** ကို retry တယ် (`:815`)။ `ussd_attempt` (`:844`) က signature မှာ
-  `command` ရော `code` ရော လက်ခံပေမဲ့ warn line ၃ ခုမှာ **`code` ကိုပဲ** ရေးခဲ့တယ်
-- **ဘာလို့ အရေးကြီးလဲ:** `,15` (DCS argument) ကို ငြင်းတဲ့ firmware ကို ရှာဖွေတာက
-  **ဒီ retry ရဲ့ တစ်ခုတည်းသော ရည်ရွယ်ချက်** (comment `:806`–`:809`)။ ဆိုတော့ ဘယ် form
-  ငြင်းခဲ့လဲ ခွဲမပြနိုင်တဲ့ log က **retry ရဲ့ ရည်ရွယ်ချက်ကို ကိုယ်တိုင် ဖျက်တယ်** —
-  retry က အလုပ်လုပ်တယ်၊ ဒါပေမဲ့ field log ကနေ firmware pattern မှတ်လို့ မရဘူး
-- **Fix (v1.6.2၊ branch `fix/status-and-log-accuracy` — merge/release မလုပ်ရသေး):**
-  * Helper `ussd_form(command)` (`modem.rs:837`) — dial string ရဲ့ **closing quote နောက်က
-    argument** ကို ဆွဲထုတ်တယ် (`rsplit_once('"')`)၊ ဗလာ/မရှိရင် `"bare"`
-  * Warn ၃ လိုင်းမှာ ထည့်လိုက်တယ်: rejected (`:851`)၊ `no reply within {}s` (`:866`)၊
-    `replied without a number` (`:887`)。 အခု ဒီလို ဖတ်ရတယ်:
+  Two lines identical to the character — **it reads as a duplicate-logging bug, and it is not one**
+- **Root Cause — the two attempts really are different, it is only the log that does not separate
+  them:** `ussd_query` (`src-tauri/src/core/modem.rs:805`) sends `AT+CUSD=1,"*88#",15` first
+  (`:810`), and on `Rejected` it cancels the session with `AT+CUSD=2` (`:814`) and retries the
+  **bare form `AT+CUSD=1,"*88#"`** (`:815`). `ussd_attempt` (`:844`) accepts both `command` and
+  `code` in its signature, but its three warn lines wrote **only `code`**
+- **Why it matters:** hunting for the firmware that rejects `,15` (the DCS argument) is **the sole
+  purpose of this retry** (comment `:806`–`:809`). So a log that cannot show which form was rejected
+  **destroys the purpose of the retry itself** — the retry works, but the firmware pattern cannot be
+  learned from the field log
+- **Fix (shipped in v1.6.2):**
+  * A helper, `ussd_form(command)` (`modem.rs:837`) — it pulls out **the argument after the closing
+    quote** of the dial string (`rsplit_once('"')`), and yields `"bare"` when it is empty or absent
+  * Added to the three warn lines: rejected (`:851`), `no reply within {}s` (`:866`) and
+    `replied without a number` (`:887`). It now reads like this:
 
     ```
     COM38: USSD *88# (,15) rejected (+CME ERROR: 100)
     COM38: USSD *88# (bare) rejected (+CME ERROR: 100)
     ```
 
-  * **`,15` ကို hardcode မလုပ်ဘူး** — ပို့လိုက်တဲ့ command ကနေ ဖတ်တာမို့ `ussd_query` ရဲ့
-    DCS ပြောင်းရင်တောင် log က modem ကို **မခိုင်းခဲ့တဲ့ argument** ကို ဘယ်တော့မှ မပြောဘူး
-  * **Behaviour / AT sequence / timeout မပြောင်းဘူး** — wording ပဲ
-- **Privacy surface မပြောင်းဘူး:** log ထဲ ထပ်ရောက်လာတာက `AT+CUSD` ရဲ့ **argument** ပဲ
-  (`,15` / `bare`)၊ dial string က operator ကိုယ်တိုင် ရေးထားတဲ့ carrier code။ `AT+CUSD` ရဲ့
-  **reply body (subscriber ရဲ့ ကိုယ်ပိုင် နံပါတ် ပါတာ) က debug မှာ အတိုင်း** (`:893`) —
-  AGENTS.md ရဲ့ logging refusal
-- **Test ၂ ခု** (`modem.rs:1199`၊ `:1209`): `ussd_form_distinguishes_the_two_attempts`
-  (`,15` vs `bare`၊ ပြီးတော့ `assert_ne!` နဲ့ ၂ ခု မတူရ ဆိုတာ)၊
-  `ussd_form_reads_the_argument_as_sent` (`,0`၊ `, 15`၊ dial string ပြီး ဘာမှ မရှိတာ၊
-  `AT+CUSD=2` — အားလုံး ကိုယ်တိုင် ပြရ)
-- **Rule ၁:** **Retry တစ်ခုက hypothesis တစ်ခုကို စမ်းတာ ဆိုရင် ဘယ် hypothesis ကို စမ်းခဲ့လဲ
-  log မှာ ပါရမယ်။** မပါရင် retry က အလုပ်လုပ်ပေမဲ့ **သင်ခန်းစာ မရဘူး** — hardware fleet
-  တစ်ခုမှာ အဲ့ဒါက retry ရဲ့ တန်ဖိုးတစ်ဝက်
-- **Rule ၂:** တူတဲ့ line ၂ ခု မြင်ရင် **"duplicate logging" လို့ အရင် မယူဆပါနဲ့** —
-  timestamp ကွာဟမှု (ဒီမှာ 15 ms) က attempt ၂ ခု ဖြစ်တဲ့ သက်သေ။ ဆိုတော့ log line က
-  **ကွဲပြားတဲ့ အလုပ်ကို ကွဲပြားစွာ ရေးရမယ်**
+  * **`,15` is not hardcoded** — it is read out of the command that was actually sent, so even if
+    `ussd_query`'s DCS changes, the log will never name an argument the modem was **never asked
+    for**
+  * **No change to behaviour, to the AT sequence or to timeouts** — wording only
+- **No change to the privacy surface:** what newly reaches the log is only the **argument** of
+  `AT+CUSD` (`,15` / `bare`), and the dial string is the carrier code the operator typed in
+  themselves. `AT+CUSD`'s **reply body (which carries the subscriber's own number) stays at debug**
+  (`:893`) — the logging refusal in AGENTS.md
+- **Two tests** (`modem.rs:1199`, `:1209`): `ussd_form_distinguishes_the_two_attempts` (`,15` vs
+  `bare`, plus an `assert_ne!` that the two must not be equal), and
+  `ussd_form_reads_the_argument_as_sent` (`,0`, `, 15`, nothing at all after the dial string,
+  `AT+CUSD=2` — each of them has to show up as itself)
+- **Rule 1:** **When a retry is testing a hypothesis, the log has to say which hypothesis was
+  tested.** Without it the retry still works but **teaches nothing** — and on a hardware fleet that
+  is half the value of the retry
+- **Rule 2:** When you see two identical lines, **do not assume "duplicate logging" first** — the
+  gap between the timestamps (15 ms here) is the evidence that there were two attempts. Which means
+  a log line must **write distinct work distinctly**
 
-## ⚠️ Latent Traps (မဖြစ်သေးဘူး၊ ဒါပေမဲ့ ချောင်းနေတာ)
+## ⚠️ Latent Traps (not happened yet, but lying in wait)
 
-Case မဟုတ်သေးပါ — 2026-08-30 settings cleanup (`fbd7b8b`) လုပ်ရင်း တွေ့ခဲ့တဲ့ ချောင်း ၃ ခု
-(T1–T2 settings layer၊ T3 decoder)၊ ပြီးတော့ 2026-08-31 audit ကနေ T4 (retention layer) နဲ့
-T5 (busy-flag layer)။
-Symptom မရှိသေးလို့ fix မလုပ်ခဲ့ဘူး၊ ဒါပေမဲ့ နောက်ဆို ရှင်းပြရ ခက်တဲ့ bug ဖြစ်လာနိုင်တယ်။
-**T3 က v1.4.0 မှာ၊ T4/T5 က v1.5.0 မှာ ကုဒ် ပြင်ပြီးသွားပြီ** — T1/T2 က ပြင်ရသေး။
+Not cases yet — three things found in passing while doing the 2026-08-30 settings cleanup
+(`fbd7b8b`) (T1–T2 in the settings layer, T3 in the decoder), plus T4 (retention layer) and T5
+(busy-flag layer) out of the 2026-08-31 audit.
+There was no symptom, so they were not fixed, but each of them could become a bug that is hard to
+explain later.
+**T3 was fixed in code in v1.4.0, and T4/T5 in v1.5.0** — T1/T2 are still unfixed.
 
-### T1. `deepMerge` က **stored** key တွေကို iterate တာ — ဖျက်ထားတဲ့ setting က profile ထဲ မပျောက်
+### T1. `deepMerge` iterates the **stored** keys — a deleted setting never disappears from a profile
 
-`src/lib/stores/settings.svelte.ts` ရဲ့ `deepMerge(target, source)` မှာ loop က
-`Object.keys(source)` — `source` က `localStorage` (`sms-reader-settings`) ကနေ လာတဲ့ **stored
-profile**၊ `target` က defaults။ ဆိုတော့ merge က "DEFAULT မှာ ရှိတဲ့ key" နဲ့ မကန့်သတ်ဘူး —
-stored key **တိုင်း** result ထဲ ရောက်တယ်။
+The loop in `deepMerge(target, source)` in `src/lib/stores/settings.svelte.ts` is
+`Object.keys(source)` — `source` is the **stored profile** coming out of `localStorage`
+(`sms-reader-settings`), `target` is the defaults. So the merge is not restricted to "keys that exist
+in DEFAULT" — **every** stored key lands in the result.
 
-**အကျိုးဆက်:** `SettingsState` ကနေ field ဖျက်လိုက်တာဟာ user တစ်ဦးရဲ့ ရှိပြီးသား profile ကို
-**မရှင်းလင်းပေးဘူး**။ `otp.otpPattern`၊ `developer.logLevel` စတာတွေ localStorage ထဲ ကျန်နေတယ်၊
-ပြီးတော့ `saveSettings` က object တစ်ခုလုံးကို stringify တာမို့ **save တိုင်း ပြန်ရေးခံရတယ်**။
+**Consequence:** deleting a field from `SettingsState` does **not clean it out of** an existing
+user's profile. `otp.otpPattern`, `developer.logLevel` and the rest stay in localStorage, and since
+`saveSettings` stringifies the whole object they get **written back on every save**.
 
-- ယခု အထိ **အပြစ်မရှိ** — ဘယ်သူမှ မဖတ်တာမို့
-- **အနာဂတ် ချောင်း:** နာမည် တူတဲ့ field အသစ်တစ်ခု (ဥပမာ `developer.logLevel` ကို ပုံစံ
-  ပြောင်းပြီး ပြန်ထည့်တာ) က **stale value ကို အမွေရမယ်** — default ကို မဟုတ်ဘူး။ ဒါက user
-  ရဲ့ machine မှာပဲ ဖြစ်တာမို့ "ငါ့ဆီမှာ မဖြစ်ဘူး" class bug
-- **Rule:** field နာမည်ကို semantic ပြောင်းပြီး ဘယ်တော့မှ recycle မလုပ်ပါနဲ့။ တကယ် လိုရင်
-  `migrate()` (retention migration နဲ့ တူတဲ့ ပုံစံ) ထဲမှာ key ကို explicit `delete` လုပ်ပါ။
-  `deepMerge` ကို DEFAULT key အလိုက် iterate ဖြစ်အောင် ပြောင်းလည်း ရတယ် — ဒါပေမဲ့ အဲ့ဒါက
-  legacy shape တွေအတွက် migration အားလုံး အရင် ပြေးရမယ်လို့ ဆိုလိုတယ်
+- **Harmless so far** — because nobody reads them
+- **The trap ahead:** a new field carrying the same name (for example reintroducing
+  `developer.logLevel` in a different shape) would **inherit the stale value** — not the default.
+  This happens only on that user's machine, so it is a "it doesn't happen for me" class of bug
+- **Rule:** never recycle a field name with changed semantics. If it is genuinely needed, `delete`
+  the key explicitly inside `migrate()` (the same shape as the retention migration). `deepMerge`
+  could also be changed to iterate by DEFAULT key — but that means every migration for the legacy
+  shapes has to run first
 
-### T2. Settings page က data-driven၊ binding path မှာ **type check မရှိ**
+### T2. The Settings page is data-driven, and the binding path has **no type check**
 
-`src/lib/pages/Settings.svelte` က field descriptor array (`{ key, label, type, bind, … }`) ကနေ
-render တယ်၊ value access က `getNestedValue(obj: any, path: string): any` /
-`setNestedValue(obj: any, …)` — path က `` `${field.bind}.${field.key}` `` string concat။
+`src/lib/pages/Settings.svelte` renders out of an array of field descriptors
+(`{ key, label, type, bind, … }`), and value access goes through
+`getNestedValue(obj: any, path: string): any` / `setNestedValue(obj: any, …)` — where the path is
+the string concatenation `` `${field.bind}.${field.key}` ``.
 
-ဆိုတော့ **မရှိတဲ့ `bind`/`key` pair က compile error မတက်ဘူး**၊ `svelte-check` လည်း မဖမ်းဘူး —
-runtime မှာ `undefined` ပဲ။ Checkbox အတွက် အဲ့ဒါက "အမြဲ off ပုံပေါက်တာ"၊ `setterFor(field.bind)`
-က `undefined` ပြန်ရင် persist မဖြစ်တာ။
+Which means **a `bind`/`key` pair that does not exist raises no compile error**, and `svelte-check`
+does not catch it either — at runtime it is simply `undefined`. For a checkbox that means "it always
+looks off", and if `setterFor(field.bind)` returns `undefined` nothing persists.
 
-- `fbd7b8b` မှာ field ၁၁ ခု ဖျက်တာ type-safe ဖြစ်ခဲ့တာ **တိုက်ဆိုင်မှုသာ** —
-  `SettingsState` ကနေ ဖျက်ပြီး descriptor ကို ချန်ခဲ့ရင် build အောင်မြင်ပြီး switch က
-  တိတ်တဆိတ် ပျက်နေမယ်
-- **Rule:** control အသစ် ထည့်/ဖျက် ရင် **Settings page ကို ကိုယ်တိုင် နှိပ်ပြီး စမ်းပါ** —
-  reload ပြီးရင် value ကျန်လား၊ consumer တကယ် တုံ့ပြန်လား။ Type checker က ဒီအလွှာမှာ
-  မကာကွယ်ပေးဘူး (doc 04 §H)
+- The eleven fields deleted in `fbd7b8b` turning out type-safe was **coincidence, nothing more** —
+  delete from `SettingsState` and leave the descriptor behind and the build succeeds while the
+  switch quietly does nothing
+- **Rule:** when you add or delete a control, **click through the Settings page yourself** — does
+  the value survive a reload, does the consumer actually respond? The type checker does not protect
+  this layer (doc 04 §H)
 
-### T3. `KW_CONFIRM` keyword constant က စာလုံးပေါင်း မှားခဲ့တယ် (OTP gate — **v1.4.0 မှာ ပြင်ပြီး**)
+### T3. The `KW_CONFIRM` keyword constant was misspelled (OTP gate — **fixed in v1.4.0**)
 
-**အရင်က ဒီလို ဖြစ်ခဲ့တယ် (context အတွက် ကျန်ထား):** `src-tauri/src/core/decoder.rs` ရဲ့
-keyword constant က
+**How it used to be (kept for context):** the keyword constant in
+`src-tauri/src/core/decoder.rs` was
 
 ```rust
-const KW_CONFIRM: &str = "\u{1021}\u{1010}\u{1014}\u{103A}\u{1015}\u{103C}\u{102F}"; // = အတန်ပြု
+const KW_CONFIRM: &str = "\u{1021}\u{1010}\u{1014}\u{103A}\u{1015}\u{103C}\u{102F}"; // = a-ta-na-pyu
 ```
 
-`\u{1014}` က **န**။ မြန်မာ "confirm" က **အတည်ပြု** — `\u{100A}` (**ည**) ဖြစ်ရမယ်။ ဆိုတော့
-`KEYWORD_RE` gate ထဲက ဒီ alternative က **တကယ့် SMS ဘယ်တော့မှ မ match ခဲ့ဘူး** (မရှိတဲ့ စာလုံးပေါင်း)။
+`\u{1014}` is **na**. Myanmar "confirm" is **a-ta-nya-pyu** — it has to be `\u{100A}` (**nya**). So
+this alternative inside the `KEYWORD_RE` gate **never matched a real SMS** (a spelling that does not
+exist).
 
-- **အရင် Impact:** အခြား keyword (`otp`, `code`, `pin`, `ကုဒ်`, `လုံခြုံ`, `verify`…) မပါဘဲ
-  **"အတည်ပြု" တစ်ခုတည်း** သုံးတဲ့ မြန်မာ OTP SMS က gate ကို မဖြတ်ဘူး → OTP မတွေ့ဘူး
-  (silent miss — decoder က `None` ပြန်တာမို့ error မတက်)
-- Unit test တစ်ခုမှ ဒီ constant ကို မထိထားခဲ့ဘူး၊ ဒါကြောင့် green test suite က ဒါကို မဖမ်းခဲ့ဘူး
-- **အခု ပြင်ပြီးသွားပြီ (v1.4.0):** `src-tauri/src/core/decoder.rs:7` က `\u{100A}` သုံးပြီ —
-  constant က **အတည်ပြု** ဖြစ်သွားပြီ။ Regression test လည်း ပါလာပြီ:
-  `src-tauri/src/core/decoder.rs:943` `otp_myanmar_confirm_keyword` — "အတည်ပြု" body နဲ့
-  `extract_otp` က OTP ပြန်ရမယ်၊ ပြီးတော့ **keyword ဖြုတ်ထားတဲ့ တူတူ body** က `None`
-  ပြန်ရမယ် (negative control — gate ကို တကယ် ဖွင့်ပေးတာ ဒီ keyword ဆိုတာ သက်သေ)
-- **ချောင်းအဖြစ် ဒီအတိုင်း မှတ်ထား** — bug class က ကျန်နေတယ်။ **Keyword constant ထဲက Unicode
-  escape sequence ကို မျက်လုံးနဲ့ စစ်လို့ မရဘူး**: `\u{1014}` ↔ `\u{100A}` က code point တစ်ခုပဲ
-  ကွာတယ်၊ diff/review မှာ ဘယ်သူမှ မမြင်ဘူး၊ compiler နဲ့ regex ၂ ခုလုံးအတွက်လည်း valid ပဲ။
-  **render ဖြစ်လာတဲ့ စာလုံးကို assert လုပ်တဲ့ test** ပဲ ဖမ်းနိုင်တာ — escape ကို ပြန်ဖတ်ကြည့်တာ မဟုတ်ဘူး
-- **Rule:** မြန်မာ (ဒါမှမဟုတ် non-ASCII) keyword constant အသစ် ထည့်တိုင်း **သူ့ကို match
-  ဖြစ်ရမယ့် body တစ်ခု + မဖြစ်ရမယ့် body တစ်ခု** နဲ့ test ထည့်ပါ။ Constant တစ်ခုတည်းကို
-  မှန်လား စစ်တာ မလုံလောက်ဘူး — gate တစ်ခုလုံးကို ပြေးခိုင်းပါ
+- **Impact at the time:** a Myanmar OTP SMS using **"a-ta-nya-pyu" and nothing else**, with none of
+  the other keywords (`otp`, `code`, `pin`, the Myanmar `KW_KODE`/`KW_SECURE` words, `verify`…), did
+  not get through the gate → no OTP found (a silent miss — the decoder returns `None`, so no error
+  is raised)
+- Not one unit test touched this constant, which is why a green test suite did not catch it
+- **Now fixed (v1.4.0):** `src-tauri/src/core/decoder.rs:7` uses `\u{100A}`, so the constant now
+  spells **a-ta-nya-pyu**. A regression test came with it:
+  `src-tauri/src/core/decoder.rs:943` `otp_myanmar_confirm_keyword` — `extract_otp` must return the
+  OTP for a body containing "a-ta-nya-pyu", and must return `None` for **the same body with the
+  keyword removed** (a negative control — the evidence that it really is this keyword that opens the
+  gate)
+- **Kept here as a trap all the same** — the bug class remains. **A Unicode escape sequence inside a
+  keyword constant cannot be checked by eye**: `\u{1014}` ↔ `\u{100A}` differ by a single code
+  point, nobody sees it in a diff or a review, and both are perfectly valid to the compiler and to
+  the regex. Only **a test that asserts on the rendered characters** can catch it — not rereading
+  the escape
+- **Rule:** every time you add a new Myanmar (or other non-ASCII) keyword constant, add a test with
+  **one body that must match it and one that must not**. Checking whether the constant on its own is
+  correct is not enough — make it run the whole gate
 
-### T4. `retentionHours` က Rust ကို unclamped ရောက်ပြီး panic ဖြစ်တာ (retention layer — **v1.5.0 မှာ ပြင်ပြီး**)
+### T4. `retentionHours` reaching Rust unclamped and panicking (retention layer — **fixed in v1.5.0**)
 
-**Symptom (field မှာ မဖြစ်သေးဘူး — test နဲ့ reproduce လုပ်ခဲ့တာ):** `retentionHours` က
-`1e13` ဝန်းကျင် ဖြစ်ရင် `purge_expired_messages` / `cleanup_sim_storage` က panic တယ်။
-ပိုဆိုးတာက `start_live` — `live.rs:265`/`:361` မှာ port တစ်ခုချင်းစီ panic ဖြစ်ပြီး
-`catch_unwind` က `Closed { error: "Worker crashed" }` ပြောင်းပေးတာမို့ **live mode က
-port အားလုံးမှာ ရှင်းလင်းချက်မရှိဘဲ ရပ်သွားမယ်**။ Process က မသေဘူး (`panic = "abort"` မထားဘူး)၊
-feature ပဲ သေတယ်
+**Symptom (never seen in the field — reproduced with a test):** when `retentionHours` is around
+`1e13`, `purge_expired_messages` / `cleanup_sim_storage` panic. Worse still is `start_live` — at
+`live.rs:265`/`:361` every single port panics and `catch_unwind` converts it into
+`Closed { error: "Worker crashed" }`, so **live mode stops on every port with no explanation**. The
+process does not die (`panic = "abort"` is not set), only the feature does
 
-- **Root Cause ၂ ဆင့်:**
-  1. `retention_from_hours` က `!h.is_finite()` နဲ့ `h <= 0.0` ကို ကာထားပေမယ့် **အပေါ်ဘက်
-     မကာထားဘူး**။ `Duration::from_secs_f64` က overflow မှာ panic တယ် (`h` ≳ 5.1e15)
-  2. အဲ့ဒါ လွတ်လာရင် `models::retention_cutoff_ms` မှာ `chrono::Duration::seconds(i64::MAX)`
-     က "out of bounds" panic တယ် (`i64::MAX / 1000` စက္ကန့် ကျော်ရင်)
-- **ဘယ်လို ရောက်လာလဲ:** Settings UI က fixed-option `select` ဖြစ်တာမို့ UI ကနေ မရောက်ဘူး။
-  ဒါပေမယ့် store က `localStorage` ကနေ rehydrate ဖြစ်တယ် — profile အို၊ လက်ပြင်၊ corrupt entry
-  ကနေ ရောက်တယ်။ `api.ts` က `<= 0` ပဲ စစ်တယ်။ App ရဲ့ purge timer က **၆၀ စက္ကန့်တစ်ခါ**
-  ပြန်ခေါ်တာမို့ ဖြစ်ရင် ထပ်ခါထပ်ခါ ဖြစ်မယ်
-- **Fix (v1.5.0):** `MAX_RETENTION_HOURS = 87_600.0` (၁၀ နှစ်) — အဲ့ဒါ ကျော်ရင် `None` ပြန်တယ်။
-  ၁၀ နှစ်ကျော် retention က "keep everything" နဲ့ **semantically အတူတူ** ဖြစ်တာမို့ ရှိပြီးသား
-  "0 = off" precedent နဲ့ တစ်ထပ်တည်း ကျတယ် — error ပြန်တာထက် ပိုကောင်းတယ်၊ ဘာလို့လဲဆိုတော့
-  မှားတဲ့ value ဟာ exception မဟုတ်ဘဲ **သာမာန်** input ဖြစ်တာမို့။ `Duration::try_from_secs_f64`
-  သုံးတယ်။ `retention_cutoff_ms` က backstop အနေနဲ့ `try_seconds` + `checked_sub_signed` နဲ့
-  `i64::MIN` ကို saturate တယ် — "ဘာမှ မအိုသေးဘူး" ဆိုတဲ့ လုံခြုံတဲ့ အဖြေ
+- **Root Cause in two stages:**
+  1. `retention_from_hours` guards `!h.is_finite()` and `h <= 0.0` but **does not guard the upper
+     end**. `Duration::from_secs_f64` panics on overflow (`h` ≳ 5.1e15)
+  2. If that gets through, `chrono::Duration::seconds(i64::MAX)` in `models::retention_cutoff_ms`
+     panics with "out of bounds" (once past `i64::MAX / 1000` seconds)
+- **How it gets there:** the Settings UI is a fixed-option `select`, so it cannot arrive from the UI.
+  But the store rehydrates out of `localStorage` — it arrives from an old profile, a hand edit or a
+  corrupt entry. `api.ts` only checks `<= 0`. And the app's purge timer calls back in **every 60
+  seconds**, so once it happens it keeps happening
+- **Fix (v1.5.0):** `MAX_RETENTION_HOURS = 87_600.0` (10 years) — past that it returns `None`. A
+  retention window over 10 years is **semantically the same thing** as "keep everything", so it lines
+  up exactly with the existing "0 = off" precedent — better than returning an error, because a wrong
+  value here is **ordinary** input, not an exception. `Duration::try_from_secs_f64` is used.
+  `retention_cutoff_ms` as a backstop saturates at `i64::MIN` using `try_seconds` +
+  `checked_sub_signed` — the safe answer being "nothing has aged out yet"
 - **Test:** `an_absurd_retention_window_is_off_not_a_panic` (commands),
   `an_absurd_retention_window_saturates_instead_of_panicking` (models)
-- **Rule ၁:** Numeric setting ကို ကာတဲ့အခါ **အောက်ဘက် တစ်ဖက်တည်း မကာပါ**။ `<= 0` စစ်ပြီးရင်
-  "ကာပြီး" လို့ ထင်လွယ်တယ် — ဒါပေမယ့် panic က အပေါ်ဘက်မှာ ရှိတယ်
-- **Rule ၂:** `localStorage` ကနေ လာတဲ့ value တိုင်းကို **Rust မှာ** clamp/reject ပါ။ Frontend က
-  validator မဟုတ်ဘူး: Settings ရဲ့ number input က `min`/`max` ကို DOM element ပေါ်ပဲ ထားတယ်၊
-  `onchange` က `parseInt` ရလာတာကို unclamped သိမ်းတယ်
-- **Rule ၃:** Worker thread ထဲက panic ကို `catch_unwind` နဲ့ ဖမ်းထားတာက **root cause ကို
-  ဖုံးတယ်**။ `Worker crashed` ဆိုတဲ့ message က operator အတွက် ဘာမှ မဖြေရှင်းပေးဘူး —
-  panic ဖြစ်နိုင်တဲ့ input ကို worker ထဲ မရောက်ခင် ဖယ်ပါ
+- **Rule 1:** When you guard a numeric setting, **do not guard only the bottom end**. Having checked
+  `<= 0` it is easy to think it is "guarded" — but the panic is at the top end
+- **Rule 2:** Clamp or reject **in Rust** every value that comes out of `localStorage`. The frontend
+  is not a validator: the Settings number input puts `min`/`max` on the DOM element only, and
+  `onchange` stores whatever `parseInt` returned, unclamped
+- **Rule 3:** Catching a panic from a worker thread with `catch_unwind` **hides the root cause**. A
+  `Worker crashed` message resolves nothing for the operator — keep the panic-capable input out of
+  the worker in the first place
 
-### T5. Busy flag က panic path မှာ မရှင်းတာ — restart မလုပ်မချင်း "Busy" (busy-flag layer — **v1.5.0 မှာ ပြင်ပြီး**)
+### T5. A busy flag not cleared on the panic path — "Busy" until a restart (busy-flag layer — **fixed in v1.5.0**)
 
-**Symptom (field မှာ မဖြစ်သေးဘူး):** operation တစ်ခု panic ဖြစ်ရင် `port_busy()` က ထာဝရ
-`true` ကျန်တယ် → Scan / Live / Get SIM / Delete / Cleanup / Detect **အားလုံး** `Busy` ပြန်တယ်၊
-app restart မလုပ်မချင်း ပြန်မကောင်းဘူး။ Log မှာ panic တစ်ခုပဲ ပါမယ်၊ ဘာလို့ ပိတ်နေတာလဲ ဆိုတာ
-UI မှာ ဘာမှ မပြဘူး
+**Symptom (never seen in the field):** if an operation panics, `port_busy()` stays `true` forever →
+Scan / Live / Get SIM / Delete / Cleanup / Detect **all** return `Busy`, and nothing recovers until
+the app is restarted. The log holds one panic, and the UI shows nothing at all about why everything
+is shut
 
-- **Root Cause:** busy flag ၆ ခုလုံးကို **ordinary statement** နဲ့ ရှင်းခဲ့တယ် (`:369, :506,
-  :642, :1051, :1222, :1395`) — unwind မှာ မဟုတ်ဘူး။ ဆိုတော့ per-port `catch_unwind`
-  အပြင်ဘက်မှာ panic ဖြစ်ရင် flag က ကျန်တယ်။ ကိစ္စ ၂ ခု အထင်ရှားဆုံး:
-  1. **`delete_selected`** — `catch_unwind` က modem loop ကိုပဲ ဝိုင်းထားတယ်။ အဲ့နောက်က
-     bookkeeping (`confirmed_removals`, `kept` တွက်တာ) မှာ panic ဖြစ်ရင် `delete_busy` ကျန်
-  2. **`start_live`** — supervisor thread မှာ `catch_unwind` **လုံးဝ မရှိခဲ့ဘူး**၊ ပြီးတော့
-     သူက `live_on` **နဲ့** `live_stop` နှစ်ခုလုံး ပိုင်တယ်။ Join နဲ့ clear အကြား panic ဖြစ်ရင်
-     နှစ်ခုလုံး ကျန်တယ် — `live_stop.is_some()` က `port_busy()` ရဲ့ အစိတ်အပိုင်း ဖြစ်တာမို့
-     gate က နှစ်ဆ ပိတ်တယ်
-  3. Live per-port worker မှာလည် `catch_unwind` မရှိခဲ့ဘူး — panic ဖြစ်ရင် `join()` က
-     တိတ်တဆိတ် စားလိုက်တယ်၊ port ကို failed လို့ မမှတ်ဘူး၊ **LIVE badge က အစိမ်း ကျန်ပြီး
-     message တစ်ခုမှ မဖမ်းဘူး**
-- **Fix (v1.5.0) — `BusyGuard` (Drop guard):** `{ state: SharedState, clear: fn(&mut AppStateInner) }`။
-  `lock_state` က poison-recovering ဖြစ်တာမို့ panic ပြီးလည် lock ရတယ် (ဒါက guard ကို
-  အလုပ်လုပ်စေတဲ့ အချက်)။ **Repo ရဲ့ ပထမဆုံး `impl Drop`** ဖြစ်တယ်
-- **အရေးကြီး — happy path ကို မထိဘူး:** ရှိပြီးသား inline clear တွေ အတိုင်း ထားတယ်။
-  Command တစ်ချို့က အဲ့ တူတဲ့ lock ထဲမှာ ထပ်အလုပ် လုပ်တယ် (`sim_dir.save()`, status line
-  တည်တာ) — အဲ့ ordering ကို ပြောင်းတာ ဒီ guard ရဲ့ အလုပ် မဟုတ်ဘူး။ ဆိုတော့ `clear` က
-  **idempotent** ဖြစ်ရမယ်၊ guard က **panic path မှာပဲ** တကယ် အလုပ်လုပ်တယ်
-- **Guard ကို command ထဲမှာ တည်ပြီး closure ထဲ `move` လုပ်ပါ** — `thread::spawn` ကိုယ်တိုင်
-  panic ဖြစ်ရင်တောင် closure (နဲ့ guard) က အဲ့ unwind အတွင်း drop ဖြစ်ပြီး flag ရှင်းမယ်။
-  Closure **အထဲမှာ** တည်ရင် ဒီကိစ္စ လွတ်သွားမယ်
-- **`AppStateInner` shape မပြောင်းဘူး** (guard က `Arc` ကိုင်တယ်) — ဒါကြောင့် struct literal
-  ၃ ခု (`new_shared_state`, `idle_state`, `live_state`) နဲ့
-  `port_busy_covers_every_operation_that_owns_a_port` ရဲ့ `[fn(&mut AppStateInner); 6]`
-  array က မပြင်ဘဲ compile ဖြစ်တယ်။ **ရည်ရွယ်ချက်ရှိရှိ ဒီဇိုင်း**
-- **Live worker panic ကို မြင်စေတယ်:** `live::WORKER_PANIC` ("Live worker crashed — see the
-  log") ကို `live_error` အဖြစ် တင်ပြီး `live_failed` ထဲ ထည့်၊ `ports:updated` emit တယ်။
-  **`modem::NOT_RESPONDING` နဲ့ ရောမထားပါ** — အဲ့ဒါ တစ်ခုတည်းသာ `alive = Some(false)`
-  သတ်မှတ်ခွင့် ရှိတယ်၊ worker crash က slot ထဲ SIM ရှိလား မရှိလား ဘာမှ မပြောဘူး
-- **Test ၄ ခု:** `busy_guard_releases_the_gate_on_an_unwind`,
-  `..._on_a_normal_return`, `busy_guard_is_a_no_op_once_the_flag_is_already_clear`
-  (guard က တခြား operation ရဲ့ flag ကို မထိရ), `busy_guard_releases_both_live_flags`
-- **Rule ၁:** **"exit path တိုင်းမှာ ရှင်းတယ်" ဆိုတာ နေရာ ၅-၆ ခုမှာ မှတ်ထားရတာ မဟုတ်ဘဲ
-  structural ဖြစ်ရမယ်။** Flag ကို ပိုင်တဲ့ type တစ်ခု ထားလိုက်ရင် "မေ့သွားတာ" က compile
-  ဖြစ်နိုင်တဲ့ အခြေအနေ မဟုတ်တော့ဘူး
-- **Rule ၂:** `catch_unwind` ရဲ့ **အတိုင်းအတာ** ကို စစ်ပါ။ Loop ကိုပဲ ဝိုင်းထားတာက loop
-  အပြင်က bookkeeping ကို မကာဘူး — `delete_selected` က အဲ့ဒီ ကိစ္စ
-- **Rule ၃:** **Scope မဟုတ်တာကို scope မဟုတ်ဘူးလို့ ရေးထားပါ။** Supervisor ၄ ခုကို
-  `run_port_pool` အဖြစ် ပေါင်းတာ ဒီ change ထဲ မပါဘူး: panic policy **၄ မျိုး မတူ**တယ်
-  (scan: `failed_notes` push + `done` တိုး · ussd: `done` ပဲ တိုး, ဆိုတော့ panic ဖြစ်တဲ့ port က
-  "မတွေ့ဘူး" လို့ ဖတ်တယ် · cleanup: failure counter တိုး · detect: **v1.5.0 (#19) ကတည်းက
-  `ProbeVerdict::Inconclusive` — `alive`/`checked`/`iccid`/`sim_dir` မထိဘူး**; အရင်က dead လို့
-  သတ်မှတ်ပြီး `sim_dir` slot ရှင်းခဲ့တာ ဒီ case §16 ကိုယ်တိုင်)။ ပေါင်းရင် policy တစ်ခု ရွေးရမယ်
-  ဒါမှမဟုတ် per-port on-panic callback ထည့်ရမယ် — ဒါက behaviour-normalising refactor ဖြစ်တာမို့
-  သီးသန့် change။ **တမင် ရွှေ့ထားတာ၊ entry က doc 05 §C.10**
+- **Root Cause:** all six busy flags were cleared with an **ordinary statement** (`:369, :506,
+  :642, :1051, :1222, :1395`) — not on the unwind. So a panic outside the per-port `catch_unwind`
+  leaves the flag set. The two clearest instances:
+  1. **`delete_selected`** — the `catch_unwind` wraps the modem loop only. A panic in the
+     bookkeeping after it (`confirmed_removals`, computing `kept`) leaves `delete_busy` set
+  2. **`start_live`** — the supervisor thread had **no `catch_unwind` whatsoever**, and it owns
+     `live_on` **and** `live_stop` both. A panic between the join and the clear leaves both set —
+     and since `live_stop.is_some()` is part of `port_busy()`, the gate is shut twice over
+  3. The live per-port worker had no `catch_unwind` either — on a panic `join()` swallows it
+     silently, the port is not marked failed, and **the LIVE badge stays green while catching not a
+     single message**
+- **Fix (v1.5.0) — `BusyGuard` (a Drop guard):**
+  `{ state: SharedState, clear: fn(&mut AppStateInner) }`. Because `lock_state` is
+  poison-recovering, the lock is still obtainable after a panic (that is what makes the guard work
+  at all). It is the **repo's first `impl Drop`**
+- **Important — the happy path is untouched:** the existing inline clears were left as they are.
+  Some commands do extra work inside that same lock (`sim_dir.save()`, building the status line) —
+  changing that ordering is not this guard's job. Which means `clear` has to be **idempotent**, and
+  the guard only really does work **on the panic path**
+- **Construct the guard in the command and `move` it into the closure** — that way, even if
+  `thread::spawn` itself panics, the closure (and the guard) is dropped during that unwind and the
+  flag is released. Construct it **inside** the closure and this case slips through
+- **The `AppStateInner` shape does not change** (the guard holds an `Arc`) — which is why the three
+  struct literals (`new_shared_state`, `idle_state`, `live_state`) and
+  `port_busy_covers_every_operation_that_owns_a_port`'s `[fn(&mut AppStateInner); 6]` array compile
+  unchanged. **That is by design**
+- **It makes a live worker panic visible:** `live::WORKER_PANIC` ("Live worker crashed — see the
+  log") is put into `live_error`, the port is pushed into `live_failed`, and `ports:updated` is
+  emitted. **Do not confuse it with `modem::NOT_RESPONDING`** — only that one is allowed to set
+  `alive = Some(false)`, and a worker crash says nothing about whether there is a SIM in the slot
+- **Four tests:** `busy_guard_releases_the_gate_on_an_unwind`, `..._on_a_normal_return`,
+  `busy_guard_is_a_no_op_once_the_flag_is_already_clear` (the guard must not touch another
+  operation's flag), `busy_guard_releases_both_live_flags`
+- **Rule 1:** **"it is cleared on every exit path" has to be structural, not something you remember
+  in five or six places.** Give the flag an owning type and "forgetting" stops being a state the
+  code can compile into
+- **Rule 2:** Check the **extent** of a `catch_unwind`. Wrapping only the loop does not cover the
+  bookkeeping outside the loop — `delete_selected` is that very case
+- **Rule 3:** **Write down what is not in scope as not in scope.** Merging the four supervisors into
+  a `run_port_pool` is not part of this change: the panic policies are **four different ones**
+  (scan: push `failed_notes` + increment `done` · ussd: increment `done` only, so a port that
+  panicked reads as "not found" · cleanup: increment the failure counter · detect: **since v1.5.0
+  (#19) `ProbeVerdict::Inconclusive` — `alive`/`checked`/`iccid`/`sim_dir` untouched**; the old
+  behaviour of marking it dead and clearing the `sim_dir` slot is this very case, §16). Merging them
+  means either picking one policy or adding a per-port on-panic callback — and since that is a
+  behaviour-normalising refactor, it is a separate change. **Deliberately deferred; the entry is doc
+  05 §C.10**
 
 ## Bonus UX Notes
 
 - **User-reported 404 on releases page** but server-side probes said HTTP 200 (public repo) →
-  browser cache/transient CDN — hard refresh/incognito/direct tag URL နဲ့ cross-check လုပ်ဘိုး။
-- **`gh` CLI:** `export GH_PAGER=cat PAGER=cat` မလုပ်ရင် interactive pager block ဖြစ်နိုင် (non-interactive shell trap);
-  long polls ကို background process + `/tmp/*.txt` capture pattern သုံး။
+  browser cache/transient CDN — cross-check with a hard refresh, incognito or the direct tag URL.
+- **`gh` CLI:** without `export GH_PAGER=cat PAGER=cat` the interactive pager can block
+  (non-interactive shell trap); for long polls use the background process + `/tmp/*.txt` capture
+  pattern.

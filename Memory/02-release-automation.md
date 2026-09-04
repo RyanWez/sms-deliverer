@@ -1,7 +1,7 @@
 # 02 — Release Automation Pipeline
 
-> `git push` တစ်ခုတည်းနဲ့ version bump → changelog → tag → GitHub Release → signed installers
-> → `latest.json` → in-app updater အထိ အလိုအလျောက်လည်နေတဲ့ system ရဲ့ အပြည့်အစုံ။
+> The whole system that runs by itself off a single `git push`: version bump → changelog → tag → GitHub Release → signed installers
+> → `latest.json` → in-app updater.
 
 ## Architecture
 
@@ -10,15 +10,15 @@ git push origin main                      (conventional commits)
         │
         ▼
 [release-please workflow]                 (push event)
-  Conventional commits ကို analyze
-  ├─ feat:/fix:/feat!: ရှိရင် ──▶ Release PR auto-open/bump
+  analyzes the conventional commits
+  ├─ if feat:/fix:/feat!: present ──▶ Release PR auto-open/bump
   │      "chore(main): release X.Y.Z"
   │      diff: package.json + CHANGELOG.md + tauri.conf.json + Cargo.toml (+ Cargo.lock manual cargo check)
-  └─ chore:/docs:/ci: ပဲရှိရင်  ▶ PR မဖွင့် (state မပြောင်း)
+  └─ if only chore:/docs:/ci:     ▶ no PR opened (no state change)
         │
         ▼  Human: PR title/diff review → Merge (squash recommended)
 [autorelease]  ◀── release-please does tagging on merge
-  Tag vX.Y.Z + GitHub Release + notes (commit messages ကနေ)
+  Tag vX.Y.Z + GitHub Release + notes (from the commit messages)
         │
         ▼
 [publish workflow]                        (release published event)
@@ -27,36 +27,36 @@ git push origin main                      (conventional commits)
   → *.exe / *.msi / AppImage / deb / rpm + *.sig + latest.json (updater manifest)
         │
         ▼
-App ထဲ Update Check
+Update Check inside the app
   GET https://github.com/RyanWez/sms-deliverer/releases/latest/download/latest.json
-  compare version vs runtime → Settings → Updates ရဲ့ release-notes card
+  compare version vs runtime → the release-notes card in Settings → Updates
   → "Update Now" = download only (signature verify) → "Restart Now" = install + relaunch
 ```
 
-> **v1.3.0 ကနေစပြီး** download နဲ့ install က သီးသန့် step နှစ်ခု
-> (`update.download()` → `update.install()`)။ `downloadAndInstall()` မသုံးတော့ဘူး —
-> user က release notes ဖတ်ပြီး restart timing ကို ကိုယ်တိုင် ရွေးနိုင်ရမယ် (live ports
-> အလုပ်လုပ်နေချိန် app ကို ကိုယ်တိုင် restart မလုပ်ဖို့)။ Windows မှာ `install()` က
-> installer ကို လွှတ်ပြီး process ကို ကိုယ်တိုင် ပိတ်တာမို့ `relaunch()` က Linux path မှာသာ ရောက်တယ်။
-> Manual check ကို `MANUAL_COOLDOWN_MS = 60s` cooldown နဲ့ ကန့်သတ်ထားတယ်၊
-> background timer က `BACKGROUND_MIN_GAP_MS = 15min` (`src/lib/utils/update-policy.ts`)။
+> **From v1.3.0 onward** download and install are two separate steps
+> (`update.download()` → `update.install()`). `downloadAndInstall()` is no longer used —
+> the user has to read the release notes and then pick the restart timing themselves (so nobody is
+> forced to restart the app while live ports are working). On Windows `install()`
+> launches the installer and closes the process itself, so `relaunch()` is only ever reached on the Linux path.
+> A manual check is held back by a `MANUAL_COOLDOWN_MS = 60s` cooldown,
+> and the background timer by `BACKGROUND_MIN_GAP_MS = 15min` (`src/lib/utils/update-policy.ts`).
 
-## Config Inventory (ဘယ် file က ဘာလုပ်လဲ)
+## Config Inventory (which file does what)
 
 | File | Role |
 |---|---|
 | `release-please-config.json` | RP behavior: release-type=node, `include-component-in-tag:false`, extra-files (see below) |
 | `.release-please-manifest.json` | Current released version pin — `{ ".": "1.0.1" }` |
-| `.github/workflows/release-please.yml` | Push event → googleapis/release-please-action@v4 (`config-file`+`manifest-file` args မမေ့နဲ့) |
+| `.github/workflows/release-please.yml` | Push event → googleapis/release-please-action@v4 (do not forget the `config-file` + `manifest-file` args) |
 | `.github/workflows/tauri-build.yml` | Release published event → tauri-apps/tauri-action@v0 matrix build |
 | `src-tauri/tauri.conf.json` | `"createUpdaterArtifacts": true` (signed .sig output!), `plugins.updater.pubkey`, endpoints |
 
-## Critical Config Details (tdouble-check လုပ်စရာများ)
+## Critical Config Details (the things worth double-checking)
 
 ### 1️⃣ Tag naming — `include-component-in-tag: false`
-Upstream default က **true** (`base.ts:152 → options.includeComponentInTag ?? true`)။ မထည့်ရင် tag က
-`sms-tauri-v1.0.2` ဖြစ်သွားမယ် → baseline `v1.0.1` convention နဲ့ ကွာ → compare links ပျက်၊
-RP က ကိုယ့် tag ကို "မတွေ့" လို့ မှားယွင်းတဲ့ PR ဖွင့်နိုင်တယ် (PR #4/#5 ဖြစ်ခဲ့တဲ့ case)။
+The upstream default is **true** (`base.ts:152 → options.includeComponentInTag ?? true`). Leave it out and the tag
+becomes `sms-tauri-v1.0.2` → it diverges from the baseline `v1.0.1` convention → compare links break,
+and RP can open a wrong PR because it does not "see" our own tag (the case that produced PR #4/#5).
 
 ### 2️⃣ Multi-file version bump — extra-files
 ```json
@@ -65,105 +65,105 @@ RP က ကိုယ့် tag ကို "မတွေ့" လို့ မှာ
   { "type": "toml", "path": "src-tauri/Cargo.toml",     "jsonpath": "$.package.version" }
 ]
 ```
-node type က package.json ကို ကိုယ်စား bump ပြီးသား — ဒီ extra-files ၂ ခုက tauri side ချိတ်ပေးတာ။
-Release PR diff ထဲမှာ `"version"` lines ၄ ခုလုံး ပြောင်းနေမယ်ဆိုတာ စစ်ထားပါ။
+The node type already bumps package.json on our behalf — these two extra-files are what hook the tauri side in.
+Check that all four `"version"` lines are changing in the Release PR diff.
 
-### 3️⃣ Signed updater artifacts chain (မဟုတ်ရင် latest.json upload SKIP ဖြစ်မယ်)
+### 3️⃣ Signed updater artifacts chain (without it the latest.json upload is SKIPPED)
 ```
 createUpdaterArtifacts:true (conf) + TAURI_PRIVATE_KEY + PASSWORD (secrets)
-  → bundle output မှာ .sig files ရ
-  → tauri-action မှ မှ latest.json generate/upload လုပ်နိုင်
-missing piece ရှိရင် CI log မှာ exact line: "Signature not found for the updater JSON. Skipping upload..."
+  → .sig files appear in the bundle output
+  → only then can tauri-action generate/upload latest.json
+if a piece is missing, the exact line in the CI log: "Signature not found for the updater JSON. Skipping upload..."
 ```
 
 ### 4️⃣ First/bootstrap release (manual)
-Tag မရှိသေးခင် ကိုယ်တိုင် ထုတ်တာက publish workflow ကို trigger လုပ်တဲ့ official လမ်း:
+Before any tag exists, cutting one by hand is the official way to trigger the publish workflow:
 ```bash
 gh release create v1.0.1 --target main --title "v1.0.1" --notes-file notes.md
 ```
-(release published event → publish run ချက်ချင်း start — RP မလိုဘဲ baseline ချနဲ့)
+(release published event → the publish run starts immediately — lay the baseline down without needing RP)
 
-### 5️⃣ Platform policy — Windows + Linux only (macOS ဘယ်တော့မှမထုတ်)
+### 5️⃣ Platform policy — Windows + Linux only (macOS is never shipped)
 
-- Publish matrix (`tauri-build.yml`) ထဲ runner = `ubuntu-22.04` + `windows-latest` ၂ ခုပဲ —
-  **matrix ဘယ်လောက်ပဲ ပြင်ပြင် `macos-latest` row မထည့်နဲ့** (2026-08-27 cleanup: ကျန်နေခဲ့တဲ့
-  dead macOS cross-compile scaffold `targets: …apple-darwin…` conditional ကို ဖယ်ရှုံးပြီး၊
-  တည်နေရာမှာ policy comment ချထား)။
-- Evidence (v1.0.1 live-check): assets 11 ခုထဲ `.dmg`/`.app` zero · `latest.json` platforms ထဲ
-  darwin key zero → installer chain + updater chain နှစ်ခုစလုံး သန့်။
-- Gotcha: `"targets": "all"` (tauri.conf.json) က *current OS* ရဲ့ bundle format အားလုံးကို ဆိုတာ —
-  linux→AppImage/deb/rpm, windows→NSIS/MSI။ **OS selection control က matrix တည်း**၊ config မဟုတ်။
-- Old GitHub Releases = immutable snapshots — workflow/policy ပြောင်းလဲမှုက future releases
-  ပေါ်မှာပဲ apply ဖြစ် (v1.0.1 assets untouched)။
+- The publish matrix (`tauri-build.yml`) carries exactly two runners, `ubuntu-22.04` + `windows-latest` —
+  **however much the matrix is edited, never add a `macos-latest` row** (2026-08-27 cleanup: the leftover
+  dead macOS cross-compile scaffold, the `targets: …apple-darwin…` conditional, was removed and a
+  policy comment left in its place).
+- Evidence (v1.0.1 live-check): of the 11 assets, `.dmg`/`.app` zero · in the `latest.json` platforms,
+  darwin key zero → both the installer chain and the updater chain are clean.
+- Gotcha: `"targets": "all"` (tauri.conf.json) means every bundle format of the *current OS* —
+  linux→AppImage/deb/rpm, windows→NSIS/MSI. **The OS selection control is the matrix**, not the config.
+- Old GitHub Releases = immutable snapshots — a workflow/policy change applies only to future
+  releases (v1.0.1 assets untouched).
 
-### 6️⃣ `sync-cargo-lock` race — `concurrency` + rebase-retry (2026-08-31 ပြင်ပြီး)
+### 6️⃣ `sync-cargo-lock` race — `concurrency` + rebase-retry (fixed 2026-08-31)
 
-- **အရင် ပြဿနာ:** `release-please.yml` မှာ `concurrency` block မရှိခဲ့ဘူး၊ `sync-cargo-lock` ရဲ့
-  push က ရိုးရိုး `git push origin "HEAD:${VERSION_REF}"` (force မဟုတ်၊ retry မရှိ) ဖြစ်ခဲ့တယ်။
-  `main` ကို ဆက်တိုက် push နှစ်ခု လုပ်ရင် run နှစ်ခု တစ်ပြိုင်နက် ပြေးတယ်: run A က release
-  branch ကို SHA₁ မှာ checkout လုပ်တယ် → run B ရဲ့ release-please က SHA₂ ကို force-push
-  တင်တယ် → run A ရဲ့ push က **non-fast-forward** fail ဖြစ်တယ်။ ရလဒ်က release PR ဟာ
-  unsynced `Cargo.lock` နဲ့ `--locked` check အနီ နဲ့ ကျန်တယ် (case #8 ရဲ့ ပြန်လာမှု)
-- **Fix ၂ ခု:** (၁) workflow-level `concurrency: { group: release-please-${{ github.ref }},
-  cancel-in-progress: false }` — **cancel မလုပ်ဘဲ တန်းစီ**၊ ဘာလို့လဲဆိုတော့ တစ်ဝက်တပျက်
-  release PR ဟာ တန်းစီနေတဲ့ PR ထက် ပိုဆိုးတာမို့။ (၂) push ကို attempt ၃ ခါ loop —
-  reject ဖြစ်ရင် `git fetch` + `git rebase origin/<branch>` နဲ့ branch tip ပေါ် replay လုပ်၊
-  release-please ကိုယ်တိုင် lockfile ကို ရေးထားပြီးရင် ရှင်းရှင်း exit
-- **`--force` ဘယ်တော့မှ မသုံးပါ** — အဲ့ branch ပေါ်မှာ release-please ရေးထားတာ က
-  authoritative ဖြစ်တယ်၊ ဖျက်လိုက်ရင် version bump ကိုယ်တိုင် ပျောက်နိုင်တယ်
-- **မလုပ်ရသေးတဲ့ အကြံပြုချက် ၂ ခု** (2026-08-31 pipeline audit — code မဟုတ်တာမို့ ဒီ PR
-  ထဲ မပါဘူး):
-  1. **`main` branch protection မရှိဘူး** (`gh api .../branches/main/protection` → 404,
-     rulesets → `[]`)။ Required status check မရှိတာမို့ `test.yml`/`build-check.yml` က
-     **advisory ပဲ** — red run က merge ကို မတားဘူး၊ direct push ကို ဘာမှ မတားဘူး။
-     ထည့်တဲ့အခါ သတိထား: `test.yml`/`build-check.yml` နှစ်ခုလုံးမှာ `paths-ignore` ရှိတယ်၊
-     skip ဖြစ်တဲ့ job က check report မလုပ်တာမို့ **docs-only PR က deadlock** ဖြစ်မယ်။
-     `paths-ignore` ဖျက်ရင် ဒါမှမဟုတ် no-op "skip" companion job ထည့်ရင် ဖြေရှင်းရမယ်
-  2. **Updater endpoint က artifact မရောက်ခင် 404 window ရှိတယ်။** v1.4.0 ရဲ့ metadata:
-     release `publishedAt` 11:36:40Z, အစောဆုံး asset `createdAt` 11:44:13Z — **7m33s**။
-     ပိုအရေးကြီးတာက `fail-fast: true` က "publish is all-or-nothing" လို့ comment
-     ရေးထားပေမယ့် **တကယ် မဟုတ်ဘူး** — matrix leg နှစ်ခု parallel ပြေးပြီး တစ်ခုချင်း
-     `latest.json` တင်တာမို့ Windows leg က Linux ပြီးမှ fail ရင် Linux ပဲ ကြေငြာတဲ့
-     "latest" release က အမြဲ ကျန်တယ်၊ `workflow_dispatch` လည်း မရှိဘူး။ ဖြေရှင်းချက်:
-     release-please ကို **draft** ဖန်တီးခိုင်း (`release-please-config.json` မှာ
-     `draft: true`) ပြီး `tauri-build.yml` မှာ leg နှစ်ခု အောင်မှ publish flip လုပ်တဲ့ job
-     ထည့် — `/releases/latest` က draft မပါတာမို့ window တစ်ခုလုံး အရင် release ကောင်း
-     ပေါ် ကျန်နေမယ်
+- **The problem before:** `release-please.yml` had no `concurrency` block, and the push in
+  `sync-cargo-lock` was a plain `git push origin "HEAD:${VERSION_REF}"` (not force, no retry).
+  Push to `main` twice back to back and two runs race: run A checks the release
+  branch out at SHA₁ → the release-please in run B force-pushes SHA₂
+  on top → run A's push fails **non-fast-forward**. The result is a release PR left
+  with an unsynced `Cargo.lock` and a red `--locked` check (case #8 coming back)
+- **Two fixes:** (1) workflow-level `concurrency: { group: release-please-${{ github.ref }},
+  cancel-in-progress: false }` — **queue instead of cancelling**, because a half-finished
+  release PR is worse than a queued one. (2) the push loops over three attempts —
+  on a reject it replays onto the branch tip with `git fetch` + `git rebase origin/<branch>`,
+  and exits cleanly if release-please has already written the lockfile itself
+- **Never use `--force`** — what release-please wrote on that branch is
+  authoritative, and wiping it can lose the version bump itself
+- **Two recommendations not yet acted on** (2026-08-31 pipeline audit — not code, so not part of
+  this PR):
+  1. **`main` has no branch protection** (`gh api .../branches/main/protection` → 404,
+     rulesets → `[]`). With no required status check, `test.yml`/`build-check.yml` are
+     **advisory only** — a red run does not block a merge, and nothing blocks a direct push.
+     When adding it, take care: both `test.yml` and `build-check.yml` have `paths-ignore`,
+     and a skipped job reports no check, so a **docs-only PR would deadlock**.
+     Solve it by deleting `paths-ignore` or by adding a no-op "skip" companion job
+  2. **The updater endpoint has a 404 window before the artifacts land.** v1.4.0's metadata:
+     release `publishedAt` 11:36:40Z, earliest asset `createdAt` 11:44:13Z — **7m33s**.
+     More important, the comment claiming `fail-fast: true` makes "publish all-or-nothing"
+     is **not actually true** — the two matrix legs run in parallel and each uploads its own
+     `latest.json`, so if the Windows leg fails after Linux has finished, a "latest" release
+     advertising Linux only is left behind for good, and there is no `workflow_dispatch` either. The fix:
+     make release-please create a **draft** (`draft: true` in
+     `release-please-config.json`) and add a job in `tauri-build.yml` that flips it to
+     published only once both legs succeed — `/releases/latest` excludes drafts, so for the whole
+     window the previous good release stays in place
 
-## 🚀 Developer Step-by-Step Release Cheatsheet (အနာဂတ် Release လမ်းညွှန်ချက်)
+## 🚀 Developer Step-by-Step Release Cheatsheet (guide for future releases)
 
-ကုဒ်များ အသစ်ရေးသား/ပြင်ဆင်ပြီးတိုင်း App Version အသစ် ထုတ်ရန်အတွက် အောက်ပါ အဆင့် ၃ ဆင့်ကို လုပ်ဆောင်ရုံသာ ဖြစ်သည်-
+Every time code is newly written or amended, cutting a new App Version is only a matter of these three steps:
 
-### ၁။ Commit & Push ပြုလုပ်ခြင်း
-Conventional Commit ပုံစံဖြင့် commit ရေးသားပြီး `main` သို့ push တင်ပါ-
+### 1. Commit & Push
+Write the commit in Conventional Commit form and push it to `main`:
 ```bash
 git add .
-git commit -m "feat: သင်ထည့်သွင်းလိုက်သည့် feature အမည်"   # Minor version bump (ဥပမာ 1.1.0 -> 1.2.0)
-# သို့မဟုတ်
-git commit -m "fix: သင်ပြင်ဆင်လိုက်သည့် bug အမည်"           # Patch version bump (ဥပမာ 1.1.0 -> 1.1.1)
+git commit -m "feat: the name of the feature you added"   # Minor version bump (e.g. 1.1.0 -> 1.2.0)
+# or
+git commit -m "fix: the name of the bug you fixed"           # Patch version bump (e.g. 1.1.0 -> 1.1.1)
 
 git push origin main
 ```
 
-### ၂။ Release-Please PR ကို Merge ပြုလုပ်ခြင်း
-Push တင်လိုက်သည်နှင့် GitHub ပေါ်ရှိ `release-please` bot က Version bump, Changelog generation ပြုလုပ်ပြီး `chore(main): release X.Y.Z` PR ကို ဖွင့်ပေးပါမည်။
+### 2. Merge the Release-Please PR
+As soon as the push lands, the `release-please` bot on GitHub does the version bump and changelog generation and opens the `chore(main): release X.Y.Z` PR.
 
-Terminal မှဖြစ်စေ၊ GitHub Web UI မှဖြစ်စေ Merge လုပ်ပါ-
+Merge it either from the terminal or from the GitHub Web UI:
 ```bash
 gh pr merge --merge
 ```
 
-### ၃။ Build အခြေအနေ စစ်ဆေးခြင်း & Local Sync ပြုလုပ်ခြင်း
-PR Merge ပြီးသည်နှင့် `publish` workflow က Windows (`.exe`, `.msi`) နှင့် Linux (`.AppImage`, `.deb`, `.rpm`) installers များကို build လုပ်ပြီး GitHub Release ပေါ်သို့ auto-upload တင်ပေးပါမည်။
+### 3. Check the build state & sync locally
+As soon as the PR is merged, the `publish` workflow builds the Windows (`.exe`, `.msi`) and Linux (`.AppImage`, `.deb`, `.rpm`) installers and auto-uploads them onto the GitHub Release.
 
 ```bash
-# Build progress ကြည့်ရန်
+# to watch build progress
 gh run list --limit 3
 
-# Release assets ထွက်ရှိမှု ကြည့်ရန်
+# to see whether the release assets came out
 gh release view
 
-# Tag အသစ်နှင့် Changelog ကို local စက်ထဲသို့ sync လုပ်ယူရန်
+# to sync the new tag and the changelog down to the local machine
 git pull origin main --tags
 ```
 
@@ -173,11 +173,11 @@ git pull origin main --tags
 
 ```bash
 gh pr list --state open                          # waiting release PR?
-gh pr view <N> --json files -q '.files[].path'   # bump coverage စစ်
-gh pr close <N> --delete-branch                  # stale release PR ရှင်း
+gh pr view <N> --json files -q '.files[].path'   # check bump coverage
+gh pr close <N> --delete-branch                  # clear a stale release PR
 gh run list --limit 5                            # workflow status
 gh run view <id> --json jobs                     # job-level status/conclusion
-gh run view --job <jobId> --log-failed           # ❗run complete ဖြစ်မှ available
+gh run view --job <jobId> --log-failed           # ❗available only once the run is complete
 curl -sIL https://github.com/RyanWez/sms-deliverer/releases/latest/download/latest.json | head -1
                                                  # ↑ 200 = updater healthy · 404 = broken
 ```

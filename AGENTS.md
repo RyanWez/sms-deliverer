@@ -2,7 +2,7 @@
 
 Rules for every agent and subagent in this repo. Tauri v2 + Rust (`src-tauri/`) + Svelte 5/Tailwind/TypeScript (`src/`). Desktop app reading SMS/OTP from multi-port GSM SIM banks over serial AT commands.
 
-`Memory/*.md` is the long-form knowledge base and is written in Burmese. This file stays English: it is what an agent reads first and it has to be unambiguous to any model. Cross-reference Memory instead of restating it.
+`Memory/*.md` is the long-form knowledge base. It and this file are both English, so every rule reads unambiguously to any model that opens them cold — the knowledge base was written in Burmese up to v1.6.2 and was translated wholesale afterwards; do not add Burmese back. Cross-reference Memory instead of restating it.
 
 ## Golden rules
 1. Conventional Commits always: `fix:` patch · `feat:` minor · `feat!:`/`fix!:` major · `chore:`/`docs:`/`ci:`/`build:`/`refactor:`/`perf:`/`style:` no release. Lowercase imperative subject; the body becomes release notes.
@@ -28,7 +28,7 @@ npm run check     # svelte-check, currently 0 errors 0 warnings
 npm test          # node:test + --experimental-strip-types, 89 tests in 7 files (unchanged since v1.6.1)
 npm run build     # vite build
 cargo check  --manifest-path src-tauri/Cargo.toml
-cargo test   --manifest-path src-tauri/Cargo.toml   # 225 tests in 12 files (pending v1.6.2; 214 on v1.6.1). One is `#[cfg(target_os = "linux")]`, so the Windows leg reports 224
+cargo test   --manifest-path src-tauri/Cargo.toml   # 225 tests in 12 files (v1.6.2; 214 on v1.6.1). One is `#[cfg(target_os = "linux")]`, so the Windows leg reports 224
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 ```
 All six pass on a clean tree. `cargo fmt --check` does **not**: ~48 pre-existing diff hunks across `commands/mod.rs`, `core/{at,decoder,live,models,modem,reassemble,sim_directory}.rs` and `logging.rs`. No workflow runs `cargo fmt` or `cargo clippy`, and there is no `rustfmt.toml`, `.editorconfig`, prettier or eslint in the repo — formatting is unenforced debt here, not a gate. Do not run `cargo fmt` to "fix" it: a whole-tree reformat buries the real diff of your change. Write new code close to rustfmt output by hand and leave the surrounding hunks alone.
@@ -110,7 +110,7 @@ A Settings switch that does nothing is worse than no switch: it teaches the oper
 Behaviour changes that touch README-documented facts (probe timeouts, AT flow, status formats, command lists) are synced in README.md in the same change. Real bug fixes get a `Memory/03` entry. For anything needing the bank physically attached, follow `Memory/04 §G` (Hardware Live-Check Playbook) rather than inventing a check.
 
 ## Reference
-`Memory/01`–`08`, eight docs, Burmese: 01 GitHub CLI/auth · 02 release automation (§5 platform policy) · 03 troubleshooting casebook, 26 cases + 5 latent traps (§23–§26 are the pending v1.6.2 status/log-accuracy four; T1/T2 both settings-layer and still live; T3–T5 fixed in v1.4.0/v1.5.0) · 04 conventions, verification loop, §D command cheatsheet, §G hardware playbook, §H inert-switch rule · 05 roadmap, Settings decisions ledger, the two hard refusals · 06 git/feature-branch workflow · 07 next-release plan from the v1.5.0 hardware field test (§A what the run proved and what stayed unproven, §B–§D the v1.7.0 and v1.6.2 items with file:line evidence — the four v1.6.2 items are implemented and validated on `fix/status-and-log-accuracy` but **not merged and not released**, and §B has not been started; v1.6.0 and v1.6.1 went to Telegram forwarding and the call-centre OTP guard instead, which is why those numbers moved) · 08 Telegram forwarding Stage 1 + Stage 2 implementation record (§B the four design decisions incl. why `sms:new` alone is not enough, §E nine standing refusals, §F four hardware tests all confirmed, §G the two OTP false positives). `Memory/README.md` is the index.
+`Memory/01`–`08`, eight docs, English: 01 GitHub CLI/auth · 02 release automation (§5 platform policy) · 03 troubleshooting casebook, 26 cases + 5 latent traps (§23–§26 are the v1.6.2 status/log-accuracy four; T1/T2 both settings-layer and still live; T3–T5 fixed in v1.4.0/v1.5.0) · 04 conventions, verification loop, §D command cheatsheet, §G hardware playbook, §H inert-switch rule · 05 roadmap, Settings decisions ledger, the two hard refusals · 06 git/feature-branch workflow · 07 next-release plan from the v1.5.0 hardware field test (§A what the run proved and what stayed unproven, §B–§D the v1.7.0 and v1.6.2 items with file:line evidence — the four v1.6.2 items shipped in v1.6.2 and §B, the live worker command mailbox, has not been started; v1.6.0 and v1.6.1 went to Telegram forwarding and the call-centre OTP guard instead, which is why those numbers moved) · 08 Telegram forwarding Stage 1 + Stage 2 implementation record (§B the four design decisions incl. why `sms:new` alone is not enough, §E nine standing refusals, §F four hardware tests all confirmed, §G the two OTP false positives). `Memory/README.md` is the index.
 
 When searching, note that `src-tauri/src/.mimosa/hook-state/` holds gitignored snapshot copies of source files. Grep hits there are stale duplicates — ignore them.
 

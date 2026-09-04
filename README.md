@@ -556,7 +556,7 @@ sms-tauri/
 │   ├── Cargo.toml                    # Rust dependencies & crate metadata
 │   └── tauri.conf.json               # Tauri v2 configuration & window settings
 ├── AGENTS.md                         # Working rules for agents in this repo
-├── Memory/                           # Developer knowledge base (index + 01–08, Burmese)
+├── Memory/                           # Developer knowledge base (index + 01–08, English)
 ├── package.json                      # Node.js dependencies & scripts
 └── tsconfig.json                     # TypeScript compiler configuration
 ```
