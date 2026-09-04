@@ -22,9 +22,15 @@
       ? [{ id: 'logs' as NavSection, label: 'Logs', icon: 'terminal' as IconName, badge: 'Dev' }]
       : []),
     { id: 'settings', label: 'Settings', icon: 'settings' },
+    { id: 'changelog', label: 'Changelog', icon: 'history' },
   ]);
 
-  let appVersion = $state<string>('1.0.1');
+  /**
+   * Empty until the shell answers, and the footer line is hidden while it is.
+   * A hardcoded fallback used to sit here and went stale five releases ago —
+   * next to a link that opens the changelog, a wrong version is worse than none.
+   */
+  let appVersion = $state<string>('');
 
   onMount(async () => {
     if (isTauri()) {
@@ -32,7 +38,7 @@
         const { getVersion } = await import('@tauri-apps/api/app');
         appVersion = await getVersion();
       } catch {
-        // keep default fallback
+        // Leave it blank rather than claim a version.
       }
     }
   });
@@ -138,17 +144,30 @@
 
   <!-- Footer -->
   <div
-    class="p-3 border-t border-border overflow-hidden transition-opacity duration-150 whitespace-nowrap shrink-0"
+    class="p-2 border-t border-border overflow-hidden transition-opacity duration-150 whitespace-nowrap shrink-0"
     class:opacity-100={!navigationStore.sidebarCollapsed}
     class:opacity-0={navigationStore.sidebarCollapsed}
     class:pointer-events-none={navigationStore.sidebarCollapsed}
   >
-    <div class="flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
-      <div class="w-5 h-5 rounded-md bg-primary/15 flex items-center justify-center shrink-0">
-        <div class="w-2 h-2 rounded-sm bg-primary"></div>
+    <button
+      type="button"
+      class="w-full text-left rounded-md p-1 transition-colors duration-150
+             hover:bg-elevated focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+      title="See what changed in this and earlier versions"
+      tabindex={navigationStore.sidebarCollapsed ? -1 : 0}
+      onclick={() => navigationStore.navigate('changelog')}
+    >
+      <div class="flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
+        <div class="w-5 h-5 rounded-md bg-primary/15 flex items-center justify-center shrink-0">
+          <div class="w-2 h-2 rounded-sm bg-primary"></div>
+        </div>
+        <span>SIM Bank SMS Reader</span>
       </div>
-      <span>SIM Bank SMS Reader</span>
-    </div>
-    <div class="mt-1 pl-7 text-[10px] text-muted-foreground/60">v{appVersion}</div>
+      {#if appVersion}
+        <div class="mt-1 pl-7 text-[10px] text-muted-foreground/60">
+          v{appVersion} <span class="opacity-70">· what's new</span>
+        </div>
+      {/if}
+    </button>
   </div>
 </aside>

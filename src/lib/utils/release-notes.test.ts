@@ -69,6 +69,21 @@ test('a link in the middle of a line keeps its label', () => {
   assert.equal(out[0].items[0].text, 'see the docs first');
 });
 
+test('a pull-request reference is stripped, not left as a bare (#28)', () => {
+  // A squash-merged commit carries both references and neither is reachable
+  // from inside the app. Keeping the link label would leave `(#28)` behind,
+  // reading like part of the change description. They are peeled one at a time,
+  // so the order they were appended in does not matter.
+  const pr = '([#28](https://github.com/RyanWez/sms-deliverer/issues/28))';
+  const commit = '([e7da48b](https://github.com/RyanWez/sms-deliverer/commit/e7da48b))';
+  for (const tail of [`${pr} ${commit}`, `${commit} ${pr}`]) {
+    const out = parseReleaseNotes(
+      `### Bug Fixes\n\n* report what the logs actually count ${tail}`,
+    );
+    assert.equal(out[0].items[0].text, 'report what the logs actually count');
+  }
+});
+
 test('a plain-prose body still renders as one section', () => {
   const out = parseReleaseNotes('Hotfix for the SIM cleanup sweep.');
   assert.equal(out.length, 1);

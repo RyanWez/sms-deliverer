@@ -82,7 +82,7 @@ export interface AppState {
   failed_notes: string[];
 }
 
-export type NavSection = 'inbox' | 'ports' | 'settings' | 'logs';
+export type NavSection = 'inbox' | 'ports' | 'settings' | 'logs' | 'changelog';
 
 export interface SettingsState {
   general: {

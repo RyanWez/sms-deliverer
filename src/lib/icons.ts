@@ -71,6 +71,8 @@ export const icons = {
     '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>',
   rocket:
     '<path d="M5 13c-1.5 1.5-2 5-2 5s3.5-.5 5-2"/><path d="M14.5 4.5C17 2 21 3 21 3s1 4-1.5 6.5L13 16l-4-4z"/><path d="M9 12l-3.5-1 2-2 3 .5"/><path d="M12 15l1 3.5 2-2-.5-3"/>',
+  history:
+    '<path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><polyline points="12 7 12 12 15.5 14"/>',
 } as const;
 
 export type IconName = keyof typeof icons;

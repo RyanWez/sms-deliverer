@@ -30,8 +30,34 @@ export interface NoteSection {
   items: NoteItem[];
 }
 
-/** Trailing `([abc1234](url))` commit link that release-please appends. */
-const COMMIT_LINK_RE = /\s*\(\[[0-9a-f]{6,40}\]\([^)]*\)\)\s*$/i;
+/**
+ * One `([#28](…/issues/28))` pull-request reference or `([e7da48b](…/commit/…))`
+ * commit link at the very end of a change line, which is where release-please
+ * appends them.
+ *
+ * Both are repository bookkeeping rather than part of the sentence, and neither
+ * is reachable from inside the app. Stripping the pull-request reference and not
+ * only the commit link matters because `MD_LINK_RE` below keeps a link's label:
+ * left to that rule the reference survives as a bare `(#28)` glued to the end of
+ * the description, reading like something the operator is meant to act on.
+ */
+const TRAILING_REF_RE = /\s*\(\[(?:#\d+|[0-9a-f]{6,40})\]\([^)]*\)\)\s*$/i;
+
+/**
+ * Both references, in whichever order they appear. Peeled one at a time rather
+ * than with a repeated group: the body of a release comes from the release
+ * endpoint, and a single anchored match per pass keeps the work linear in the
+ * length of the line whatever that endpoint sends. Each pass removes at least
+ * the eleven characters of the shortest possible reference, so it terminates.
+ */
+function stripTrailingRefs(line: string): string {
+  let out = line;
+  for (;;) {
+    const next = out.replace(TRAILING_REF_RE, '');
+    if (next === out) return out;
+    out = next;
+  }
+}
 /** Any leftover `[label](url)` — keep the label, drop the target. */
 const MD_LINK_RE = /\[([^\]]*)\]\([^)]*\)/g;
 const BULLET_RE = /^\s*[*+-]\s+/;
@@ -45,8 +71,7 @@ function classify(title: string): NoteKind {
 }
 
 function cleanText(line: string): string {
-  return line
-    .replace(COMMIT_LINK_RE, '')
+  return stripTrailingRefs(line)
     .replace(MD_LINK_RE, '$1')
     .replace(/`/g, '')
     .replace(/\s+/g, ' ')
