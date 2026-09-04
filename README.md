@@ -535,7 +535,7 @@ sms-tauri/
 │   └── app.css                       # Tailwind layers & both theme variable blocks
 ├── src-tauri/                        # Rust Tauri v2 Backend
 │   ├── capabilities/default.json     # ACL — no fs/shell/http; all I/O sits behind commands
-│   ├── icons/                        # Application icons (.ico, .icns, .png)
+│   ├── icons/                        # Application icons (.ico, .icns, .png) + icon.svg master
 │   ├── src/
 │   │   ├── commands/
 │   │   │   ├── mod.rs                # Port / message / log commands, shared state, busy gate
