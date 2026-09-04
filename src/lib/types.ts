@@ -101,6 +101,11 @@ export interface SettingsState {
      * SIM-storage pruning, replacing the old separate on/off toggle.
      */
     retentionHours: number;
+    /**
+     * Minimize to system tray when the window close button is clicked, keeping
+     * the application running in the background for SMS monitoring.
+     */
+    minimizeToTray: boolean;
   };
   notifications: {
     /** Mutes the in-app OTP toasts. Operational errors ignore this. */
@@ -164,6 +169,7 @@ export const DEFAULT_SETTINGS: SettingsState = {
     confirmDelete: true,
     portRefreshInterval: 30,
     retentionHours: DEFAULT_RETENTION_HOURS,
+    minimizeToTray: true,
   },
   notifications: {
     enabled: true,

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { isTauri } from '$lib/utils/tauri';
+  import { settingsStore } from '$lib/stores/settings.svelte';
 
   let maximizing = $state(false);
 
@@ -34,12 +35,18 @@
     if (!isTauri()) return;
     try {
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      await getCurrentWindow().close();
+      const appWindow = getCurrentWindow();
+      if (settingsStore.general.minimizeToTray) {
+        await appWindow.hide();
+      } else {
+        await appWindow.close();
+      }
     } catch (e) {
       console.warn('Window close unavailable:', e);
     }
   }
 </script>
+
 
 <!--
   The bar carries nothing but the window controls. The app's name was in the

@@ -65,6 +65,13 @@
     restartAutoUpdater();
   });
 
+  // Sync minimizeToTray setting to the Rust backend so the window close event
+  // knows whether to hide to system tray.
+  $effect(() => {
+    void api.setMinimizeToTray(settingsStore.general.minimizeToTray);
+  });
+
+
   // Port hotplug sweep: the operator physically plugs and pulls sticks, so the
   // list is re-enumerated on a timer instead of only on mount and on Refresh.
   // Lives here rather than in Ports.svelte so a stick plugged in while the
