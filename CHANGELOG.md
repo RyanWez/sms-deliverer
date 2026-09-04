@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.1](https://github.com/RyanWez/sms-deliverer/compare/v1.8.0...v1.8.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* make quitting from the tray orderly and allow only one instance ([6b480f1](https://github.com/RyanWez/sms-deliverer/commit/6b480f13e05f1917355b6a4c214025954cd7af75))
+
 ## [1.8.0](https://github.com/RyanWez/sms-deliverer/compare/v1.7.0...v1.8.0) (2026-09-04)
 
 
