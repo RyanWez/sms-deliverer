@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.8.0](https://github.com/RyanWez/sms-deliverer/compare/v1.7.0...v1.8.0) (2026-09-04)
+
+
+### Features
+
+* add system tray icon and minimize on close ([#35](https://github.com/RyanWez/sms-deliverer/issues/35)) ([159be53](https://github.com/RyanWez/sms-deliverer/commit/159be53e3a1503bc8434b7627d48ef51dfdd6cff))
+
+
+### Bug Fixes
+
+* **tray:** persist tray menu state and guard left-click menu suppression for windows ([#37](https://github.com/RyanWez/sms-deliverer/issues/37)) ([80a83bb](https://github.com/RyanWez/sms-deliverer/commit/80a83bb2e60d29a96042ba28eb36490d7632ed7e))
+
 ## [1.7.0](https://github.com/RyanWez/sms-deliverer/compare/v1.6.2...v1.7.0) (2026-09-04)
 
 
