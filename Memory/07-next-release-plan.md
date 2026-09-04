@@ -139,7 +139,7 @@ manufactures EBUSY / ModemManager contention needs to go into the `04 §G` playb
 
 ## B. ISSUE 1 — with live mode on, Delete / Clear All / Get SIM Numbers cannot be run
 
-**→ the headline item of the next release (v1.7.0).**
+**→ diagnosed, and the fix is DECIDED AGAINST. Do not re-propose it — read §B.3 first.**
 
 - **Symptom:** with live running the operator selects a row — `Delete Selected` is
   **disabled**. `Clear All` and `Get SIM Numbers` likewise. They only come back once live is
@@ -148,6 +148,9 @@ manufactures EBUSY / ModemManager contention needs to go into the `04 §G` playb
   matter**: deleting a live message used to look as though it worked while in truth nothing
   happened at all, so **nobody ever asked "when am I allowed to delete?"**. Now that it
   genuinely works, that question has become a real one
+- Everything in §B.1 and §B.2 below is field-verified and stays on the record: it is *why* the
+  buttons are disabled, and the next person to ask should find the answer here rather than
+  rediscover it. Only the proposed fix is off the table
 
 ### B.1 Mechanism — three layers
 
@@ -177,40 +180,38 @@ shut out by that one single cause as well.
    `port_busy()`'s `live_stop.is_some()` (`:56`) exists for exactly that window. In the field
    log too, `18:47:07.303 Live stop requested` → `18:47:15.819` delete took **~8.5 s**
 
-### B.3 Proposed solution — give every live worker a **command mailbox**
+### B.3 The command-mailbox fix — **DECIDED AGAINST (2026-09-04, operator's call)**
 
-**The idea:** rather than serving a delete request by opening the port, **queue it to the worker
-that owns that port**. In between its `+CMTI` polls the worker runs `AT+CMGD` plus the existing
-`modem::delete_confirmed` **on the `AtChannel` it is already holding** and sends an `OpResult`
-back.
+**This is a standing decision, not an open item.** The design below was worked out in full and
+then declined. It is written down so nobody spends the effort a second time, and so nobody reads
+§B.1 as an unsolved problem and starts building.
 
-**Where it goes:** the monitoring loop `core/live.rs:342`–`:385` — today it pulls a `+CMTI`
-index off `queue` (`:340`) at `:343`, and when there is none it waits 500 ms in
-`ch.wait_notification(500)` (`:347`). The mailbox check belongs between those two.
+**What was designed:** rather than serving a delete request by opening the port, **queue it to
+the worker that owns that port**. In between its `+CMTI` polls the worker would run `AT+CMGD`
+plus the existing `modem::delete_confirmed` **on the `AtChannel` it is already holding** and send
+an `OpResult` back. The mailbox check belongs in the monitoring loop `core/live.rs:342`–`:385`,
+between the `+CMTI` pull at `:343` and the 500 ms `ch.wait_notification(500)` at `:347`. It needs
+no new lock (the worker owns its channel; the mailbox is one `mpsc::Receiver`), it needs no change
+to the confirmation path (`modem::delete_confirmed` at `src-tauri/src/core/modem.rs:477` already
+takes an open channel, and `live::sweep_expired` at `core/live.rs:443` has been doing exactly this
+since v1.5.0), and it would fix `Clear All` and `Get SIM Numbers` at the same stroke.
 
-**Three merits of this design:**
-- **no new lock is needed** — the worker already owns its channel and the mailbox is just one
-  `mpsc::Receiver`. Two threads never touch the channel
-- **the confirmation path needs no change** — `modem::delete_confirmed`
-  (`src-tauri/src/core/modem.rs:477`) accepts an already-open channel, and `live::sweep_expired`
-  (`core/live.rs:443`, called at `:463`) is **a precedent already demonstrating this pattern** —
-  a live worker doing a confirmed delete on its own channel has existed since v1.5.0. What is
-  left is only "getting the operator's request to that place"
-- **`Clear All` and `Get SIM Numbers` are solved at the same stroke** — the mailbox only has to
-  carry three message types
+**Why it was declined — the cost is not the code, it is the risk to the one thing that must not
+break.** The mailbox runs `AT+CMGD` and a confirming `AT+CMGL` (15 s timeout) inside the live
+loop, so it **changes the timing of the loop that catches every incoming OTP**: notifications back
+up in the queue while a mailbox item is being serviced. A bank that misses codes is worse than a
+bank that makes the operator press Stop. On top of that it cannot be merged from a desk — it
+requires the `04 §G` playbook with the bank physically attached — and it earns its own `Memory/03`
+case entry. Weighed against a workaround that already works and whose full cost is measured in
+§B.2, the operator judged it not worth the exposure.
 
-**Risk:** it **changes the timing of the live loop** — `AT+CMGD` plus the confirming `AT+CMGL`
-(15 s timeout) can hold up the `+CMTI` poll, so notifications can back up in the queue while a
-mailbox item is being serviced. Therefore:
-- this is **a change that earns its own `Memory/03` case entry** (symptom → root cause → fix)
-- the **`04 §G` Hardware Live-Check Playbook has to be run** — do not merge without the bank
-  attached. The combination A.2 has not exercised (live + a two-slot concat) is one step of that
-  playbook run
-- when the backend gate is opened up, `port_busy()`'s check of `live_on` **cannot be deleted** —
-  it may only be bypassed for the commands that have a mailbox route (scan opens the port
-  itself, so it stays blocked)
+**What the operator does instead:** Stop Live → Delete → Start Live, accepting the three costs in
+§B.2. The `~8.5 s` measured in the field log is the real number, not a guess.
 
-**Version framing:** a new capability → `feat:` commit → **v1.7.0**.
+**If it is ever revived,** the two constraints that were established still hold: `port_busy()`'s
+check of `live_on` (`src-tauri/src/commands/mod.rs:55`) **may not be deleted**, only bypassed for
+the commands that have a mailbox route — scan opens the port itself, so it stays blocked — and the
+change does not merge without a playbook run.
 
 ---
 
@@ -357,6 +358,7 @@ leaving it parked in C.6.
 | ~~L3 `Closed` over-count~~ — **pulled into this plan and shipped in v1.6.2** (`03 §24`), see §D.3 | `05 §C.6` → `§D.3` |
 | merging the four supervisors into `run_port_pool` — **last in the order** (§C is this entry's down payment) | `05 §C.10` |
 | the missing `main` ruleset + the updater release-draft flip | `02 §6` |
+| **the live-worker command mailbox — declined outright, not deferred** | `§B.3` |
 
 ---
 
@@ -365,10 +367,14 @@ leaving it parked in C.6.
 | Release | Contents | Commit type | Risk | Hardware needed | Status (2026-09-04) |
 |---|---|---|---|---|---|
 | **v1.6.2** | §C (the cleanup status line counting "no modem" as a failure) + §D.1 (the `msg(s)` unit meaning two things) + §D.2 (the USSD rejection line) + §D.3 (`Closed` not decrementing the ready count — review brought the **`failed` bucket** and the **`Reconnecting` arm** in on top) | all `fix:` | **low** — counters and wording, plus the arithmetic of the status line. AT sequence / timeouts / delete confirmation **untouched**, and the event payload change is additive (`empty` added to `sim_cleanup:done`) | not needed (unit tests are enough — 11 more Rust tests added) | **shipped and released as v1.6.2** — `#28` merged into `main`, `chore(main): release 1.6.2 (#29)`, tag `v1.6.2` (cases `03 §23`–`§26`) |
-| **v1.7.0** | §B (live worker command mailbox — Delete / Clear All / Get SIM Numbers usable while live is on) | `feat:` | **high** — it changes live loop timing | **needed — the `04 §G` playbook**, plus a new `Memory/03` case entry | **not started** |
+| **v1.7.0** | the new bolt app icon · the in-app **Changelog** page reading the bundled `CHANGELOG.md` · the title bar stripped back to its window controls · message retention pinned to the single **1 Hour** window | `feat:` | **low** — frontend and icon assets only. No Rust change, so the AT sequence, the timeouts and the delete confirmation are untouched | not needed | **shipped and released as v1.7.0** |
+| ~~**v1.7.0** — §B live worker command mailbox~~ | **declined, see §B.3.** The v1.7.0 number went to the items above instead | — | — | — | **decided against, 2026-09-04** |
 
-> **Order:** v1.6.2 shipped first, as planned. It was low risk and it makes the operator's status
-> line immediately trustworthy — and when §B's much larger change is being debugged, **a status
-> line you can trust becomes a tool**. What is left is §B itself, which **has not been started**:
-> its PR title must be a valid conventional commit (`06` doc) → squash merge → the
-> release-please PR.
+> **Order:** v1.6.2 shipped first, as planned — low risk, and it made the operator's status line
+> immediately trustworthy. v1.7.0 then went to the icon, the in-app changelog and two Settings/UI
+> trims, because **§B was declined outright** rather than scheduled: the mailbox would have put
+> `AT+CMGD` and a 15 s confirming `AT+CMGL` inside the loop that catches every incoming OTP, and a
+> bank that misses codes is worse than one that makes the operator press Stop. The workaround in
+> §B.2 stands, with its cost measured.
+>
+> Nothing is queued behind this. The next release starts from `05 §C` and the `§E` table above.
