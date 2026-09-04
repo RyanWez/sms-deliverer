@@ -60,7 +60,7 @@ By leveraging **Tauri v2** and **Rust** on the backend paired with **Svelte 5** 
 - **Modem Detection Before Work**: A one-shot `AT` liveness probe (800 ms timeout, two attempts) identifies which serial ports actually have a modem behind them. A SIM bank publishes one serial device per channel whether or not a SIM is inserted, so on a partly-filled bank this is the difference between a scan that finishes in seconds and one that spends its full timeout chain on every empty slot. Ports that do not answer are deselected automatically and skipped by scan, live mode, USSD and SIM cleanup. Ports are opened with DTR/RTS asserted so both platforms present the same lines to the modem. A probe cannot wait out a bank that is still powering up, so re-run Detect a minute after connecting it rather than treating the first result as final.
 - **Concurrent Multi-Port Scanning**: Parallel asynchronous workers read SMS across all connected serial ports (`COM1..N` on Windows, `/dev/ttyUSB*` / `/dev/ttyACM*` on Linux) simultaneously without UI freezing.
 - **Live SMS Monitoring Mode**: Real-time asynchronous polling and unsolicited event listener (+CMTI notifications) that triggers instant desktop alerts and sounds on incoming SMS. A port is reported `LIVE` only after a modem answers; empty slots are labelled `NO MODEM` and excluded from the ready total instead of showing green. A port that stops being monitored is excluded too — a dead transport or a crashed worker is counted separately as `failed`, and a port retrying its connection falls back into the `connecting…` count — so ready, `no modem`, `failed` and `connecting…` together account for every port in the session, and the ready figure only ever names ports a worker is really reading.
-- **Runs From the System Tray**: A shift can outlast the window. Closing the window — the title bar's `✕`, `Alt+F4`, or the taskbar's Close — hides the app to the notification tray instead of ending it, so live monitoring, the SIM retention sweep and Telegram forwarding carry on unattended. The tray icon restores the window (left-click on Windows, the *Open SMS Reader* menu item on Linux) and its *Quit* item is the way out. Settings → General → *Minimize to System Tray on Close* turns the behaviour off, with one exception that is deliberate: **while Live mode is running, closing the window hides it either way** rather than silently ending a monitoring session and the forwarding with it. Two things follow from that and are worth knowing before the bank is in front of you: the app can be running with no window on screen, so check the tray before launching it a second time — a second copy cannot open ports the first one already holds; and *Quit* stops the process immediately, so anything the Telegram send queue was still pacing out is discarded. Stop Live first if the last few codes matter.
+- **Runs From the System Tray**: A shift can outlast the window. Closing the window — the title bar's `✕`, `Alt+F4`, or the taskbar's Close — hides the app to the notification tray instead of ending it, so live monitoring, the SIM retention sweep and Telegram forwarding carry on unattended. The tray icon restores the window (left-click on Windows, the *Open SMS Reader* menu item on Linux), and so does launching the app again: only one copy ever runs, and a second launch hands you the window of the one that already owns the serial ports rather than starting a second copy that can open none of them. Settings → General → *Minimize to System Tray on Close* turns the hide-on-close behaviour off, with one exception that is deliberate: **while Live mode is running or winding down, closing the window hides it either way** rather than ending a monitoring session by accident. *Quit*, from the tray menu, is the way out — it stops Live first and waits for the Telegram send queue to drain before the process ends, so codes that arrived seconds earlier still get delivered. If a modem is wedged it gives up waiting after 20 seconds and exits anyway, because an app that cannot be quit is the worse failure.
 - **Advanced SMS Decoding & Concatenation**:
   - Full GSM 7-bit default alphabet, 8-bit binary, and 16-bit UCS-2 (Unicode / multi-language / Myanmar unicode) decoding.
   - Automatic reassembly of multi-part concatenated SMS messages (TP-UDHI 8-bit & 16-bit reference numbers), with GSM-7 payloads decoded from the septet boundary that follows the User Data Header.
@@ -149,11 +149,12 @@ of it — GNOME draws no tray at all without the AppIndicator shell extension. U
 GNOME ships and enables it (`ubuntu-appindicators`); upstream GNOME, as on Fedora
 Workstation and Debian, needs `gnome-shell-extension-appindicator` installed and
 enabled. KDE Plasma, XFCE, Cinnamon and MATE carry a tray natively and need nothing
-extra. This matters because closing the window hides to the tray by default: on a
-desktop with no tray host the app keeps running with no window **and** no icon to
-bring it back, and killing the process from a terminal or a system monitor is the
-only way out. On such a desktop, turn Settings → General → *Minimize to System Tray
-on Close* off before you rely on it.
+extra. This matters because closing the window hides to the tray by default: on
+a desktop with no tray host the app keeps running with no window and no icon to
+bring it back. Launching the app again is the recovery path — only one copy runs,
+and a second launch shows the window of the one already running rather than
+starting a second copy. If you would rather not rely on that, turn
+Settings → General → *Minimize to System Tray on Close* off.
 
 ---
 
@@ -458,11 +459,11 @@ because it only ever sends.
   "Add Members" to admins.
 - **Forwarding needs Live mode running**, but no longer needs the window open.
   Since v1.8.0 closing the window hides the app to the system tray and the live
-  workers and the forwarder keep running behind it. What does end forwarding is
+  workers and the forwarder keep running behind it. What ends forwarding is
   **Quit** — from the tray menu, or the window's close button with *Minimize to
-  System Tray on Close* switched off and Live not running. Quitting mid-session
-  also discards whatever the send queue was still pacing out, so stop Live and
-  let the queue drain before you quit if the last few codes matter.
+  System Tray on Close* switched off and Live not running. Quit is orderly: it
+  stops Live, waits for the queue to drain, and only then exits, so the codes
+  that arrived in the last few seconds are still delivered.
 - **Messages without a code are not forwarded** unless you switch that on, and it
   spends the same 20-per-minute budget the codes need.
 - **History lives on Telegram's servers**, not just in the app's one-hour window.

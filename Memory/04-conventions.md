@@ -87,7 +87,7 @@ The layer-by-layer method validated today (2026-08-27, 64-port SIM bank):
    stty -F $p 115200 raw -echo -icanon min 0 time 20; exec 3<>$p; printf 'ATI\r' >&3
    ```
    Result day-X: **64/64 RESPOND, zero silent/fail** → USB hub + modems healthy.
-2. **Backend logic** — `cargo test --manifest-path src-tauri/Cargo.toml` → PDU decode/OTP/reassemble/AT-channel unit tests (49 passed **on that day**; the current count lives in `AGENTS.md`'s validation block — 226 as of v1.8.0. Mock transport harness `at.rs::with_transport` via cfg(test)).
+2. **Backend logic** — `cargo test --manifest-path src-tauri/Cargo.toml` → PDU decode/OTP/reassemble/AT-channel unit tests (49 passed **on that day**; the current count lives in `AGENTS.md`'s validation block — 230 as of v1.8.1. Mock transport harness `at.rs::with_transport` via cfg(test)).
 3. **Frontend build** — `npm run build` + `npx svelte-check` (the vite dynamic-import chunk warnings are harmless noise).
 4. **Live boot** — `setsid bash -c 'exec npm run tauri dev' >/tmp/app_dev.log 2>&1 &` (debug build logs → stderr w/ timestamps),
    look for `SIM Bank SMS Reader starting...` + zero panic; bonus: `tauri_plugin_updater` lines = updater E2E free-proof.
@@ -96,18 +96,24 @@ The layer-by-layer method validated today (2026-08-27, 64-port SIM bank):
    **Since v1.8.0 "no window on screen" no longer means "not running".** Closing the window hides
    the app to the tray with its ports still held, so `ps` is the only honest answer to "is a copy
    of this running?" — check it before starting a probe *and* before assuming a port is free.
-6. **Tray layer (v1.8.0, needs a desktop shell — not a bank)** — the one class of bug in this app
-   that no gate in the repo can catch, because it lives in the shell's AppIndicator/DBus path
-   (`03 §27`). Walk it by eye:
+6. **Tray layer (v1.8.0, hardened in v1.8.1; needs a desktop shell — not a bank)** — the one class
+   of bug in this app that no gate in the repo can catch, because it lives in the shell's
+   AppIndicator/DBus path (`03 §27`). Walk it by eye:
    - the icon appears in the tray at all — on GNOME this needs the AppIndicator shell extension,
-     see README's Linux requirements note. **No icon + close-to-tray on = a hidden app you can
-     only kill from a terminal**
+     see README's Linux requirements note. **No icon + close-to-tray on = a window you can only
+     get back by launching the app again** (which since v1.8.1 reveals it rather than starting a
+     second copy — that is worth confirming on the shell in front of you)
    - the menu opens with **readable labels** (`Open SMS Reader`, `Quit`) — a blank rectangle is
      `03 §27` regressing, and it regresses silently because the icon still draws
    - left-click restores the window on Windows; on Linux the menu item does it
-   - `✕` hides rather than exits with the setting on, and with the setting **off** while Live is
-     running it still hides (the deliberate `|| s.live_on` override — `AGENTS.md`, tray section)
-   - *Quit* really ends the process (`ps` again), and know what it costs: `03 T6`
+   - **launch the app a second time while the first is hidden** — one process only
+     (`ps -o pid,lstart,args -C sms-tauri`), and the window comes to the front (`03 T7`)
+   - `✕` hides rather than exits with the setting on, and with the setting **off** it still hides
+     while Live is running *or winding down* (the deliberate override — `AGENTS.md`, tray section)
+   - *Quit* with Live running: the menu item reads `Quitting — finishing up…`, the process ends
+     within `EXIT_WIND_DOWN` (20 s), and if Telegram forwarding was on the queued codes arrive in
+     the group **before** it goes. `app.log` says `Live session wound down; exiting` on the good
+     path and warns on the timeout (`03 T6`)
 
 > ⚠️ Gotcha: at startup every port in the list is auto-checked (`checked:true`). **Press "Detect Modems" first** —
 > the `AT` probe (800ms × 2) leaves only the ports that really have a modem checked and auto-unchecks the rest.

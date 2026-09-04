@@ -65,12 +65,11 @@
     restartAutoUpdater();
   });
 
-  // Sync minimizeToTray setting to the Rust backend so the window close event
-  // knows whether to hide to system tray.
+  // The Rust close handler needs to know whether to hide instead of exit, so the
+  // setting is pushed across on mount and on every change.
   $effect(() => {
     void api.setMinimizeToTray(settingsStore.general.minimizeToTray);
   });
-
 
   // Port hotplug sweep: the operator physically plugs and pulls sticks, so the
   // list is re-enumerated on a timer instead of only on mount and on Refresh.
