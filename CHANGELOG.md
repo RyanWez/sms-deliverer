@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.2](https://github.com/RyanWez/sms-deliverer/compare/v1.6.1...v1.6.2) (2026-09-04)
+
+
+### Bug Fixes
+
+* report what the status lines and logs actually count ([#28](https://github.com/RyanWez/sms-deliverer/issues/28)) ([e7da48b](https://github.com/RyanWez/sms-deliverer/commit/e7da48bf84c37ab34bc6b5f224030332fb35df99))
+
 ## [1.6.1](https://github.com/RyanWez/sms-deliverer/compare/v1.6.0...v1.6.1) (2026-09-03)
 
 
