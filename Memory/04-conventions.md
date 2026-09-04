@@ -91,11 +91,19 @@ The layer-by-layer method validated today (2026-08-27, 64-port SIM bank):
 3. **Frontend build** — `npm run build` + `npx svelte-check` (the vite dynamic-import chunk warnings are harmless noise).
 4. **Live boot** — `setsid bash -c 'exec npm run tauri dev' >/tmp/app_dev.log 2>&1 &` (debug build logs → stderr w/ timestamps),
    look for `SIM Bank SMS Reader starting...` + zero panic; bonus: `tauri_plugin_updater` lines = updater E2E free-proof.
-5. **Cleanup discipline** — dev instance kill group: `kill -TERM -$PGID`; **multiple instances check first**:
-   `ps -o pid,ppid,lstart,args -C sms-tauri` (the user's own running session ≠ your test one — tell them apart by PPID/lstart and kill only your own!)
+   ⚠️ **Since v1.8.1 this step fails silently if the operator's own copy is running.**
+   `tauri-plugin-single-instance` holds the identifier, so the second process reveals the first
+   one's window and exits — you get their app, not yours, and `/tmp/app_dev.log` stops after the
+   plugin line. Check with `ps` first (step 5) and get their copy quit from the tray before you
+   boot yours.
+5. **Cleanup discipline** — dev instance kill group: `kill -TERM -$PGID`; **check for other
+   instances first**: `ps -o pid,ppid,lstart,args -C sms-tauri`
+   (the user's own running session ≠ your test one — tell them apart by PPID/lstart and kill only
+   your own!)
    **Since v1.8.0 "no window on screen" no longer means "not running".** Closing the window hides
    the app to the tray with its ports still held, so `ps` is the only honest answer to "is a copy
-   of this running?" — check it before starting a probe *and* before assuming a port is free.
+   of this running?" — check it before starting a probe, before assuming a port is free, and now
+   before starting a dev build at all.
 6. **Tray layer (v1.8.0, hardened in v1.8.1; needs a desktop shell — not a bank)** — the one class
    of bug in this app that no gate in the repo can catch, because it lives in the shell's
    AppIndicator/DBus path (`03 §27`). Walk it by eye:
