@@ -1003,6 +1003,21 @@ is shut
   behaviour-normalising refactor, it is a separate change. **Deliberately deferred; the entry is doc
   05 §C.10**
 
+## 2️⃣7️⃣ Linux System Tray Menu appears as a blank rectangle with missing labels
+
+- **Symptom (Ubuntu GNOME, v1.7.0):**
+  Clicking the system tray icon on Linux displays the popup menu as a blank blue/dark box with no visible text (`Open SIM Bank SMS Reader`, `Quit`), while other applications on the same desktop (Antigravity IDE, Cloudflare WARP) render crisp white labels.
+- **Root cause:**
+  1. In Tauri v2 with GTK3 / `libayatana-appindicator`, creating the menu items locally within `.setup()` without storing the `Menu` instance in Tauri's managed app state (`app.manage(menu)`) allows the underlying GTK menu widgets to be finalized prematurely, causing DBusMenu (`com.canonical.dbusmenu`) layout/properties requests from GNOME Shell (`ubuntu-appindicators`) to receive empty or un-synchronized label properties.
+  2. Calling `.show_menu_on_left_click(false)` in `TrayIconBuilder` is unsupported on Linux (documented as `Linux: Unsupported` by the upstream `tray-icon` crate) and caused conflicting event behavior with the desktop's AppIndicator DBus service.
+- **Fix:**
+  1. Manage the `Menu` instance in Tauri application state via `app.manage(menu)` so the menu object and its GTK widget tree remain active across the entire application lifecycle.
+  2. Guard `.show_menu_on_left_click(false)` with `#[cfg(target_os = "windows")]` so Windows retains the direct-restore-on-left-click behavior without interfering with Linux AppIndicator menu handling.
+  3. Streamlined menu labels to standard concise desktop actions (`Open SMS Reader`, `Quit`).
+- **Rules:**
+  - **Rule 1:** Tray menus and context menus on Linux must be retained in persistent application state; never allow the Rust handle to go out of scope at the end of `.setup()`.
+  - **Rule 2:** Platform-specific tray behavior flags (`show_menu_on_left_click`) must be conditionally compiled for the platforms that actually support them.
+
 ## Bonus UX Notes
 
 - **User-reported 404 on releases page** but server-side probes said HTTP 200 (public repo) →
