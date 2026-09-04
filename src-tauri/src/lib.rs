@@ -21,15 +21,14 @@ pub fn run() {
             let state = commands::new_shared_state();
             app.manage(state);
 
-            let show_i = MenuItem::with_id(app, "show", "Open SIM Bank SMS Reader", true, None::<&str>)?;
+            let show_i = MenuItem::with_id(app, "show", "Open SMS Reader", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &sep, &quit_i])?;
 
-
+            #[allow(unused_mut)]
             let mut tray_builder = TrayIconBuilder::new()
                 .menu(&menu)
-                .show_menu_on_left_click(false)
                 .tooltip("SIM Bank SMS Reader")
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
@@ -60,10 +59,16 @@ pub fn run() {
                     }
                 });
 
+            #[cfg(target_os = "windows")]
+            {
+                tray_builder = tray_builder.show_menu_on_left_click(false);
+            }
+
             if let Some(icon) = app.default_window_icon() {
                 tray_builder = tray_builder.icon(icon.clone());
             }
 
+            app.manage(menu);
             let _tray = tray_builder.build(app)?;
 
             if let Some(window) = app.get_webview_window("main") {
