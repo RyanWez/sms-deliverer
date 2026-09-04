@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "SIM Bank SMS Reader",
         "width": 1300,
         "height": 720,

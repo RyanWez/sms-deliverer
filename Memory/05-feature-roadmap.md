@@ -80,9 +80,7 @@ person-management field at all (adding and removing people happens inside Telegr
 
 **What is left:**
 * Thread ID (forum topic) · a generic webhook + Discord · a disk-backed offline retry queue
-* Tray icon. §1's promise is "even when nobody is in front of the machine", but closing the window
-  ends the app. `general.minimizeToTray` was deleted because there is no tray code (§A) — which
-  makes the tray a **prerequisite** of that promise, not an optional extra
+* Tray icon and close-to-tray shipped in v1.8.0. `general.minimizeToTray` is wired to real behavior: closing the window (`X`, `Alt+F4`, or taskbar close) hides to the notification tray while live workers and Telegram forwarding continue unattended.
 
 ---
 
@@ -143,7 +141,7 @@ The whole `otp` group went, along with its `setOtp` setter. Because `otpPattern`
 
 | Field | Former label | Why it was deleted |
 |---|---|---|
-| `general.minimizeToTray` | Minimize to System Tray | No tray-icon/window-hide code at all — inert |
+| `general.minimizeToTray` | Minimize to System Tray | Previously inert and deleted; re-added and wired to real system tray & close-event minimization in v1.8.0 |
 | `notifications.soundEnabled` | Play Sound | No audio pipeline. Already in the backlog as feature §4 |
 | `notifications.desktopNotifications` | Desktop Notifications | No native notification path — see the §E feasibility study |
 | `notifications.otpOnlyNotifications` | OTP Messages Only | Toasts fire for OTPs only anyway, so the semantics were themselves wrong |

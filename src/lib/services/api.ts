@@ -901,4 +901,15 @@ export const api = {
       return false;
     }
   },
+
+  async setMinimizeToTray(enabled: boolean): Promise<void> {
+    if (!isTauri()) return;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('set_minimize_to_tray', { enabled });
+    } catch (e) {
+      console.warn('setMinimizeToTray unavailable:', e);
+    }
+  },
 };
+

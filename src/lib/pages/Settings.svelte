@@ -52,8 +52,17 @@
           bind: "general",
           options: RETENTION_OPTIONS,
         },
+        {
+          key: "minimizeToTray",
+          label: "Minimize to System Tray on Close",
+          description:
+            "Keep the application running in the system tray when closing the window, protecting active live monitoring sessions from accidental shutdown.",
+          type: "checkbox" as const,
+          bind: "general",
+        },
       ],
     },
+
     {
       id: "notifications",
       label: "Notifications",

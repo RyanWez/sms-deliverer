@@ -5,6 +5,9 @@ pub mod logging;
 pub mod telegram;
 
 use tauri::Manager;
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -17,6 +20,70 @@ pub fn run() {
         .setup(|app| {
             let state = commands::new_shared_state();
             app.manage(state);
+
+            let show_i = MenuItem::with_id(app, "show", "Open SIM Bank SMS Reader", true, None::<&str>)?;
+            let sep = PredefinedMenuItem::separator(app)?;
+            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_i, &sep, &quit_i])?;
+
+
+            let mut tray_builder = TrayIconBuilder::new()
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .tooltip("SIM Bank SMS Reader")
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.unminimize();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.unminimize();
+                            let _ = window.set_focus();
+                        }
+                    }
+                });
+
+            if let Some(icon) = app.default_window_icon() {
+                tray_builder = tray_builder.icon(icon.clone());
+            }
+
+            let _tray = tray_builder.build(app)?;
+
+            if let Some(window) = app.get_webview_window("main") {
+                let win = window.clone();
+                let state_handle = app.state::<commands::SharedState>();
+                let state = state_handle.inner().clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        let should_hide = {
+                            let s = commands::lock_state(&state);
+                            s.minimize_to_tray || s.live_on
+                        };
+                        if should_hide {
+                            api.prevent_close();
+                            let _ = win.hide();
+                        }
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -39,12 +106,14 @@ pub fn run() {
             commands::clear_logs,
             commands::get_log_file_path,
             commands::open_log_folder,
+            commands::set_minimize_to_tray,
             commands::purge_expired_messages,
             commands::cleanup_sim_storage,
             commands::telegram::verify_telegram_token,
             commands::telegram::detect_telegram_group,
             commands::telegram::send_telegram_test,
         ])
+
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

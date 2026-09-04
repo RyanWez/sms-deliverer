@@ -33,9 +33,11 @@ pub struct AppStateInner {
     pub delete_busy: bool,
     pub cleanup_busy: bool,
     pub detect_busy: bool,
+    pub minimize_to_tray: bool,
     pub status_text: String,
     pub failed_notes: Vec<String>,
 }
+
 
 impl AppStateInner {
     pub fn take_next_id(&mut self) -> u64 {
@@ -177,9 +179,11 @@ pub fn new_shared_state() -> SharedState {
         delete_busy: false,
         cleanup_busy: false,
         detect_busy: false,
+        minimize_to_tray: true,
         status_text: String::new(),
         failed_notes: Vec::new(),
     }))
+
 }
 
 /// Rebuild the port list from a fresh enumeration, carrying session state over
@@ -1860,10 +1864,24 @@ pub fn open_log_folder() -> Result<(), String> {
     Err("Could not locate log folder".into())
 }
 
+#[tauri::command]
+pub fn set_minimize_to_tray(state: tauri::State<'_, SharedState>, enabled: bool) {
+    let mut s = lock_state(&state);
+    s.minimize_to_tray = enabled;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::core::modem::{ProbeResult, NOT_RESPONDING};
+
+    #[test]
+    fn default_state_has_minimize_to_tray_enabled() {
+        let state = new_shared_state();
+        let s = lock_state(&state);
+        assert!(s.minimize_to_tray);
+    }
+
 
     #[test]
     fn progress_status_without_failures_has_no_suffix() {
@@ -2003,6 +2021,7 @@ mod tests {
             delete_busy: false,
             cleanup_busy: false,
             detect_busy: false,
+            minimize_to_tray: true,
             status_text: String::new(),
             failed_notes: Vec::new(),
         }
@@ -2133,6 +2152,7 @@ mod tests {
             delete_busy: false,
             cleanup_busy: false,
             detect_busy: false,
+            minimize_to_tray: true,
             status_text: String::new(),
             failed_notes: Vec::new(),
         }
