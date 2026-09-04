@@ -8,6 +8,7 @@
   import Ports from "$lib/pages/Ports.svelte";
   import Logs from "$lib/pages/Logs.svelte";
   import Settings from "$lib/pages/Settings.svelte";
+  import Changelog from "$lib/pages/Changelog.svelte";
   import { api } from "$lib/services/api";
   import { restartAutoUpdater } from "$lib/services/updater";
   import { settingsStore } from "$lib/stores/settings.svelte";
@@ -130,6 +131,8 @@
         <Logs />
       {:else if navigationStore.currentSection === "settings"}
         <Settings />
+      {:else if navigationStore.currentSection === "changelog"}
+        <Changelog />
       {/if}
     </main>
   </div>

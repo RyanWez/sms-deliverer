@@ -75,6 +75,7 @@ By leveraging **Tauri v2** and **Rust** on the backend paired with **Svelte 5** 
   - Table and card view modes with customizable pagination.
   - Batch message deletion directly from SIM storage (`AT+CMGD`).
 - **Cryptographically Secured Auto-Updater**: Native Tauri auto-updater integration with minisign cryptographic signature verification. Settings → Updates presents the release notes for a found version before anything is downloaded, and keeps the download and the install as separate steps so the restart happens when the operator chooses it rather than mid-shift. Manual checks are rate limited to one request per minute.
+- **Changelog Inside the App**: The **Changelog** page — in the sidebar, and behind the version number at the foot of it — reads the project's own `CHANGELOG.md`, bundled at build time. There is no request to make, so the history is there on a bank with no internet, and it cannot disagree with the binary: the installer is built from the release tag, by which point that version's section is already written, and the newest entry an install can show is therefore its own. Releases are laid out newest-first with the running version marked, grouped into features, fixes and the rest, filterable by kind, and the repository bookkeeping release-please appends to every line (`(#28)`, `(e7da48b)`) is stripped — none of it is reachable from in here. Nothing renders markdown: each line is parsed into plain text, the same rule the update card's notes follow.
 - **Synthetic Browser Preview**: Built-in mock data provider allowing full frontend development and UI inspection inside standard web browsers without needing physical hardware connected. The updater joins in: a dev-only preview release exercises the notes box, the download progress and the restart prompt without cutting a real release.
 - **Telegram Group Forwarding**: Settings → Forwarding pushes messages to one private Telegram group over a single outbound HTTPS connection, with an optional SOCKS5 proxy for networks that block `api.telegram.org`. Membership of that group *is* the permission model — the app stores one destination id and no per-person list, so access is granted and revoked with Telegram's own group tools. The bot is push-only, has no commands, and stays silent in private chats. Setup is verified in three steps (Verify token → Detect group → Send test) rather than by waiting for the first real OTP to find out. See [Telegram Forwarding](#-telegram-forwarding).
 
@@ -520,18 +521,20 @@ sms-tauri/
 │   │   ├── components/               # TitleBar, Sidebar, Toolbar, FilterBar, MessageTable,
 │   │   │                             #   MessageDetail, PortDetail, Pagination, ToastContainer,
 │   │   │                             #   UpdateDock, UpdateCard, Icon
-│   │   ├── pages/                    # Views (Inbox, Ports, Logs, Settings)
+│   │   ├── pages/                    # Views (Inbox, Ports, Logs, Settings, Changelog)
 │   │   ├── services/                 # api.ts — the only invoke/listen boundary; dialog,
 │   │   │                             #   updater, updater-preview
 │   │   ├── stores/                   # Runes state (messages, ports, live, logs, settings,
 │   │   │                             #   navigation, updater)
 │   │   ├── utils/                    # csv, port, port-refresh, message-buffer, toast-queue,
-│   │   │                             #   telegram-preview, release-notes, update-policy,
-│   │   │                             #   format, tauri, synthetic (+ *.test.ts alongside)
+│   │   │                             #   telegram-preview, release-notes, changelog,
+│   │   │                             #   update-policy, format, tauri, synthetic
+│   │   │                             #   (+ *.test.ts alongside)
 │   │   ├── icons.ts                  # Inline SVG path table
 │   │   └── types.ts                  # Shared wire types & settings shape
 │   ├── App.svelte                    # Root application layout & background timers
 │   ├── main.ts                       # Svelte 5 mount entrypoint
+│   ├── vite-env.d.ts                 # `?raw` import declaration (CHANGELOG.md)
 │   └── app.css                       # Tailwind layers & both theme variable blocks
 ├── src-tauri/                        # Rust Tauri v2 Backend
 │   ├── capabilities/default.json     # ACL — no fs/shell/http; all I/O sits behind commands

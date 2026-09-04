@@ -25,7 +25,7 @@ Detail: `Memory/06-git-workflow.md`. Non-negotiable parts:
 ## Validation, and what is actually enforced
 ```
 npm run check     # svelte-check, currently 0 errors 0 warnings
-npm test          # node:test + --experimental-strip-types, 89 tests in 7 files (unchanged since v1.6.1)
+npm test          # node:test + --experimental-strip-types, 103 tests in 8 files (89 in 7 on v1.6.2)
 npm run build     # vite build
 cargo check  --manifest-path src-tauri/Cargo.toml
 cargo test   --manifest-path src-tauri/Cargo.toml   # 225 tests in 12 files (pending v1.6.2; 214 on v1.6.1). One is `#[cfg(target_os = "linux")]`, so the Windows leg reports 224
@@ -84,6 +84,7 @@ A Settings switch that does nothing is worse than no switch: it teaches the oper
 - Tests: Node's built-in runner with `--experimental-strip-types` (Node 22), files `src/**/*.test.ts`. No vitest — it pulls a critical-severity advisory chain through this project's `vite@5` pin (`Memory/04 §D`). No new deps without justification. Logic worth testing goes in a rune-free, `$lib`-free module (`utils/csv.ts`, `utils/port-refresh.ts`, `utils/message-buffer.ts`, `utils/toast-queue.ts`) so the runner can import it directly.
 - Inbox rows are buffered before being flushed into the store (`utils/message-buffer.ts`). Update and removal events can arrive for a row still sitting in that buffer, so both paths must look there as well as in the store.
 - Toasts are bounded and coalescing (`utils/toast-queue.ts`, `MAX_TOASTS` = 5). Repeats of the same kind and title collapse onto one counted card, because the container is a fixed column with no max-height and 16 ports failing at once used to stack 16 cards over the UI reporting the failure. Anything carrying an OTP is never coalesced — each code is a distinct thing the operator came to read.
+- The Changelog page (`pages/Changelog.svelte`) imports the repository's `CHANGELOG.md` with Vite's `?raw` at **build** time — the only raw asset import in the project, and the reason `src/vite-env.d.ts` exists. Never fetch it at runtime: the bank has no internet, and a file that shipped inside the binary cannot disagree with it. `utils/changelog.ts` splits the document on the `## [x.y.z](…)` headings and hands each release body to `utils/release-notes.ts::parseReleaseNotes`, so one change line looks the same on the page and in the update card. Nothing renders markdown — every line is parsed to text and interpolated, and `TRAILING_REF_RE` drops the `([#28](…)) ([e7da48b](…))` tail because neither reference is reachable from inside the app. A new release-heading shape gets a test in `changelog.test.ts` before the regex is widened.
 
 ## Theme and styling
 - Every colour comes from a CSS variable defined in **both** theme blocks of `src/app.css` (`:root, :root.dark` and `:root.light`), in full — no partial overrides, so switching classes can never leave a stale value behind. Values are space-separated RGB triples so Tailwind's `<alpha-value>` works. There are no hardcoded hex colours anywhere in `src/`; keep it that way.
