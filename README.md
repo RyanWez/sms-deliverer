@@ -60,6 +60,7 @@ By leveraging **Tauri v2** and **Rust** on the backend paired with **Svelte 5** 
 - **Modem Detection Before Work**: A one-shot `AT` liveness probe (800 ms timeout, two attempts) identifies which serial ports actually have a modem behind them. A SIM bank publishes one serial device per channel whether or not a SIM is inserted, so on a partly-filled bank this is the difference between a scan that finishes in seconds and one that spends its full timeout chain on every empty slot. Ports that do not answer are deselected automatically and skipped by scan, live mode, USSD and SIM cleanup. Ports are opened with DTR/RTS asserted so both platforms present the same lines to the modem. A probe cannot wait out a bank that is still powering up, so re-run Detect a minute after connecting it rather than treating the first result as final.
 - **Concurrent Multi-Port Scanning**: Parallel asynchronous workers read SMS across all connected serial ports (`COM1..N` on Windows, `/dev/ttyUSB*` / `/dev/ttyACM*` on Linux) simultaneously without UI freezing.
 - **Live SMS Monitoring Mode**: Real-time asynchronous polling and unsolicited event listener (+CMTI notifications) that triggers instant desktop alerts and sounds on incoming SMS. A port is reported `LIVE` only after a modem answers; empty slots are labelled `NO MODEM` and excluded from the ready total instead of showing green. A port that stops being monitored is excluded too — a dead transport or a crashed worker is counted separately as `failed`, and a port retrying its connection falls back into the `connecting…` count — so ready, `no modem`, `failed` and `connecting…` together account for every port in the session, and the ready figure only ever names ports a worker is really reading.
+- **Runs From the System Tray**: A shift can outlast the window. Closing the window — the title bar's `✕`, `Alt+F4`, or the taskbar's Close — hides the app to the notification tray instead of ending it, so live monitoring, the SIM retention sweep and Telegram forwarding carry on unattended. The tray icon restores the window (left-click on Windows, the *Open SMS Reader* menu item on Linux) and its *Quit* item is the way out. Settings → General → *Minimize to System Tray on Close* turns the behaviour off, with one exception that is deliberate: **while Live mode is running, closing the window hides it either way** rather than silently ending a monitoring session and the forwarding with it. Two things follow from that and are worth knowing before the bank is in front of you: the app can be running with no window on screen, so check the tray before launching it a second time — a second copy cannot open ports the first one already holds; and *Quit* stops the process immediately, so anything the Telegram send queue was still pacing out is discarded. Stop Live first if the last few codes matter.
 - **Advanced SMS Decoding & Concatenation**:
   - Full GSM 7-bit default alphabet, 8-bit binary, and 16-bit UCS-2 (Unicode / multi-language / Myanmar unicode) decoding.
   - Automatic reassembly of multi-part concatenated SMS messages (TP-UDHI 8-bit & 16-bit reference numbers), with GSM-7 payloads decoded from the septet boundary that follows the User Data Header.
@@ -141,6 +142,18 @@ sudo pacman -S --needed \
   librsvg \
   xdotool
 ```
+
+**The system tray needs a host in the desktop shell, and not every desktop has one.**
+The `.deb` already declares `libayatana-appindicator3-1`, but the library is only half
+of it — GNOME draws no tray at all without the AppIndicator shell extension. Ubuntu's
+GNOME ships and enables it (`ubuntu-appindicators`); upstream GNOME, as on Fedora
+Workstation and Debian, needs `gnome-shell-extension-appindicator` installed and
+enabled. KDE Plasma, XFCE, Cinnamon and MATE carry a tray natively and need nothing
+extra. This matters because closing the window hides to the tray by default: on a
+desktop with no tray host the app keeps running with no window **and** no icon to
+bring it back, and killing the process from a terminal or a system monitor is the
+only way out. On such a desktop, turn Settings → General → *Minimize to System Tray
+on Close* off before you rely on it.
 
 ---
 
@@ -443,11 +456,16 @@ because it only ever sends.
 - **Every group member sees every message.** That is the design: shared visibility
   over compartmentalisation. Protect group invites like passwords, and restrict
   "Add Members" to admins.
-- **Forwarding needs Live mode running and the app window open.** There is no tray
-  icon, so closing the window ends the process and the forwarding with it.
+- **Forwarding needs Live mode running**, but no longer needs the window open.
+  Since v1.8.0 closing the window hides the app to the system tray and the live
+  workers and the forwarder keep running behind it. What does end forwarding is
+  **Quit** — from the tray menu, or the window's close button with *Minimize to
+  System Tray on Close* switched off and Live not running. Quitting mid-session
+  also discards whatever the send queue was still pacing out, so stop Live and
+  let the queue drain before you quit if the last few codes matter.
 - **Messages without a code are not forwarded** unless you switch that on, and it
   spends the same 20-per-minute budget the codes need.
-- **History lives on Telegram's servers**, not just in the app's 2-hour window.
+- **History lives on Telegram's servers**, not just in the app's one-hour window.
   Turn on the group's auto-delete timer if that matters.
 - **The bot token is stored in the clear**, like every other setting in this app —
   there is no keychain integration and the UI does not pretend otherwise. Anyone
@@ -555,7 +573,7 @@ sms-tauri/
 │   │   ├── forwarder.rs              # Paced, coalescing Telegram send queue
 │   │   ├── telegram.rs               # Bot API client, HTML escaping, token redaction
 │   │   ├── logging.rs                # Ring buffer + rotating file logger, number masking
-│   │   ├── lib.rs                    # Tauri builder & plugin registration
+│   │   ├── lib.rs                    # Tauri builder, plugin + tray registration, close-to-tray
 │   │   └── main.rs                   # Desktop executable entrypoint
 │   ├── Cargo.toml                    # Rust dependencies & crate metadata
 │   └── tauri.conf.json               # Tauri v2 configuration & window settings
