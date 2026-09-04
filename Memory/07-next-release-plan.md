@@ -20,10 +20,39 @@
 > | **v1.6.1** (2026-09-03) | Call center နံပါတ်ကို OTP လို့ မဖတ်ရ (`03 §22`) |
 >
 > ဆိုတော့ ဒီ doc ထဲက item တွေက အခု **`v1.6.2` (fix ၄ ခု) နဲ့ `v1.7.0` (live command
-> mailbox)** ဖြစ်တယ်။ **ဘယ်တစ်ခုမှ မ ship သေးဘူး** — 2026-09-04 မှာ code ပေါ် ပြန်စစ်ပြီး
-> အတည်ပြုထားတယ် (§C cleanup status line၊ §D.1 `msg(s)`၊ §D.2 USSD rejection line၊
-> §D.3 `Closed` ready count၊ §B mailbox — အားလုံး ရှိနေတုန်း)။ အောက်မှာ နံပါတ်တွေကို
-> ပြင်ပေးလိုက်ပြီ။ နောက်တစ်ခါ release ရွေ့ရင် ဒီ box ကို လိုက်ပြင်ပါ။
+> mailbox)** ဖြစ်တယ်။ အောက်မှာ နံပါတ်တွေကို ပြင်ပေးလိုက်ပြီ။ နောက်တစ်ခါ release ရွေ့ရင်
+> ဒီ box ကို လိုက်ပြင်ပါ။
+>
+> **📌 2026-09-04 (နောက်ဆုံး အခြေအနေ) — v1.6.2 ရဲ့ fix ၄ ခု implement + validate ပြီး၊
+> ဒါပေမဲ့ merge မလုပ်ရသေး၊ release မလုပ်ရသေး:**
+>
+> | Item | အခြေအနေ | Case entry |
+> |---|---|---|
+> | §C cleanup status line (`empty` counter) | branch `fix/status-and-log-accuracy` ✅ | `03 §23` |
+> | §D.1 `msg(s)` → `slot(s)` unit | အတူတူ ✅ | `03 §25` |
+> | §D.2 USSD rejection line ရဲ့ form marker | အတူတူ ✅ | `03 §26` |
+> | §D.3 `Closed` ready count + `failed` bucket | အတူတူ ✅ | `03 §24` |
+> | §B live worker command mailbox (v1.7.0) | **မစသေးဘူး** | — |
+>
+> Branch က `main` ထဲ မဝင်သေးတာမို့ **`v1.6.2` tag/release မရှိသေးဘူး** — release-please က
+> PR merge ပြီးမှ version bump လုပ်တယ် (`02` doc)။ ဒီ doc ထဲ "v1.6.2" လို့ ရေးထားတာ
+> အားလုံးက **pending release** ကို ဆိုလိုတယ်။
+>
+> **Review က plan ထက် ပိုထည့်ခဲ့တာ ၃ ချက်** (plan မှာ မကြိုမြင်ခဲ့တာ):
+> ၁။ **`failed` bucket** — §D.3 ရဲ့ အကြံ (`retain` + `live_status` ပြန်တည်) တစ်ခုတည်း
+> ဆိုရင် သေသွားတဲ့ worker က `connecting…` remainder ထဲ ကျမယ်၊ ဆိုတော့ **မှားတဲ့ ကိန်း
+> တစ်ခုကို အခြား မှားတဲ့ ကိန်းနဲ့ လဲလိုက်တာ** ဖြစ်မယ် — line က "ဆက် ချိတ်နေတယ်" လို့
+> ပြောနေမယ်၊ တကယ်က ဘာမှ retry လုပ်နေတာ မရှိတော့ဘူး။ ဒါကြောင့် write-only ခဲ့တဲ့
+> `live_failed` ကို counted bucket အဖြစ် ထုတ်ပြီး rule (dedup + bucket ကနေ eviction) ကို
+> `mark_port_failed` helper ထဲ သွတ်လိုက်တယ်
+> ၂။ **`slot(s)` unit site ၅ ခု `modem.rs` အပြင်ဘက်မှာ ရှိတယ်** — plan က `modem.rs`
+> ကိုပဲ မှတ်ခဲ့တယ်၊ တကယ်က `commands/mod.rs` ၃ ခု (cleanup status၊ per-port cleanup log၊
+> `Deleted N slot(s) from PORT`) + `core/live.rs` ၂ ခု (retention sweep) ရှိတယ် (`03 §25`)
+> ၃။ **`Reconnecting` arm ကိုပါ တူတဲ့ အကြောင်းရင်းနဲ့ ပြင်ရတယ်** — §D.3 က
+> `Offline`/`Reconnecting` ကို တစ်တွဲအဖြစ် ရေးထားခဲ့ပေမဲ့ status line ကို `live_status`
+> ကနေ ပြန်တည်တာက **`Offline` ပဲ**၊ `Reconnecting` က `status_text` ကို လက်နဲ့ ရေးခဲ့တာမို့
+> bucket တွေကို မထင်ဟပ်ဘူး။ အခု ready list ကနေ ဖြုတ်ပြီး line ပြန်တည်တယ်၊ **bucket မဝင်ဘူး**
+> (= `connecting…` remainder၊ အဲ့ဒါ တကယ့် အခြေအနေ)
 
 ---
 
@@ -239,6 +268,14 @@ COM39: deleted 5 msg(s)
   README က probe timeout / timeout-chain table / AT flow ကိုပဲ ကိုင်ထားတယ်) ဆိုတော့
   §C နဲ့ §D ၂ ခုလုံးအတွက် README ပြောင်းစရာ မရှိဘူး — ဒါပေမဲ့ ပြောင်းမယ့်အချိန်မှာ
   ပြန်စစ်ပါ (AGENTS.md Documentation duty)
+- **⚠️ ပြင်ချက် (2026-09-04၊ တကယ် လုပ်ပြီးမှ တွေ့တာ):** အပေါ်က "README ပြောင်းစရာ မရှိဘူး"
+  က **§C / §D.1 / §D.2 အတွက်ပဲ မှန်တယ်** — per-port log format တွေ README ထဲ တကယ် မပါဘူး
+  (ပြန် grep ပြီး)။ ဒါပေမဲ့ **§D.3 အတွက် ရှိတယ်**: README.md ရဲ့ Live SMS Monitoring bullet
+  (line 62) က ready total ကနေ ဖယ်ထုတ်တာ `NO MODEM` **တစ်ခုတည်း** လို့ ရေးထားခဲ့တာမို့
+  `failed` bucket ထည့်လိုက်တာနဲ့ မပြည့်စုံ ဖြစ်သွားတယ် — `failed` နဲ့ `connecting…`
+  remainder ပါ ထည့်ပြီး sync လုပ်လိုက်ပြီ။ **သင်ခန်းစာ:** README က log **format** ကို
+  မကိုင်ဘူး၊ ဒါပေမဲ့ **behaviour ရဲ့ အတွက်အချက် (ဘယ် port က ready total ထဲ ပါလဲ)** ကို
+  ကိုင်ထားတယ် — counter အသစ် တစ်ခု ထည့်တာက အဲ့ဒီ ဝါကျကို falsify လုပ်နိုင်တယ်
 
 ### D.2 USSD rejection warning က **code** ကိုပဲ ပြတယ် — **command** ကို မပြဘူး
 
@@ -306,7 +343,7 @@ COM39: deleted 5 msg(s)
 |---|---|
 | `developer.autoScroll` — ဆုံးဖြတ်ရသေးတဲ့ setting တစ်ခုတည်း | `05 §C.3` |
 | L1, L2, L4 limitation (renamed stick၊ live thread pool မရှိတာ၊ liveness re-probe မရှိတာ) | `05 §C.4`၊ `§C.5`၊ `§C.7` |
-| ~~L3 `Closed` over-count~~ — **ဒီ plan ထဲ ဆွဲထည့်လိုက်ပြီ**၊ §D.3 ကြည့် | `05 §C.6` → `§D.3` |
+| ~~L3 `Closed` over-count~~ — **ဒီ plan ထဲ ဆွဲထည့်ပြီး၊ v1.6.2 (branch) မှာ ပိတ်ပြီ** (`03 §24`)၊ §D.3 ကြည့် | `05 §C.6` → `§D.3` |
 | Supervisor ၄ ခုကို `run_port_pool` အဖြစ် ပေါင်းတာ — **အစဉ်လိုက် အနောက်ဆုံး** (§C က ဒီ entry ရဲ့ down payment) | `05 §C.10` |
 | `main` ruleset မရှိတာ + updater release-draft flip | `02 §6` |
 
@@ -314,11 +351,13 @@ COM39: deleted 5 msg(s)
 
 ## 🎯 Release Shape — အနှစ်ချုပ်
 
-| Release | ပါဝင်တာ | Commit type | Risk | Hardware လိုလား |
-|---|---|---|---|---|
-| **v1.6.2** | §C (cleanup status line က "no modem" ကို failure အဖြစ် ရေတာ) + §D.1 (`msg(s)` unit ၂ မျိုး) + §D.2 (USSD rejection line) + §D.3 (`Closed` က ready count မလျှော့တာ) | အားလုံး `fix:` | **နိမ့်** — counter/wording ပဲ၊ **behaviour ပြောင်းတာ မရှိဘူး** | မလို (unit test နဲ့ လုံလောက်) |
-| **v1.7.0** | §B (live worker command mailbox — Delete / Clear All / Get SIM Numbers ကို live ဖွင့်ထားစဉ် လုပ်နိုင်တာ) | `feat:` | **မြင့်** — live loop timing ပြောင်းတယ် | **လိုတယ် — `04 §G` playbook**၊ ပြီးတော့ `Memory/03` case entry အသစ် |
+| Release | ပါဝင်တာ | Commit type | Risk | Hardware လိုလား | အခြေအနေ (2026-09-04) |
+|---|---|---|---|---|---|
+| **v1.6.2** | §C (cleanup status line က "no modem" ကို failure အဖြစ် ရေတာ) + §D.1 (`msg(s)` unit ၂ မျိုး) + §D.2 (USSD rejection line) + §D.3 (`Closed` က ready count မလျှော့တာ — review မှာ **`failed` bucket** နဲ့ **`Reconnecting` arm** ပါ ထပ်ဝင်လာတယ်) | အားလုံး `fix:` | **နိမ့်** — counter/wording နဲ့ status line ရဲ့ တွက်ချက်မှုပဲ။ AT sequence / timeout / delete confirmation **မထိ**၊ event payload က additive (`sim_cleanup:done` ထဲ `empty` တိုးတာ) | မလို (unit test နဲ့ လုံလောက် — Rust test ၁၁ ခု ထပ်တိုးတယ်) | **implement + validate ပြီး၊ branch `fix/status-and-log-accuracy` ပေါ် — merge မလုပ်ရသေး၊ release မလုပ်ရသေး** (case `03 §23`–`§26`) |
+| **v1.7.0** | §B (live worker command mailbox — Delete / Clear All / Get SIM Numbers ကို live ဖွင့်ထားစဉ် လုပ်နိုင်တာ) | `feat:` | **မြင့်** — live loop timing ပြောင်းတယ် | **လိုတယ် — `04 §G` playbook**၊ ပြီးတော့ `Memory/03` case entry အသစ် | **မစသေးဘူး** |
 
 > **အစဉ်လိုက်:** v1.6.2 ကို အရင် ထုတ်ပါ။ ဒါက risk နိမ့်ပြီး operator ရဲ့ status line ကို
 > ချက်ချင်း ယုံကြည်လို့ ရစေတယ် — §B ရဲ့ ကြီးမားတဲ့ change ကို debug လုပ်တဲ့အခါ
-> **status line ကို ယုံနိုင်တာက ကိရိယာ** ဖြစ်လာမယ်။
+> **status line ကို ယုံနိုင်တာက ကိရိယာ** ဖြစ်လာမယ်။ v1.6.2 ရဲ့ ကုဒ်က branch ပေါ်
+> အဆင်သင့်ဖြစ်ပြီ — ကျန်တာ PR (title က conventional commit ဖြစ်ရမယ်၊ `06` doc) →
+> squash merge → release-please PR ပဲ။

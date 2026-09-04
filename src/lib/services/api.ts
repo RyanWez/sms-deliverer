@@ -403,18 +403,35 @@ export const api = {
 
       // The idle SIM sweep runs on a timer with no operator involvement, so its
       // outcome only ever reached the Ports page footer.
-      await listen<{ deleted: number; failed: number }>('sim_cleanup:done', (event) => {
-        const { deleted, failed } = event.payload;
-        if (failed > 0) {
-          toast(
-            'Warning',
-            'SIM cleanup incomplete',
-            `Freed ${deleted} expired SIM slot(s); ${failed} port(s) failed.`
-          );
-        } else if (deleted > 0) {
-          toast('Success', 'SIM cleanup', `Freed ${deleted} expired SIM slot(s).`);
+      //
+      // `empty` counts ports with no modem in the slot. They used to be folded
+      // into `failed`, which is how a 64-port bank with 30 vacant slots and zero
+      // real failures was shown `FAILED: 30/64`. A vacant slot has nothing to
+      // prune, so it is reported as its own clause and never raises the Warning
+      // severity — only a genuine failure does. Same separation `detect:done`
+      // already makes between an empty slot and an unprobeable port.
+      await listen<{ deleted: number; empty?: number; failed: number }>(
+        'sim_cleanup:done',
+        (event) => {
+          const { deleted, failed } = event.payload;
+          // A backend that predates the third counter sends two: absent means
+          // none, which reproduces the previous wording exactly.
+          const empty = event.payload.empty ?? 0;
+          // Nothing pruned and nothing broken says nothing. This fires every
+          // 10 minutes unattended, and a bank whose slots are simply vacant is
+          // steady state rather than news — the footer status line still carries
+          // the full count for anyone who looks.
+          if (deleted === 0 && failed === 0) return;
+          const parts = [`Freed ${deleted} expired SIM slot(s).`];
+          if (empty > 0) parts.push(`${empty} port(s) had no modem — nothing to clean.`);
+          if (failed > 0) {
+            parts.push(`${failed} port(s) failed.`);
+            toast('Warning', 'SIM cleanup incomplete', parts.join(' '));
+          } else {
+            toast('Success', 'SIM cleanup', parts.join(' '));
+          }
         }
-      });
+      );
 
       if (settingsStore.general.autoStartLive && portsStore.items.some(p => p.checked)) {
         void api.startLive(true);

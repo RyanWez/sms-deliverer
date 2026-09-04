@@ -20,6 +20,9 @@ pub struct AppStateInner {
     pub scan_done: usize,
     pub live_on: bool,
     pub live_ports_ready: Vec<String>,
+    /// Ports whose live worker has stopped, with the reason. One entry per port —
+    /// `mark_port_failed` owns the invariant — because `live_status` counts these
+    /// as a bucket of the bank alongside `live_ports_ready` and `live_offline`.
     pub live_failed: Vec<(String, String)>,
     /// Ports live mode is holding open but where no modem answers. Tracked so
     /// the status line can say "7/64 ready | 57 no modem" instead of implying
@@ -528,21 +531,57 @@ fn detect_done_status(found: usize, total: usize, unknown: usize) -> String {
     s
 }
 
-/// Status line for live mode. Reports ready, offline and still-connecting
-/// counts separately so a bank of mostly-empty slots reads honestly instead of
-/// looking like every port is being monitored.
+/// Status line for live mode. Ready, offline, failed and still-connecting counts
+/// are reported separately so a bank of mostly-empty slots reads honestly instead
+/// of looking like every port is being monitored.
+///
+/// The three settled buckets come first and `connecting…` last, because it is not
+/// a bucket at all — it is what is left of `total` once the settled ports are
+/// subtracted, so it can only be counted after them. The buckets are disjoint by
+/// construction (`mark_port_failed`), which is what keeps that remainder from
+/// going negative for a reason other than a stale `total`.
 fn live_status(st: &AppStateInner, total: usize) -> String {
     let ready = st.live_ports_ready.len();
     let offline = st.live_offline.len();
+    let failed = st.live_failed.len();
     let mut s = format!("Live {}/{} ready", ready, total);
     if offline > 0 {
         s.push_str(&format!("  |  {} no modem", offline));
     }
-    let pending = total.saturating_sub(ready + offline);
+    if failed > 0 {
+        s.push_str(&format!("  |  {} failed", failed));
+    }
+    let pending = total.saturating_sub(ready + offline + failed);
     if pending > 0 {
         s.push_str(&format!("  |  {} connecting…", pending));
     }
     s
+}
+
+/// Record that a port has stopped being monitored, and move it out of every other
+/// bucket.
+///
+/// Both report sites go through here — `LiveEvent::Closed` and the per-worker
+/// `catch_unwind` — because the bucket rules are the whole point:
+///
+/// * `live_failed` is deduplicated by port. If a panic escapes `run_live`'s own
+///   `catch_unwind`, the worker's outer one reports the same port again, and two
+///   entries for one port would make `live_status` claim more failed ports than
+///   the bank has. The first reason is kept: it is the specific one, where the
+///   second is the generic [`crate::core::live::WORKER_PANIC`] backstop, and the
+///   row's `live_error` shows whatever was reported last regardless.
+/// * "Failed" wins over "no modem". A silent slot whose worker then dies is not
+///   being retried any more, and leaving it in `live_offline` too would count one
+///   port twice.
+///
+/// The reverse ordering cannot happen: a worker emits nothing after `Closed`, so
+/// no port re-enters `live_offline` or `live_ports_ready` once it is here.
+fn mark_port_failed(st: &mut AppStateInner, port: &str, reason: &str) {
+    st.live_ports_ready.retain(|p| p != port);
+    st.live_offline.retain(|p| p != port);
+    if !st.live_failed.iter().any(|(p, _)| p == port) {
+        st.live_failed.push((port.to_string(), reason.to_string()));
+    }
 }
 
 fn scan_progress_status(done: usize, total: usize, msgs: usize, failed: usize) -> String {
@@ -571,6 +610,29 @@ fn scan_done_status(ok: usize, total: usize, msgs: usize, failed_notes: &[String
             format!("  |  FAILED: {}", failed_notes.join(", "))
         }
     )
+}
+
+/// SIM cleanup's closing line.
+///
+/// Empty slots are counted apart from failures, the same split
+/// `detect_done_status` makes: cleanup runs on every selected port, so an operator
+/// who has not run Detect yet has the whole bank's empty slots in this one pass
+/// and calling them failures reports a working bank as broken. The clause stops
+/// short of detect's "deselected" because cleanup changes no port's selection.
+///
+/// A zero count prints no clause, so a clean run stays one short sentence and
+/// `FAILED` never appears where nothing failed. The unit is SIM slots, not inbox
+/// rows: `OpResult::deleted` counts slots, and a concatenated SMS holds one per
+/// fragment.
+fn cleanup_done_status(deleted: usize, empty: usize, failed: usize, total: usize) -> String {
+    let mut s = format!("SIM cleanup done. Deleted {} expired SIM slot(s)", deleted);
+    if empty > 0 {
+        s.push_str(&format!("  |  {} port(s) with no modem", empty));
+    }
+    if failed > 0 {
+        s.push_str(&format!("  |  FAILED: {}/{}", failed, total));
+    }
+    s
 }
 
 #[tauri::command]
@@ -1085,7 +1147,13 @@ pub fn start_live(
                                 p.live_ready = false;
                                 p.live_error = Some(format!("Reconnecting: {}", error));
                             }
-                            st.status_text = format!("{} reconnecting…", port);
+                            // Out of the ready count, but into no bucket: a
+                            // transient state belongs in the `connecting…`
+                            // remainder, and the `Ready` arm puts the port back on
+                            // its own. The reason rides on the row's `live_error`
+                            // in the `ports:updated` payload below.
+                            st.live_ports_ready.retain(|p| p != &port);
+                            st.status_text = live_status(&st, port_count);
                             text = st.status_text.clone();
                             ports_snapshot = st.ports.clone();
                         }
@@ -1236,8 +1304,15 @@ pub fn start_live(
                                     p.live_ready = false;
                                     p.live_error = Some(e.clone());
                                 }
-                                st.live_failed.push((port.clone(), e.clone()));
-                                st.status_text = format!("{} FAILED: {}", port, e);
+                                // Not `live_offline`, and `alive` is untouched: a
+                                // worker that exited says nothing about whether a
+                                // SIM is in the slot, and only probe silence may
+                                // style a slot as empty. The reason reaches the
+                                // operator as the row's `live_error` in the
+                                // `ports:updated` payload below — `status_text` is
+                                // a bank-wide count and no longer names the port.
+                                mark_port_failed(&mut st, &port, &e);
+                                st.status_text = live_status(&st, port_count);
                             }
                             text = st.status_text.clone();
                             ports_snapshot = st.ports.clone();
@@ -1269,8 +1344,12 @@ pub fn start_live(
                             p.live_ready = false;
                             p.live_error = Some(reason.into());
                         }
-                        st.live_failed.push((port_name.clone(), reason.into()));
-                        st.status_text = format!("{} FAILED: {}", port_name, reason);
+                        // Same bucket rules as the `Closed` arm. This is the
+                        // backstop for a panic that escaped `run_live`'s own
+                        // `catch_unwind` — which reports through `Closed` — so the
+                        // port may be recorded already; the dedup keeps it to one.
+                        mark_port_failed(&mut st, &port_name, reason);
+                        st.status_text = live_status(&st, port_count);
                         text = st.status_text.clone();
                         ports_snapshot = st.ports.clone();
                     }
@@ -1456,7 +1535,7 @@ pub fn delete_selected(
                     .or_default()
                     .extend(r.indices.iter().copied());
                 if r.ok {
-                    log::info!("Deleted {} msg(s) from {}", r.deleted, port);
+                    log::info!("Deleted {} slot(s) from {}", r.deleted, port);
                 } else {
                     fail += 1;
                     log::warn!(
@@ -1619,6 +1698,10 @@ pub fn cleanup_sim_storage(
     thread::spawn(move || {
         let _busy = busy;
         let deleted = Arc::new(AtomicUsize::new(0));
+        // Ports where nothing answered, counted apart from `failed`. An empty
+        // slot is not a fault and a bank is routinely half empty, so folding the
+        // two together reported a working bank as broken.
+        let empty = Arc::new(AtomicUsize::new(0));
         let failed = Arc::new(AtomicUsize::new(0));
         let work = Arc::new(Mutex::new(ports));
         let workers = total.min(MAX_CONCURRENT_PORTS);
@@ -1626,6 +1709,7 @@ pub fn cleanup_sim_storage(
         for _ in 0..workers {
             let work2 = Arc::clone(&work);
             let deleted2 = Arc::clone(&deleted);
+            let empty2 = Arc::clone(&empty);
             let failed2 = Arc::clone(&failed);
             handles.push(thread::spawn(move || {
                 while let Some(port) = take_port(&work2) {
@@ -1635,9 +1719,20 @@ pub fn cleanup_sim_storage(
                     match outcome {
                         Ok(r) if r.ok => {
                             if r.deleted > 0 {
-                                log::info!("SIM cleanup {}: deleted {} message(s)", port, r.deleted);
+                                log::info!("SIM cleanup {}: deleted {} slot(s)", port, r.deleted);
                             }
                             deleted2.fetch_add(r.deleted, Ordering::Relaxed);
+                        }
+                        // Only this exact string is the modem's own silence, i.e.
+                        // an empty slot — `expire_old` passes `read_port`'s error
+                        // through verbatim, and nothing wider may match: an
+                        // `AtChannel::open` or `Serial I/O failed: …` error is the
+                        // host's own fault and stays a failure. Deliberately
+                        // unlogged, since `modem::probe_failure` already recorded
+                        // the silence once for this port; the count still reaches
+                        // the status line and the event payload below.
+                        Ok(r) if r.error.as_deref() == Some(crate::core::modem::NOT_RESPONDING) => {
+                            empty2.fetch_add(1, Ordering::Relaxed);
                         }
                         Ok(r) => {
                             failed2.fetch_add(1, Ordering::Relaxed);
@@ -1659,6 +1754,7 @@ pub fn cleanup_sim_storage(
             let _ = h.join();
         }
         let d = deleted.load(Ordering::Relaxed);
+        let e = empty.load(Ordering::Relaxed);
         let f = failed.load(Ordering::Relaxed);
         let text;
         {
@@ -1666,18 +1762,14 @@ pub fn cleanup_sim_storage(
             // still leaves the app usable.
             let mut st = lock_state(&state_clone);
             st.cleanup_busy = false;
-            st.status_text = if f == 0 {
-                format!("SIM cleanup done. Deleted {} expired message(s)", d)
-            } else {
-                format!("SIM cleanup done. Deleted {}  |  FAILED: {}/{}", d, f, total)
-            };
+            st.status_text = cleanup_done_status(d, e, f, total);
             text = st.status_text.clone();
         }
         log::info!("{}", text);
         let _ = app2.emit("status:update", &serde_json::json!({ "text": text }));
         let _ = app2.emit(
             "sim_cleanup:done",
-            &serde_json::json!({ "deleted": d, "failed": f }),
+            &serde_json::json!({ "deleted": d, "empty": e, "failed": f }),
         );
     });
     Ok("SIM cleanup started".into())
@@ -1803,6 +1895,45 @@ mod tests {
         assert_eq!(
             scan_done_status(8, 8, 0, &[],),
             "Done. Modems OK: 8/8  |  Total messages: 0"
+        );
+    }
+
+    #[test]
+    fn cleanup_status_stays_one_sentence_when_there_is_nothing_to_report() {
+        assert_eq!(
+            cleanup_done_status(14, 0, 0, 64),
+            "SIM cleanup done. Deleted 14 expired SIM slot(s)"
+        );
+    }
+
+    /// The field case: cleanup run before Detect on a 64-port bank holding 34
+    /// modems. Thirty slots were empty and nothing failed, and the line read
+    /// "SIM cleanup done. Deleted 14  |  FAILED: 30/64" — thirty things broken
+    /// to an operator standing in front of a working bank.
+    #[test]
+    fn cleanup_status_counts_empty_slots_without_calling_them_failures() {
+        let s = cleanup_done_status(14, 30, 0, 64);
+        assert_eq!(
+            s,
+            "SIM cleanup done. Deleted 14 expired SIM slot(s)  |  30 port(s) with no modem"
+        );
+        assert!(!s.contains("FAILED"), "nothing failed: {s}");
+    }
+
+    #[test]
+    fn cleanup_status_reports_real_failures_against_the_port_total() {
+        assert_eq!(
+            cleanup_done_status(2, 0, 3, 64),
+            "SIM cleanup done. Deleted 2 expired SIM slot(s)  |  FAILED: 3/64"
+        );
+    }
+
+    #[test]
+    fn cleanup_status_keeps_empty_slots_and_failures_apart() {
+        assert_eq!(
+            cleanup_done_status(14, 30, 2, 64),
+            "SIM cleanup done. Deleted 14 expired SIM slot(s)  |  30 port(s) with no modem  \
+             |  FAILED: 2/64"
         );
     }
 
@@ -2028,6 +2159,94 @@ mod tests {
     #[test]
     fn live_status_is_clean_when_every_port_is_ready() {
         assert_eq!(live_status(&live_state(3, 0), 3), "Live 3/3 ready");
+    }
+
+    /// Reconnecting is transient, so the port leaves the ready count without
+    /// joining a bucket: it lands in the `connecting…` remainder, which is what it
+    /// is doing. The `Ready` arm re-adds it when the modem answers again.
+    #[test]
+    fn live_status_moves_a_reconnecting_port_into_the_remainder() {
+        let mut st = live_state(4, 0);
+        assert_eq!(live_status(&st, 4), "Live 4/4 ready");
+
+        // What the `Reconnecting` arm now does under its lock.
+        let lost = st.live_ports_ready[0].clone();
+        st.live_ports_ready.retain(|p| p != &lost);
+
+        assert_eq!(live_status(&st, 4), "Live 3/4 ready  |  1 connecting…");
+        assert!(
+            st.live_offline.is_empty(),
+            "reconnecting is not an empty slot"
+        );
+        assert!(
+            st.live_failed.is_empty(),
+            "reconnecting is not a dead worker"
+        );
+    }
+
+    /// A worker that exited is reported as failed, not as connecting: it is not
+    /// coming back this session, and `live_ports_ready` used to keep the port so
+    /// the footer still said "Live 34/34 ready" while the row had turned red.
+    ///
+    /// It is not counted as "no modem" either — a dead worker says nothing about
+    /// whether a SIM is in the slot.
+    #[test]
+    fn live_status_drops_a_port_whose_worker_closed() {
+        let mut st = live_state(34, 0);
+        assert_eq!(live_status(&st, 34), "Live 34/34 ready");
+
+        let dead = st.live_ports_ready[0].clone();
+        mark_port_failed(&mut st, &dead, "Port lost: ENODEV");
+
+        assert_eq!(live_status(&st, 34), "Live 33/34 ready  |  1 failed");
+        assert!(
+            st.live_offline.is_empty(),
+            "a dead worker is not an empty slot"
+        );
+    }
+
+    /// Both report sites can fire for one port: `run_live` catches its own panic
+    /// and reports it through `Closed`, and if a panic escapes that, the worker's
+    /// own `catch_unwind` reports the same port again. Two entries would put the
+    /// failed count above the number of ports that actually stopped.
+    #[test]
+    fn a_port_reported_failed_twice_is_counted_once() {
+        let mut st = live_state(2, 0);
+        let dead = st.live_ports_ready[0].clone();
+
+        mark_port_failed(&mut st, &dead, "Port lost: ENODEV");
+        mark_port_failed(&mut st, &dead, crate::core::live::WORKER_PANIC);
+
+        assert_eq!(st.live_failed.len(), 1);
+        // The first reason is the specific one; the second is the generic
+        // backstop, and the row's own `live_error` shows the later text anyway.
+        assert_eq!(st.live_failed[0].1, "Port lost: ENODEV");
+        assert_eq!(live_status(&st, 2), "Live 1/2 ready  |  1 failed");
+    }
+
+    /// A silent slot whose worker then dies must not be counted in both buckets,
+    /// or ready + no modem + failed exceeds the number of ports. Failed wins:
+    /// nothing is retrying that slot any more.
+    #[test]
+    fn a_silent_port_whose_worker_died_is_counted_as_failed_only() {
+        let mut st = live_state(2, 1);
+        assert_eq!(live_status(&st, 3), "Live 2/3 ready  |  1 no modem");
+
+        let silent = st.live_offline[0].clone();
+        mark_port_failed(&mut st, &silent, crate::core::live::WORKER_PANIC);
+
+        assert_eq!(live_status(&st, 3), "Live 2/3 ready  |  1 failed");
+        assert!(st.live_offline.is_empty());
+    }
+
+    #[test]
+    fn live_status_reports_every_bucket_it_has() {
+        let mut st = live_state(2, 1);
+        mark_port_failed(&mut st, "ready1", "Port lost: ENODEV");
+        assert_eq!(
+            live_status(&st, 5),
+            "Live 1/5 ready  |  1 no modem  |  1 failed  |  2 connecting…"
+        );
     }
 
     /// One enumerated port. `path` is the stable by-path id, `name` the tty name.

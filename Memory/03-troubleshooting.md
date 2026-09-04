@@ -1,4 +1,4 @@
-# 03 — Troubleshooting Casebook (တကယ်ဖြစ်ခဲ့တဲ့ ၂၂ ခု)
+# 03 — Troubleshooting Casebook (တကယ်ဖြစ်ခဲ့တဲ့ ၂၆ ခု)
 
 > Format: Symptom → Root Cause → Fix → Preventive Rule. Debug ခင် ဒီထဲ အရင်ရှာပါ။
 
@@ -602,6 +602,240 @@
   ဖြစ်တာမို့ OTP မတွေ့ရင် အဲဒီ message က Telegram ဆီ **လုံးဝ မရောက်ဘူး**
 - **Rule ၃:** Bank/telco notification တွေက hotline ကို **message တိုင်းမှာ** ထည့်တယ်။ `P4`
   က bare digit ဖမ်းတဲ့အခါ hotline နဲ့ တွဲမြင်တာ **ပုံမှန်**၊ ကြုံရာ မဟုတ်ဘူး
+
+## 2️⃣3️⃣ `SIM cleanup done. Deleted 14 | FAILED: 30/64` — modem မရှိတဲ့ ဗလာ slot ၃၀ ကို failure လို့ ရေတွက်တာ
+
+- **Symptom (field, v1.5.0 64-port run):** Detect မလုပ်ခင် **port ၆၄ လုံးအပေါ်** SIM cleanup
+  ပြေးခဲ့တယ်။ Status line က `SIM cleanup done. Deleted 14  |  FAILED: 30/64`။ **တကယ့်
+  failure က သုည** — အဲ့ ၃၀ က modem လုံးဝ မရှိတဲ့ ဗလာ slot (Detect က နောက်ပိုင်း `34/64`
+  လို့ ပြတယ်၊ တစ်ခုချင်းစီ `Modem not responding` log ရှိတယ်)
+- **ဒီ case ရဲ့ အဓိကက operator ဆီ ရောက်တဲ့ ကုန်ကျစရိတ်:** bank ရှေ့မှာ ရပ်ပြီး incident
+  debug လုပ်နေချိန်မှာ "၃၀ ခု ပျက်တယ်" ဆိုတဲ့ line က **အလုပ်လုပ်နေတဲ့ bank ကို ပျက်နေတယ်
+  လို့ ကြေညာတာ** — operator က မရှိတဲ့ failure ၃၀ ကို လိုက်ရှာရမယ်၊ ပြီးတော့ တကယ့်
+  ပြဿနာက အဲ့ဒီ အောက်မှာ ဝှက်ခံရမယ်
+- **Root Cause:** cleanup worker ရဲ့ counter က `expire_old` ရဲ့ **non-ok result တိုင်း**နဲ့
+  panic arm ကို `failed` **တစ်ခုတည်းထဲ** ထည့်ခဲ့တာ။ `modem::expire_old` က `read_port` ရဲ့
+  error ကို **verbatim** ပြန်ပေးတာမို့ probe silence က `NOT_RESPONDING` ဆိုတာ ကုဒ်ထဲ
+  **သိပြီးသား** — counter ကပဲ မခွဲတာ။ Status line ရော `sim_cleanup:done` payload ရော
+  အဲ့ single number ကနေ တည်ခဲ့တယ် (`deleted`/`failed` ၂ ခုပဲ)
+- **မှန်တဲ့ ပုံစံက project ထဲ ရှိပြီးသား:** `detect_done_status`
+  (`src-tauri/src/commands/mod.rs:519`) က #19 ကတည်းက `Empty` နဲ့ `Inconclusive` ကို ခွဲပြီး
+  `30 port(s) with no modem deselected` လို့ တိတိကျကျ ပြောတယ် — **cleanup က အဲ့ဒီ ပုံစံကို
+  မလိုက်ခဲ့တာ ပဲ**
+- **Fix (v1.6.2၊ branch `fix/status-and-log-accuracy` — merge/release မလုပ်ရသေး):**
+  * Counter တတိယခု `empty` (`commands/mod.rs:1704`)၊ arm က
+    `r.error.as_deref() == Some(crate::core::modem::NOT_RESPONDING)` **အတိအကျ**
+    (`:1734`) — ဒီ string တစ်ခုတည်းပဲ။ `AtChannel::open` error၊ `Serial I/O failed: …`
+    တွေက **host ဘက် အမှား** ဖြစ်တာမို့ `failed` အတိုင်း ကျန်တယ်၊ panic arm (`:1745`) လည်း
+    `failed` အတိုင်း
+  * အဲ့ arm က **log မတင်ဘူး** (တမင်) — `modem::probe_failure` က port တစ်ခုအတွက် silence ကို
+    တစ်ခါ မှတ်ပြီးသား၊ ဒါကြောင့် ထပ်တင်ရင် log ကို ၂ ဆ ဖြစ်စေတယ်။ ရေတွက်မှုက status line
+    နဲ့ event payload ကနေ ရောက်တယ်
+  * Builder အသစ် `cleanup_done_status(deleted, empty, failed, total)` (`:627`) —
+    `detect_done_status`/`scan_done_status` ဘေးမှာ၊ pure function မို့ test လုပ်နိုင်တယ်။
+    Clause တိုင်း **zero မှာ ချန်ထားတယ်** ဆိုတော့ ပြေတဲ့ run က one sentence ပဲ၊
+    `FAILED` က ဘာမှ မပျက်တဲ့အခါ **ပေါ်လာခြင်း မရှိ**။ Field case က အခု:
+    `SIM cleanup done. Deleted 14 expired SIM slot(s)  |  30 port(s) with no modem`
+  * **"deselected" ဆိုတဲ့ စကားလုံး မထည့်ဘူး** (detect နဲ့ မတူတဲ့ အချက်) — cleanup က port
+    ရွေးချယ်မှုကို မပြောင်းဘူး
+  * `sim_cleanup:done` payload ထဲ `empty` (`:1772`)၊ frontend listener
+    (`src/lib/services/api.ts:414`–`:432`) က ကိုယ်ပိုင် clause အဖြစ် ပြတယ်၊ **empty အတွက်
+    Warning severity မတင်ဘူး** (`failed > 0` မှသာ Warning)၊ ပြီးတော့
+    `deleted == 0 && failed == 0` ဆိုရင် **တိတ်တိတ်** (`:424`) — ၁၀ မိနစ်တစ်ခါ unattended
+    fire ဖြစ်တာမို့၊ ဗလာ slot က steady state ဖြစ်တာမို့။ Payload မှာ `empty` မပါတဲ့
+    backend အတွက် `?? 0` (`:419`)
+- **`05 §C.10` ရဲ့ field sighting ပထမဆုံး:** supervisor ၄ ခုရဲ့ failure-accounting policy
+  ၄ မျိုး မတူတာကို C.10 က table နဲ့ မှတ်ထားခဲ့တယ် (cleanup = "failure counter တိုးတယ်")၊
+  ဒါပေမဲ့ **operator ဆီ တကယ် ရောက်လာတာ ဒါ ပထမဆုံး**။ ဆိုတော့ ဒီ fix က detour မဟုတ်ဘူး —
+  C.10 အတွက် **down payment**
+- **Test ၄ ခု** (`commands/mod.rs:1902`–`:1938`):
+  `cleanup_status_stays_one_sentence_when_there_is_nothing_to_report`၊
+  `cleanup_status_counts_empty_slots_without_calling_them_failures` (field case အစစ်၊
+  `!contains("FAILED")` ပါ စစ်တယ်)၊ `cleanup_status_reports_real_failures_against_the_port_total`၊
+  `cleanup_status_keeps_empty_slots_and_failures_apart`
+- **Rule ၁:** **"ဗလာ" နဲ့ "ပျက်" ကို counter တစ်ခုထဲ မထည့်ပါ။** ဒါက §16 Rule ၁ ("မသိဘူး"
+  ကို "မရှိဘူး" နဲ့ တစ်ခုတည်း မလုပ်ရ) ရဲ့ **counter version** — ဒီ repo မှာ bank တစ်ဝက်
+  ဗလာဖြစ်တာက ပုံမှန်
+- **Rule ၂:** **Zero clause ကို မပြပါ။** `FAILED: 0` ကိုယ်တိုင် operator ကို ရှာစေတယ် —
+  ပျက်တာ ရှိမှသာ clause တင်ပါ
+- **Rule ၃:** Status wording ရေးခင် **ရှိပြီးသား honest pattern ကို ရှာပါ**။ Detect က ဒီ
+  ခွဲခြားမှုကို လုပ်ပြီးသား ဖြစ်တာမို့ cleanup က ကူးရမယ့်ဟာ ဖြစ်တယ်၊ တီထွင်ရမယ့်ဟာ မဟုတ်
+
+## 2️⃣4️⃣ Worker သေပြီးရင်လည် status line က `Live 34/34 ready` — ဖန်သားပြင်တစ်ခုတည်းပေါ် ကိန်း ၂ ခု မတည့်တာ
+
+- **Symptom:** live worker တစ်ခု လုံးလုံး ထွက်သွားရင် (transport သေတာ ဒါမှမဟုတ် panic)
+  port row က အနီ ဖြစ်တယ်၊ ဒါပေမဲ့ status line က အဲ့ port ကို **`Live N/N ready` ထဲ ဆက်
+  ရေတွက်နေတယ်**
+- **ဖန်သားပြင်တစ်ခုတည်းပေါ် counter ၂ ခု မတည့်တာ:** `Closed` arm က `ports:updated` emit
+  လုပ်တာမို့ frontend က `readyPorts` ကို `ports.filter(p => p.live_ready)` နဲ့ **ကိုယ်တိုင်
+  ပြန်တွက်တယ်** (`src/lib/services/api.ts:242` listener၊ derive `:248`–`:250`) — ဆိုတော့
+  badge (`Toolbar.svelte:39`) က `Live 33/34` (မှန်တယ်)၊ Rust ကနေ လာတဲ့ footer status line က
+  `Live 34/34 ready` (မှားတယ်)။ Operator က ကိန်း ၂ ခုကို တစ်ချိန်တည်း မြင်နေရတယ်
+- **v1.5.0 က ၂ ချက်နဲ့ ပိုဆိုးစေခဲ့တယ်:**
+  1. **`statusText` ကို Inbox footer ပေါ် တင်လိုက်တာ** (`05 §C.8`) — အရင်က Ports page မှာပဲ
+     မြင်ရတဲ့ မှားနေတဲ့ ကိန်းက အခု **operator အလုပ်လုပ်တဲ့ main page ပေါ်** ရောက်ပြီ
+  2. **worker panic ကို `Closed` ကနေ report လုပ်စေတာ** (`live::WORKER_PANIC`) — ဆိုတော့
+     v1.5.0 မှာ အသစ် ရောက်လာနိုင်တဲ့ panic path က **ready count မလျှော့တဲ့ arm
+     တစ်ခုတည်းဆီ** တည့်တည့် ဝင်တယ်
+- **Root Cause:** `Closed` arm က `p.live_ready = false` ရေးတယ်၊ `p.live_error` set တယ်၊
+  `st.live_failed.push(...)` လုပ်တယ် — ဒါပေမဲ့ **`live_ports_ready` ကို မထိဘူး**၊
+  `live_status` ကိုလည် ပြန်မခေါ်ဘဲ `status_text` ကို `"{port} FAILED: {e}"` နဲ့ **တိုက်ရိုက်
+  လဲပစ်ခဲ့တယ်**။ ဆိုတော့ နောက် `Ready`/`Offline` event တစ်ခုခုက line ကို ပြန်တွက်ချိန်မှာ
+  ကျွတ်သွားတဲ့ port က ready list ထဲ ကျန်နေပြီးသား
+- **ပြီးတော့ `live_failed` က write-only state ခဲ့တယ်** — နေရာ ၂ ခုမှာ push တယ်၊
+  `start_live` မှာ clear တယ်၊ **ဖတ်တဲ့သူ မရှိ**။ ဆိုတော့ "worker သေတယ်" ဆိုတဲ့ အချက်ကို
+  app က မှတ်ထားပေမဲ့ ဘယ်ကိန်းထဲမှ မပါခဲ့ဘူး
+- **Fix (v1.6.2၊ branch `fix/status-and-log-accuracy` — merge/release မလုပ်ရသေး) — bucket
+  ကို state အဖြစ် အသိမှတ်ပြုလိုက်တာ:**
+  * `live_status` (`src-tauri/src/commands/mod.rs:543`) မှာ `N failed` clause ထည့်၊ အစဉ်က
+    ready → `no modem` → `failed` → `connecting…`
+  * **`connecting…` က bucket မဟုတ်ဘူး — remainder** `total - (ready + offline + failed)`
+    (`:554`) မို့ **အနောက်ဆုံး**ပဲ တွက်လို့ ရတယ်။ ဒါကြောင့် bucket ၃ ခု **disjoint ဖြစ်ရမယ်** —
+    port တစ်ခုကို ၂ ခါ ရေတွက်လိုက်ရင် လိမ်လာမယ့်ဟာက အဲ့ remainder ပဲ
+  * `mark_port_failed(st, port, reason)` (`:579`) — **bucket rule တွေ ရှိတဲ့ တစ်ခုတည်းသော
+    နေရာ**။ ready list ကနေရော `live_offline` ကနေရော ဖြုတ်ပြီးမှ `live_failed` ကို push တယ်၊
+    ပြီးတော့ port က ရှိပြီးသား မဟုတ်မှသာ push တယ်
+  * **Rule ၁ — port အလိုက် dedup:** `run_live` ကိုယ်တိုင်က သူ့ panic ကို ဖမ်းပြီး `Closed`
+    အဖြစ် report တယ်၊ အဲ့ဒါ ကျော်လွန်တဲ့ panic ကို worker ရဲ့ **outer `catch_unwind`**
+    (`:1334`) က **တူတဲ့ port ကို ထပ်** report တယ် — entry ၂ ခု ဖြစ်ရင် line က bank မှာ
+    ရှိတာထက် ပိုတဲ့ failed count ကို ကြေညာမယ်။ ပထမ reason ကို ထားတယ် (အဲ့ဒါက specific၊
+    ဒုတိယက generic backstop)၊ row ရဲ့ `live_error` က နောက်ဆုံး text ကို ပြပြီးသား
+  * **Rule ၂ — "failed" က "no modem" ကို အနိုင်ရတယ်:** တိတ်နေတဲ့ slot ရဲ့ worker သေသွားရင်
+    **အဲ့ port ကို ဘာမှ retry လုပ်နေတာ မရှိတော့ဘူး**၊ bucket ၂ ခုထဲ ချန်ထားရင် port
+    တစ်ခုကို ၂ ခါ ရေတွက်တယ်။ ပြောင်းပြန် (failed ပြီးမှ offline) မဖြစ်နိုင်ဘူး — worker က
+    `Closed` ပြီးရင် event မထုတ်တော့ဘူး
+- **Arm ၃ ခု ပြင်လိုက်တယ်:**
+  | Arm | ဘာ လုပ်လဲ | ဘယ် bucket |
+  |---|---|---|
+  | `LiveEvent::Closed` (`:1297`) | `mark_port_failed` (`:1314`) + `live_status` ပြန်တည် (`:1315`) | `live_failed` |
+  | Outer `catch_unwind` (`:1334`) | `mark_port_failed` (`:1351`) + `live_status` (`:1352`) | `live_failed` (dedup ကြောင့် ၂ ခါ မတိုး) |
+  | `LiveEvent::Reconnecting` (`:1141`) | ready list ကနေပဲ ဖြုတ် (`:1155`) + `live_status` (`:1156`) | **ဘယ် bucket မှ မဟုတ်** → `connecting…` remainder |
+
+  Reconnecting က transient ဖြစ်တာမို့ `connecting…` ထဲ ရောက်တာ **တကယ့် အခြေအနေ** ပဲ၊
+  ပြီးတော့ `Ready` arm က မောင်းပြန်လာရင် သူ့ကိုယ်တိုင် ပြန်ထည့်တယ်
+- **၃ ခုလုံးမှာ hand-written `status_text` override ကို ဖျက်လိုက်တယ်။** Reason က
+  ပျောက်မသွားဘူး — တူတဲ့ arm ရဲ့ `ports:updated` payload ထဲ row ရဲ့ `live_error` အဖြစ်
+  ရောက်တယ်၊ `Ports.svelte` နဲ့ `PortDetail.svelte` က အဲ့ဒါကို render တယ်။ Status line က
+  **bank-wide count** ဖြစ်တာမို့ port နာမည် တစ်ခုတည်းကို မသယ်ရဘူး
+- **`p.alive` ကို ၃ ခုလုံးမှာ မထိဘူး** — probe silence ပဲ slot ကို "ဗလာ" style ခွင့်ရှိတယ်
+  (§16၊ AGENTS.md invariant)
+- **တမင် ဆုံးဖြတ်ချက် — သေတဲ့ worker ကို `no modem` အဖြစ် မရေတွက်ဘူး:** worker သေတာက slot
+  ထဲ SIM ရှိမရှိ အကြောင်း **ဘာမှ မဆိုဘူး**။ `live_offline` ထဲ ထည့်လိုက်ရင် လွဲမှားချက်
+  အသစ် (empty slot ၃၀ လို့ ပြောတာ) ဖြစ်မယ် — ဒါကြောင့် bucket အသစ် လိုတယ်
+- **ဒီ entry က `05 §C.6` (L3) latent trap ကို အစားထိုးတယ်** — အဲ့ entry က အခု
+  `✅ DONE (v1.6.2)` ဖြစ်ပြီ၊ သက်သေက history အတွက် ကျန်ထားတယ်
+- **Test ၅ ခု** (`commands/mod.rs:2167`–`:2250`):
+  `live_status_moves_a_reconnecting_port_into_the_remainder` (offline ရော failed ရော
+  ဗလာ ဆိုတာပါ စစ်တယ်)၊ `live_status_drops_a_port_whose_worker_closed`၊
+  `a_port_reported_failed_twice_is_counted_once` (reason ပထမခုကို ထားတာပါ)၊
+  `a_silent_port_whose_worker_died_is_counted_as_failed_only`၊
+  `live_status_reports_every_bucket_it_has` (`Live 1/5 ready | 1 no modem | 1 failed | 2 connecting…`)
+- **Rule ၁:** **Remainder နဲ့ တွက်တဲ့ ကိန်း ရှိရင် bucket တွေက disjoint ဖြစ်ရမယ်** —
+  ပြီးတော့ disjointness ကို arm တစ်ခုချင်းစီမှာ လက်နဲ့ မထိန်းပါနဲ့၊ **helper တစ်ခုထဲ
+  သွတ်ပါ**။ Arm ၃ ခုမှာ rule ၂ ခုကို ကူးရေးရင် နောက် arm လေးခုမြောက်က မေ့မယ်
+- **Rule ၂:** **Write-only state က bug ရဲ့ လက်ဟန်** — `live_failed` ကို push တယ်၊ clear တယ်၊
+  ဖတ်တဲ့သူ မရှိ ဆိုတာက "ဒီ အချက်က ဘယ်ကိန်းထဲမှ မပါဘူး" ဆိုတာ ပြတယ်။ Grep နဲ့ ရှာလို့
+  ရတယ်: field တစ်ခုကို ရေးတဲ့ site ရှိပြီး ဖတ်တဲ့ site မရှိရင် သတိထားပါ
+- **Rule ၃:** UI နဲ့ backend ၂ ခုက ကိန်းတူတူကို **သီးသန့် တွက်နေရင်** ဖန်သားပြင်ပေါ်
+  မတည့်တာ အချိန်ကြာလာမှ ပေါ်လာမယ်။ Frontend က `p.live_ready` ကနေ derive တာက ဒီနေရာမှာ
+  မှန်ခဲ့တယ် — ဒါပေမဲ့ "တစ်ဖက် မှန်တယ်" ဆိုတာ fix မဟုတ်ဘူး၊ **အခြားတစ်ဖက်က မှားနေတယ်
+  ဆိုတဲ့ သက်သေ** ပဲ
+
+## 2️⃣5️⃣ `read -> 2 msg(s)` ပြီးရင် `deleted 5 msg(s)` — log က မှန်ပေမဲ့ မှားပုံပေါက်တာ
+
+- **Symptom (field, v1.5.0 run):** log ၂ လိုင်းက ကိန်းဂဏန်း မကိုက်တဲ့ ပုံပေါက်တယ်:
+
+  ```
+  COM39: pdu-mode read -> 2 msg(s)
+  COM39: deleted 5 msg(s)
+  ```
+
+  **၂ ခုလုံး မှန်တယ်** — ဖတ်ရတာက မှားနေတာ
+- **ဒီ case ရဲ့ ချောင်းက အဲ့ဒါပဲ:** မှန်နေတဲ့ log က မှားပုံပေါက်တာ။ Operator က မရှိတဲ့
+  data bug တစ်ခုကို လိုက်ရှာတယ်၊ ပြီးတော့ တစ်ခါ "ဒီ log က မှန်လား" လို့ ဖြစ်သွားရင်
+  **field debugging ရဲ့ ကိရိယာ ကိုယ်တိုင် ပျက်တယ်** — အဲ့ဒါက ဆုံးရှုံးမှု
+- **Root Cause — unit `msg(s)` တစ်လုံးက အရာ ၂ မျိုးကို ကိုယ်စားပြုခဲ့တာ:**
+  | | ရေတွက်တာ | သက်သေ |
+  |---|---|---|
+  | Read side | **reassemble ပြီးတဲ့ row** (`msgs.len()`) | `src-tauri/src/core/modem.rs:379` (pdu)၊ `:400` (text) |
+  | Delete side | **SIM slot** (`gone.len()`) | `modem.rs:549`၊ partial `:558`၊ confirm မရတဲ့ form `:531` |
+
+  Concat SMS တစ်စောင်က fragment တစ်ခုလျှင် slot တစ်ခု စားတာမို့ **row ၂ ခု = slot ၅ ခု**
+  ဖြစ်တာ ပုံမှန်ပဲ
+- **Status line ကတော့ အရင်ကတည်းက ခွဲထားပြီးသား:** `Deleted 1 message(s) (1 SIM slot(s)
+  freed)` (`commands/mod.rs:1566`) က unit ၂ ခုကို ၂ မျိုး ရေးထားတယ် — **per-port log line
+  ကပဲ ကျန်နေခဲ့တာ**
+- **Fix (v1.6.2၊ branch `fix/status-and-log-accuracy` — merge/release မလုပ်ရသေး) —
+  convention:** noun က အမြဲ **`slot(s)`**၊ operator-facing status line မှာပဲ **`SIM slot(s)`**
+  လို့ qualify လုပ်တယ်။ Site ၈ ခု:
+  * `modem.rs::confirm_delete` ၃ လိုင်း (`:531`၊ `:549`၊ `:558`)
+  * `commands/mod.rs` ၃ လိုင်း — cleanup status line (`:628`)၊ per-port cleanup log (`:1722`)၊
+    `Deleted N slot(s) from PORT` (`:1538`)
+  * `core/live.rs` ၂ လိုင်း — live worker ရဲ့ retention sweep (`:284` initial၊ `:381` periodic)
+- **တမင် မထိတဲ့ဟာ (တကယ် row ဖြစ်လို့):** `Auto-purged N expired message(s)`
+  (`commands/mod.rs:1652` — inbox row)၊ `Deleting N message(s)...` (`:1507` — ရွေးထားတဲ့ row)၊
+  ပြီးတော့ unit ၂ ခုလုံး ရေးပြီးသား status line ၂ ခု (`:1566`၊ `:1572`)
+- **Plan (`07 §D.1`) က `modem.rs` ကိုပဲ မှတ်ခဲ့တယ်** — review မှာ ကျန် site ၅ ခု
+  (`commands/mod.rs` ၃ ခု၊ `live.rs` ၂ ခု) တွေ့လို့ ထည့်လိုက်တာ။ ဖိုင်တစ်ခုပဲ ပြင်ရင်
+  unit က ဖိုင်ကြားမှာ ကွဲသေးမယ်၊ ပြီးတော့ live sweep ရဲ့ line က `SIM cleanup deleted N …`
+  ဖြစ်တာမို့ cleanup status line နဲ့ ဘေးချင်း ဖတ်ရမယ့်ဟာ
+- **`confirm_delete` ရဲ့ doc comment (`modem.rs:517`–`:521`) မှာ ဒီ ကွာဟမှုကို မှတ်ထားတယ်** —
+  နောက်ထပ် count log ရေးမယ့်သူက ဘယ်ဟာ row၊ ဘယ်ဟာ slot ဆိုတာ ကုဒ်ထဲကတည်းက ဖတ်ရမယ်
+- **Rule ၁:** Count ကို log တင်ရင် **ဘာကို ရေတွက်တာလဲ ဆိုတာ unit နဲ့ တွဲပါ**။ Unit နာမည်
+  တူတူနဲ့ ကိန်း ၂ မျိုးက wording ပြဿနာ မဟုတ်ဘူး — **data bug လို ပေါ်တယ်**
+- **Rule ၂:** **မှားပုံပေါက်တဲ့ log က သူ့ကိုယ်တိုင် bug ဖြစ်တယ်။** Field debugging က log ကို
+  ယုံရတာ ဖြစ်တာမို့ "code က မှန်တယ်" ဆိုတာ ဒီ case ကို မဖြေဘူး
+- **Rule ၃:** Unit ပြောင်းရင် **site အားလုံးကို grep နဲ့ ရှာပါ** (`msg(s)` · `message(s)` ·
+  `slot(s)`) — ဖိုင်တစ်ခုပဲ ပြင်တာက ကွာဟမှုကို ဖျက်တာ မဟုတ်ဘဲ **ရွှေ့တာ** ဖြစ်တယ်
+
+## 2️⃣6️⃣ `USSD *88# rejected (+CME ERROR: 100)` ၂ လိုင်း၊ 15 ms အကွာ — duplicate log မဟုတ်ဘူး
+
+- **Symptom (field, v1.5.0 run):**
+
+  ```
+  18:39:31.846  COM38: USSD *88# rejected (+CME ERROR: 100)
+  18:39:31.861  COM38: USSD *88# rejected (+CME ERROR: 100)
+  18:39:36.585  COM38: SIM number ***573      ← *124# fallback အောင်မြင်
+  ```
+
+  တစ်လုံးမကွာ တူတဲ့ line ၂ ခု — **duplicate-logging bug လို့ ဖတ်ရတယ်၊ တကယ်က မဟုတ်ဘူး**
+- **Root Cause — attempt ၂ ခုက တကယ် မတူဘူး၊ log ကပဲ မခွဲတာ:** `ussd_query`
+  (`src-tauri/src/core/modem.rs:805`) က `AT+CUSD=1,"*88#",15` ကို အရင် ပို့တယ် (`:810`)၊
+  `Rejected` ဆိုရင် `AT+CUSD=2` နဲ့ session ဖျက်ပြီး (`:814`) **bare form
+  `AT+CUSD=1,"*88#"`** ကို retry တယ် (`:815`)။ `ussd_attempt` (`:844`) က signature မှာ
+  `command` ရော `code` ရော လက်ခံပေမဲ့ warn line ၃ ခုမှာ **`code` ကိုပဲ** ရေးခဲ့တယ်
+- **ဘာလို့ အရေးကြီးလဲ:** `,15` (DCS argument) ကို ငြင်းတဲ့ firmware ကို ရှာဖွေတာက
+  **ဒီ retry ရဲ့ တစ်ခုတည်းသော ရည်ရွယ်ချက်** (comment `:806`–`:809`)။ ဆိုတော့ ဘယ် form
+  ငြင်းခဲ့လဲ ခွဲမပြနိုင်တဲ့ log က **retry ရဲ့ ရည်ရွယ်ချက်ကို ကိုယ်တိုင် ဖျက်တယ်** —
+  retry က အလုပ်လုပ်တယ်၊ ဒါပေမဲ့ field log ကနေ firmware pattern မှတ်လို့ မရဘူး
+- **Fix (v1.6.2၊ branch `fix/status-and-log-accuracy` — merge/release မလုပ်ရသေး):**
+  * Helper `ussd_form(command)` (`modem.rs:837`) — dial string ရဲ့ **closing quote နောက်က
+    argument** ကို ဆွဲထုတ်တယ် (`rsplit_once('"')`)၊ ဗလာ/မရှိရင် `"bare"`
+  * Warn ၃ လိုင်းမှာ ထည့်လိုက်တယ်: rejected (`:851`)၊ `no reply within {}s` (`:866`)၊
+    `replied without a number` (`:887`)。 အခု ဒီလို ဖတ်ရတယ်:
+
+    ```
+    COM38: USSD *88# (,15) rejected (+CME ERROR: 100)
+    COM38: USSD *88# (bare) rejected (+CME ERROR: 100)
+    ```
+
+  * **`,15` ကို hardcode မလုပ်ဘူး** — ပို့လိုက်တဲ့ command ကနေ ဖတ်တာမို့ `ussd_query` ရဲ့
+    DCS ပြောင်းရင်တောင် log က modem ကို **မခိုင်းခဲ့တဲ့ argument** ကို ဘယ်တော့မှ မပြောဘူး
+  * **Behaviour / AT sequence / timeout မပြောင်းဘူး** — wording ပဲ
+- **Privacy surface မပြောင်းဘူး:** log ထဲ ထပ်ရောက်လာတာက `AT+CUSD` ရဲ့ **argument** ပဲ
+  (`,15` / `bare`)၊ dial string က operator ကိုယ်တိုင် ရေးထားတဲ့ carrier code။ `AT+CUSD` ရဲ့
+  **reply body (subscriber ရဲ့ ကိုယ်ပိုင် နံပါတ် ပါတာ) က debug မှာ အတိုင်း** (`:893`) —
+  AGENTS.md ရဲ့ logging refusal
+- **Test ၂ ခု** (`modem.rs:1199`၊ `:1209`): `ussd_form_distinguishes_the_two_attempts`
+  (`,15` vs `bare`၊ ပြီးတော့ `assert_ne!` နဲ့ ၂ ခု မတူရ ဆိုတာ)၊
+  `ussd_form_reads_the_argument_as_sent` (`,0`၊ `, 15`၊ dial string ပြီး ဘာမှ မရှိတာ၊
+  `AT+CUSD=2` — အားလုံး ကိုယ်တိုင် ပြရ)
+- **Rule ၁:** **Retry တစ်ခုက hypothesis တစ်ခုကို စမ်းတာ ဆိုရင် ဘယ် hypothesis ကို စမ်းခဲ့လဲ
+  log မှာ ပါရမယ်။** မပါရင် retry က အလုပ်လုပ်ပေမဲ့ **သင်ခန်းစာ မရဘူး** — hardware fleet
+  တစ်ခုမှာ အဲ့ဒါက retry ရဲ့ တန်ဖိုးတစ်ဝက်
+- **Rule ၂:** တူတဲ့ line ၂ ခု မြင်ရင် **"duplicate logging" လို့ အရင် မယူဆပါနဲ့** —
+  timestamp ကွာဟမှု (ဒီမှာ 15 ms) က attempt ၂ ခု ဖြစ်တဲ့ သက်သေ။ ဆိုတော့ log line က
+  **ကွဲပြားတဲ့ အလုပ်ကို ကွဲပြားစွာ ရေးရမယ်**
 
 ## ⚠️ Latent Traps (မဖြစ်သေးဘူး၊ ဒါပေမဲ့ ချောင်းနေတာ)
 
