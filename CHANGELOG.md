@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.7.0](https://github.com/RyanWez/sms-deliverer/compare/v1.6.2...v1.7.0) (2026-09-04)
+
+
+### Features
+
+* read the release changelog inside the app ([49b96aa](https://github.com/RyanWez/sms-deliverer/commit/49b96aa604818d02951328a0c111033ad39d0c85))
+* replace the app icon with the new bolt mark ([8601a34](https://github.com/RyanWez/sms-deliverer/commit/8601a34af4d9e59d04c32e6b0e205216770ba50b))
+* trim the title bar and pin message retention to one hour ([#34](https://github.com/RyanWez/sms-deliverer/issues/34)) ([a9a0821](https://github.com/RyanWez/sms-deliverer/commit/a9a08219bd867b115b03652cd850252df85bae31))
+
 ## [1.6.2](https://github.com/RyanWez/sms-deliverer/compare/v1.6.1...v1.6.2) (2026-09-04)
 
 
