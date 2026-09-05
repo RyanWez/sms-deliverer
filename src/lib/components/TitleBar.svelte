@@ -55,14 +55,18 @@
   The bar carries nothing but the window controls. The app's name was in the
   middle of it and is gone: the window title, the taskbar entry and the sidebar
   footer already say what this program is, and a caption repeating it cost a
-  36px strip across the top of every screen.
+  strip across the top of every screen.
+
+  Height is 32px to match the Windows 11 native caption bar, which is what this
+  bar stands in for once decorations are off, and it is the same 32px as every
+  `.btn` in the app so the top of the window keeps the rhythm of the rest of it.
 
   `data-tauri-drag-region` stays on the header itself, so the whole empty strip
   is still the drag handle it was when the caption held that attribute.
 -->
 <header
   data-tauri-drag-region
-  class="h-9 relative flex items-center justify-end px-3 bg-elevated border-b border-border select-none shrink-0"
+  class="h-8 relative flex items-center justify-end px-3 bg-elevated border-b border-border select-none shrink-0"
 >
   <div class="flex items-center gap-0.5 self-stretch -mr-3 relative z-10">
     <button
