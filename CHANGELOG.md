@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.8.2](https://github.com/RyanWez/sms-deliverer/compare/v1.8.1...v1.8.2) (2026-09-05)
+
+
+### Bug Fixes
+
+* **changelog:** make the release index select and actually jump ([#43](https://github.com/RyanWez/sms-deliverer/issues/43)) ([996cf9c](https://github.com/RyanWez/sms-deliverer/commit/996cf9cd852c0c23fdd92867994f08fabdd698b9))
+* **ui:** size the title bar to the native caption bar ([#42](https://github.com/RyanWez/sms-deliverer/issues/42)) ([a623a3f](https://github.com/RyanWez/sms-deliverer/commit/a623a3f82cbba781281d3ee3e57da12ddf68a89d))
+
 ## [1.8.1](https://github.com/RyanWez/sms-deliverer/compare/v1.8.0...v1.8.1) (2026-09-04)
 
 
