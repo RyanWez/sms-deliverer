@@ -57,6 +57,28 @@
     releases.find((r) => r.version === currentVersion) ?? null,
   );
 
+  /**
+   * Which entry the release index is pointing at.
+   *
+   * Deliberately not `currentVersion`: that one says which build is installed,
+   * this one says which release the reader jumped to. They are separate facts
+   * that often land on the same row, so the index shows them through separate
+   * channels — the fill and the bar mark the selection, the colour marks the
+   * installed build.
+   */
+  let selectedVersion = $state(normalizeVersion(releases[0]?.version));
+
+  /**
+   * A filter can hide the selected entry, and a selection nothing shows is worse
+   * than none at all: fall back to the top of what is on screen, which is where
+   * the timeline sits after a filter change anyway.
+   */
+  const activeVersion = $derived(
+    shown.some((r) => r.version === selectedVersion)
+      ? selectedVersion
+      : normalizeVersion(shown[0]?.version),
+  );
+
   const FILTERS: Array<{ id: ChangeFilter; label: string }> = [
     { id: "all", label: "All" },
     { id: "feature", label: "Features" },
@@ -79,10 +101,20 @@
     return `release-${version.replace(/[^\w.-]/g, "-")}`;
   }
 
+  /**
+   * Mark the entry and take the reader to it.
+   *
+   * `behavior` is left to the container's CSS rather than passed here: the
+   * `smooth` option is silently a no-op in some webviews — it reports success,
+   * runs no animation and leaves the scroll position untouched, so the index
+   * looked decorative — while the default honours `scroll-behavior` and always
+   * lands. The selection highlight is what tells the reader they moved.
+   */
   function jumpTo(version: string) {
+    selectedVersion = version;
     document
       .getElementById(anchorId(version))
-      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      ?.scrollIntoView({ block: "start" });
   }
 
   function plural(n: number): string {
@@ -280,27 +312,48 @@
       </div>
 
       <!-- Version index. Wide screens only: below that the timeline needs the
-           whole column, and the list is a shortcut rather than the way in. -->
+           whole column, and the list is a shortcut rather than the way in.
+
+           It scrolls inside its own box instead of paginating: this is a jump-to
+           index, so a version sitting behind a "next page" button would be
+           slower to reach than scrolling the timeline it exists to shortcut.
+           The 70vh cap is deliberately not derived from the header and footer
+           heights — it only has to land inside the scroll viewport, and keeping
+           it independent means changing either one cannot strand the bottom of
+           the list off-screen. -->
       <nav class="hidden lg:block w-[88px] shrink-0" aria-label="Jump to a release">
-        <div class="sticky top-0">
+        <div class="sticky top-0 flex flex-col max-h-[70vh]">
           <div
-            class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-2 pb-1.5"
+            class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-2 pb-1.5 shrink-0"
           >
             Releases
           </div>
-          <ul class="space-y-px" role="list">
+          <ul class="space-y-px overflow-y-auto min-h-0" role="list">
             {#each shown as rel}
+              {@const selected = rel.version === activeVersion}
+              {@const running = rel.version === currentVersion}
               <li>
                 <button
                   type="button"
-                  class="w-full text-left px-2 py-1 rounded text-[11px] font-mono
+                  aria-current={selected ? "true" : undefined}
+                  title={running ? `v${rel.version} — the version you are running` : `Jump to v${rel.version}`}
+                  class="relative w-full text-left px-2 py-1 rounded overflow-hidden text-[11px] font-mono
                          transition-colors duration-150
                          focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70
-                         {rel.version === currentVersion
-                           ? 'text-primary font-semibold bg-primary/10'
-                           : 'text-muted-foreground hover:text-foreground hover:bg-elevated'}"
+                         {selected ? 'bg-primary/10' : 'hover:bg-elevated'}
+                         {running
+                           ? 'text-primary font-semibold'
+                           : selected
+                             ? 'text-foreground'
+                             : 'text-muted-foreground hover:text-foreground'}"
                   onclick={() => jumpTo(rel.version)}
                 >
+                  {#if selected}
+                    <span
+                      class="absolute left-0 top-1/2 -translate-y-1/2 h-3.5 w-[3px] rounded-r-full bg-primary"
+                      aria-hidden="true"
+                    ></span>
+                  {/if}
                   v{rel.version}
                 </button>
               </li>

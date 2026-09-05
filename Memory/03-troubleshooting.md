@@ -869,6 +869,60 @@
   desktop shell, an AppIndicator host and a human looking at a menu. It is a
   `04 §G` hardware-playbook check, not a CI check
 
+## 2️⃣8️⃣ The Changelog release index highlighted nothing and jumped nowhere — **fixed in v1.8.2**
+
+- **Symptom (v1.8.1, seen in the browser preview at `localhost:1420`):** clicking a version in
+  the Changelog page's `RELEASES` index did nothing observable. The timeline stayed exactly
+  where it was, and the blue highlight never left `v1.8.1` no matter which entry was clicked,
+  so the whole column read as decoration rather than a control.
+- **Root cause — two independent faults, and the second one hid the first:**
+  1. **The highlight was keyed to the wrong fact.** `currentVersion` is the *installed build*,
+     set from `getVersion()` in `onMount`, and the index styled its active row off that. There
+     was no selection state at all: `jumpTo()` only scrolled and recorded nothing, so no click
+     could ever move the highlight.
+  2. **`scrollIntoView({ behavior: "smooth" })` is a silent no-op in the webview.** It throws
+     nothing and reports nothing, and leaves `scrollTop` untouched. Measured: sampled every
+     250 ms for 3 s it stayed at `0` against a target of `1138`, with
+     `prefers-reduced-motion: false` and the container's computed `scroll-behavior: auto`. The
+     same call with `behavior: "instant"` moved it immediately and a manual `scrollTop = 500`
+     took, so the container was scrollable the entire time.
+- **A third fault found in the same pass, with no symptom yet:** the index is `sticky top-0`
+  wrapped around `{#each shown}` with no height cap and no overflow handling. At 13 releases it
+  is 372 px and fine, but the block grows with `CHANGELOG.md`, and once it is taller than the
+  scroll viewport the bottom entries become permanently unreachable — sticky pins the top at 0
+  and the overflow simply runs off the bottom edge with nothing to scroll.
+
+- **Fix:**
+  1. A `selectedVersion` state, written by `jumpTo`, with the row's fill and a 3 px left bar
+     keyed to it plus `aria-current`. The installed build keeps the *colour*
+     (`text-primary font-semibold`) and gives up the fill, so both facts stay readable when
+     they land on the same row. Same idiom as `Sidebar.svelte`'s active nav item, so the page
+     borrows the app's existing vocabulary instead of inventing one.
+  2. A filter can hide the selected entry, so `activeVersion` falls back to the top of `shown`
+     — a selection that nothing on screen displays is worse than no selection.
+  3. `behavior` dropped from the `scrollIntoView` call. The container's CSS owns the motion and
+     the default always lands. Verified `scrollTop` going `0 → 1778` with the target release
+     sitting at the top of the container.
+  4. The index capped at `70vh`, the list scrolling inside it, the heading pinned above it.
+     Verified with 60 entries injected into the DOM: capped at 630 px, bottom edge still on
+     screen, `scrollHeight` 1625 against `clientHeight` 609. Unfixed it would have been
+     ~1650 px, running ~750 px past the bottom of a 900 px window.
+- **Rule 1:** **A highlight is keyed to the fact it claims.** Two facts that can land on the same
+  row need two channels — here fill and bar for the selection, colour for the installed build —
+  otherwise one silently impersonates the other and the more useful one loses.
+- **Rule 2:** **Never trust `behavior: "smooth"` to have run.** It fails open, so anything built
+  on it looks healthy and does nothing. Where the motion matters, put it in CSS
+  (`scroll-behavior`) and let the JS state only the intent.
+- **Rule 3:** A `sticky` block wrapped around an unbounded `{#each}` gets its height cap and its
+  own overflow the day it is written, not the day the list outgrows the window. The cap is
+  deliberately not derived from the header and footer heights: it only has to land inside the
+  scroll viewport, and staying independent of them means changing either — as the 32 px title
+  bar in this same release did — cannot strand the bottom of the list off-screen.
+- **Rule 4:** This one *was* catchable without hardware, and was caught only by driving the real
+  page and measuring it. `npm run check`, `npm test` and `npm run build` were all green across
+  every one of these three faults, because none of them is a type error or a pure-function bug
+  (`04 §G` has no step for it — the browser preview is the gate).
+
 ## ⚠️ Latent Traps (not happened yet, but lying in wait)
 
 Not cases yet — three things found in passing while doing the 2026-08-30 settings cleanup
